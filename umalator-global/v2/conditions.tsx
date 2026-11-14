@@ -32,7 +32,20 @@ interface CompactConditionsProps {
 	setSeason: (v: number) => void;
 	time: number;
 	setTime: (v: number) => void;
+	/** GlobalSim mode (integration plan Phase 3): show the mob-field selector. */
+	globalsimField?: {
+		preset: string;
+		setPreset: (v: string) => void;
+		gate: number | 'auto';
+		setGate: (v: number | 'auto') => void;
+		presets: { value: string; label: string }[];
+	};
 }
+
+export const GATE_OPTIONS = [
+	{ value: 'auto', label: 'Gate: Auto (per seed)' },
+	...Array.from({ length: 9 }, (_, g) => ({ value: g, label: `Gate ${g + 1}` })),
+];
 
 export function CompactConditions({
 	ground,
@@ -43,6 +56,7 @@ export function CompactConditions({
 	setSeason,
 	time,
 	setTime,
+	globalsimField,
 }: CompactConditionsProps) {
 	return (
 		<div class="v2-conditions">
@@ -103,6 +117,22 @@ export function CompactConditions({
 					</Tooltip>
 				))}
 			</div>
+			{globalsimField && (
+				<div class="v2-globalsim-field">
+					<CustomSelect
+						value={globalsimField.preset}
+						onChange={(val) => globalsimField.setPreset(val as string)}
+						options={globalsimField.presets}
+						className="v2-field-preset-select"
+					/>
+					<CustomSelect
+						value={globalsimField.gate}
+						onChange={(val) => globalsimField.setGate(val as number | 'auto')}
+						options={GATE_OPTIONS}
+						className="v2-field-gate-select"
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

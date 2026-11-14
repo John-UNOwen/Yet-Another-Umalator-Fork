@@ -77,6 +77,7 @@ import { StaCalcResults } from "./stacalc";
 import { FeedbackDrawer } from "./feedback-drawer";
 import { SimulationSettings } from "./sim-settings";
 import { loadGlobalsimSkillIds } from "./engines/globalsim/skills";
+import mobPresets from "./engines/globalsim/mob-presets.json";
 import { MobileNav, MobileView } from "./mobile-nav";
 import {
   loadSession,
@@ -284,6 +285,20 @@ function App() {
   const [globalsimUncoveredCount, setGlobalsimUncoveredCount] = useState<number | null>(null);
   // Skills removed from imported/loaded builds while in GlobalSim mode (inline note).
   const [globalsimDropped, setGlobalsimDropped] = useState(0);
+  // GlobalSim field selection (integration plan Phase 3): mob preset + gate mode.
+  // The same seed and preset give the same field; "Auto" draws the tested uma's
+  // gate per seed, identically for both races of a compare pair.
+  const [globalsimFieldPreset, setGlobalsimFieldPreset] = useState("default");
+  const [globalsimGate, setGlobalsimGate] = useState<number | "auto">("auto");
+  const globalsimFieldConfig = globalsimMode
+    ? {
+        preset: globalsimFieldPreset,
+        setPreset: setGlobalsimFieldPreset,
+        gate: globalsimGate,
+        setGate: setGlobalsimGate,
+        presets: Object.entries(mobPresets).map(([value, p]: [string, any]) => ({ value, label: `Field: ${p.name}` })),
+      }
+    : undefined;
   useEffect(() => {
     if (engine !== "globalsim" || globalsimSkillIds) return;
     let alive = true;
@@ -1351,6 +1366,7 @@ function App() {
                     setSelectedPresetId(null);
                     setTime(v);
                   }}
+                  globalsimField={globalsimFieldConfig}
                 />
               </div>
 
@@ -2349,6 +2365,7 @@ function App() {
                           setSelectedPresetId(null);
                           setTime(v);
                         }}
+                        globalsimField={globalsimFieldConfig}
                       />
                     </div>
                     <div class="v2-mobile-settings-section">

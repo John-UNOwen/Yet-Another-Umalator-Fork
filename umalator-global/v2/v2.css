@@ -764,6 +764,16 @@ body {
   font-size: var(--font-sm);
   padding: var(--space-xs) var(--space-sm);
 }
+
+/* GlobalSim mob-field selector in the conditions strip (integration plan Phase 3). */
+.v2-globalsim-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.v2-globalsim-field .v2-select {
+  min-width: 10rem;
+}
 .v2-sim-input[type=number] {
   -moz-appearance: textfield;
 }

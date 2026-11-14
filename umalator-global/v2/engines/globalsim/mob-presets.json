@@ -1,0 +1,16 @@
+{
+  "default": {
+    "name": "Default test field",
+    "comment": "8 mob runners: 2 each Nige/Senkou/Sasi/Oikomi, identical stats, all aptitudes A, mood 0, no skills. Fields use the adapter's runner fields (speed/stamina/power/guts/wisdom/strategy/*Aptitude/mood/skills); tune stats and add skills here — format is data-only.",
+    "runners": [
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Nige",   "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] },
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Nige",   "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] },
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Senkou", "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] },
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Senkou", "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] },
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Sasi",   "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] },
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Sasi",   "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] },
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Oikomi", "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] },
+      { "speed": 1200, "stamina": 1000, "power": 1000, "guts": 800, "wisdom": 1000, "strategy": "Oikomi", "distanceAptitude": "A", "surfaceAptitude": "A", "strategyAptitude": "A", "mood": 0, "skills": [] }
+    ]
+  }
+}
