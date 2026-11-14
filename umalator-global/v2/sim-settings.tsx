@@ -11,6 +11,7 @@ import { useState, useRef, useEffect } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { Shuffle, Dices, Settings2, RotateCcw } from 'lucide-react';
 import { Tooltip } from './components';
+import type { SimEngine } from './storage';
 import type { DuelingRates } from './simulation-utils';
 
 const DEFAULT_DUELING_RATES: DuelingRates = {
@@ -27,10 +28,10 @@ const STRATEGY_ROWS: Array<{ key: keyof DuelingRates; label: string; sub?: strin
 	{ key: 'endCloser',   label: 'End Closer',   sub: 'Oikomi' },
 ];
 
-// 'globalsim' = GlobalSim mode (integration plan Phase 2b): the app gates skills and
-// outfits to the active GlobalSim skill table; the race pipeline still runs the classic
-// engine until Compare/Chart integration lands (Phases 4–5).
-export type SimEngine = 'v1' | 'v2' | 'globalsim';
+// Canonical SimEngine lives in storage.ts (engine-choice helpers + URL hash).
+// 'globalsim' = the wasm full-field pipeline (compare = Phase 4, chart =
+// Phase 5); Phase 7 disables the classic-only switches in GlobalSim mode.
+export type { SimEngine };
 
 interface SimSettingsProps {
 	engine: SimEngine;
@@ -194,12 +195,21 @@ export function SimulationSettings({
 			<div class="v2-sim-divider" />
 
 			<div class="v2-sim-toggles">
-				<Tooltip content="Use same RNG sequence for both Uma" position="bottom">
+				{/* Phase 7 switch audit — every switch below whose state reaches ONLY the
+				    classic simulator worker / classic hpcalc (grep: they arrive via
+				    buildSimulationOptions in app-v2) is DISABLED, not hidden, when
+				    engine === 'globalsim': the wasm pipeline (engines/globalsim/)
+				    consumes none of them. Nothing here feeds the GlobalSim engine, so
+				    nothing stays enabled. (Stamina mode has no GlobalSim path — it
+				    still runs classic v2; disabling locks the switches but keeps
+				    their values flowing, see the hpcalc branch comment in app-v2.) */}
+				<Tooltip content={engine === 'globalsim' ? 'Not used by GlobalSim' : 'Use same RNG sequence for both Uma'} position="bottom">
 					<label class="v2-switch">
 						<input
 							type="checkbox"
 							checked={syncRng}
 							onChange={() => setSyncRng(!syncRng)}
+							disabled={engine === 'globalsim'}
 						/>
 						<span class="v2-switch-slider" />
 						<span class="v2-switch-label">Sync RNG</span>
@@ -209,10 +219,10 @@ export function SimulationSettings({
 				{/* Engine v1 is alpha123's published solver, vendored verbatim (see
 				    tools/sync-upstream-engine.mjs); v2 is ours. Rush, dueling, lead competition
 				    and lane movement exist only in v2, so they disable under v1 rather than
-				    silently doing nothing. GlobalSim (beta) (integration plan Phase 2b) gates
-				    the skill pickers, the chart candidate list and the uma outfits to the
-				    active GlobalSim skill table; the race pipeline still runs the classic
-				    engine until the wasm pipeline lands in Phases 4–5. */}
+				    silently doing nothing. GlobalSim (beta) (integration plan Phases 2b–5)
+				    runs Compare and the skill chart on the wasm full-field engine, gates
+				    skills and outfits to the GlobalSim skill table, and — since Phase 7 —
+				    disables every classic-only switch it ignores ('Not used by GlobalSim'). */}
 				<Tooltip content="v2 is our engine. v1 is alpha123's upstream engine — fewer mechanics, useful as a reference point. GlobalSim (beta) runs Compare and the skill chart on the GlobalSim full-field wasm engine, and gates skills and outfits to the GlobalSim skill table." position="bottom">
 					<span class="v2-sim-label">
 						Engine
@@ -224,39 +234,42 @@ export function SimulationSettings({
 					</span>
 				</Tooltip>
 
-				<Tooltip content={mode === "stamina" ? "Always enabled in Stamina mode" : "Skills check wisdom for activation"} position="bottom">
+				{/* Wit Check reaches only the classic solver's option. GlobalSim
+				    applies the wisdomCheck field of its own skill table inside
+				    the engine — no user switch exists for it there. */}
+				<Tooltip content={mode === "stamina" ? "Always enabled in Stamina mode" : engine === 'globalsim' ? 'Not used by GlobalSim' : "Skills check wisdom for activation"} position="bottom">
 					<label class="v2-switch">
 						<input
 							type="checkbox"
 							checked={skillWisdomCheck}
 							onChange={() => setSkillWisdomCheck(!skillWisdomCheck)}
-							disabled={mode === "stamina"}
+							disabled={mode === "stamina" || engine === 'globalsim'}
 						/>
 						<span class="v2-switch-slider" />
 						<span class="v2-switch-label">Wit Check</span>
 					</label>
 				</Tooltip>
 
-				<Tooltip content="Enable random rushing/kakari behavior" position="bottom">
+				<Tooltip content={engine === 'globalsim' ? 'Not used by GlobalSim' : "Enable random rushing/kakari behavior"} position="bottom">
 					<label class="v2-switch">
 						<input
 							type="checkbox"
 							checked={rushedKakari && engine === 'v2'}
 							onChange={() => setRushedKakari(!rushedKakari)}
-							disabled={engine === 'v1'}
+							disabled={engine !== 'v2'}
 						/>
 						<span class="v2-switch-slider" />
 						<span class="v2-switch-label">Rush/Kakari</span>
 					</label>
 				</Tooltip>
 
-				<Tooltip content="Enable spot struggle (position fighting)" position="bottom">
+				<Tooltip content={engine === 'globalsim' ? 'Not used by GlobalSim' : "Enable spot struggle (position fighting)"} position="bottom">
 					<label class="v2-switch">
 						<input
 							type="checkbox"
 							checked={leadCompetition && engine === 'v2'}
 							onChange={() => setLeadCompetition(!leadCompetition)}
-							disabled={engine === 'v1'}
+							disabled={engine !== 'v2'}
 						/>
 						<span class="v2-switch-slider" />
 						<span class="v2-switch-label">Spot Struggle</span>
@@ -264,24 +277,24 @@ export function SimulationSettings({
 				</Tooltip>
 
 				<div class="v2-dueling-control">
-					<Tooltip content="Enable dueling behavior" position="bottom">
+					<Tooltip content={engine === 'globalsim' ? 'Not used by GlobalSim' : "Enable dueling behavior"} position="bottom">
 						<label class="v2-switch">
 							<input
 								type="checkbox"
 								checked={competeFight && engine === 'v2'}
 								onChange={() => setCompeteFight(!competeFight)}
-								disabled={engine === 'v1'}
+								disabled={engine !== 'v2'}
 							/>
 							<span class="v2-switch-slider" />
 							<span class="v2-switch-label">Dueling</span>
 						</label>
 					</Tooltip>
-					<Tooltip content="Edit per-strategy dueling rates" position="bottom">
+					<Tooltip content={engine === 'globalsim' ? 'Not used by GlobalSim' : "Edit per-strategy dueling rates"} position="bottom">
 						<button
 							ref={ratesTriggerRef}
 							type="button"
 							class={`v2-dueling-rates-btn ${ratesOpen ? 'open' : ''}`}
-							disabled={!competeFight}
+							disabled={!competeFight || engine !== 'v2'}
 							onClick={() => setRatesOpen(o => !o)}
 							aria-label="Edit dueling rates"
 							aria-expanded={ratesOpen}
@@ -346,13 +359,13 @@ export function SimulationSettings({
 					)}
 				</div>
 
-				<Tooltip content="Enable lane movement simulation" position="bottom">
+				<Tooltip content={engine === 'globalsim' ? 'Not used by GlobalSim' : "Enable lane movement simulation"} position="bottom">
 					<label class="v2-switch">
 						<input
 							type="checkbox"
 							checked={laneMovement && engine === 'v2'}
 							onChange={() => setLaneMovement(!laneMovement)}
-							disabled={engine === 'v1'}
+							disabled={engine !== 'v2'}
 						/>
 						<span class="v2-switch-slider" />
 						<span class="v2-switch-label">Lane Movement</span>

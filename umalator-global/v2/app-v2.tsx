@@ -99,8 +99,11 @@ import {
   savePreferences,
   copyShareableUrl,
   deserializeStateFromHash,
+  loadEngineChoice,
+  saveEngineChoice,
   COLOR_PALETTES,
   type ColorPalette,
+  type SimEngine,
 } from "./storage";
 import courseData from "../course_data.json";
 import skilldata from "../skill_data.json";
@@ -290,7 +293,15 @@ function App() {
   // 'globalsim' = GlobalSim engine (integration plan): compare AND the skill
   // chart run the wasm full-field engine via engines/globalsim/pool.ts
   // (compare = Phase 4, chart = Phase 5).
-  const [engine, setEngine] = useState<'v1' | 'v2' | 'globalsim'>('v2');
+  // Phase 7: the choice persists in localStorage (storage.ts engine-choice
+  // helpers, same safety pattern as pool.ts loadThreadsOption) and travels in
+  // the share-URL hash. Restore precedence: URL hash (loadFromHash below,
+  // applied after this initial value) > localStorage > DEFAULT_ENGINE ('v2';
+  // the single constant to flip after Phase 6's live acceptance).
+  const [engine, setEngine] = useState<SimEngine>(() => loadEngineChoice());
+  useEffect(() => {
+    saveEngineChoice(engine);
+  }, [engine]);
   const globalsimMode = engine === "globalsim";
   // Active GlobalSim skill table (keys of globalsim/skills.json, fetched once when
   // GlobalSim mode is enabled; null = classic behavior until it arrives).
@@ -646,6 +657,9 @@ function App() {
               ? new Map(Object.entries(state.skillHints))
               : new Map(),
           );
+          // Phase 7: a link that names an engine wins over the persisted
+          // choice (URL hash > localStorage > default). Older links leave it.
+          if (state.engine) setEngine(state.engine);
           setSelectedPresetId(null);
         }
       }
@@ -1082,6 +1096,10 @@ function App() {
           uma: convertUmaStateForWorker(uma1),
           pacer: getDefaultPacer(),
           options: {
+            // Stamina mode has no GlobalSim path (plan D6): with 'globalsim'
+            // selected it still runs classic v2, so the simulation switches
+            // disabled in the settings bar by GlobalSim keep feeding THEIR
+            // classic values through here (disable ≠ reset — values persist).
             ...buildSimulationOptions({
               seed,
               syncRng,
@@ -1696,6 +1714,9 @@ function App() {
                           samples,
                           uma1,
                           uma2,
+                          // Phase 7: shared links restore the engine too
+                          // (older links without the key keep classic behavior).
+                          engine,
                           // Only persist non-zero hint levels to keep the link compact.
                           skillHints: Object.fromEntries(
                             [...skillHints].filter(([, v]) => v > 0),
@@ -2054,11 +2075,12 @@ function App() {
                           type="checkbox"
                           checked={forceFullSpurt}
                           onChange={(e) => setForceFullSpurt((e.target as HTMLInputElement).checked)}
+                          disabled={globalsimMode}
                         />
                         <span class="v2-switch-slider" />
                         <span class="v2-switch-label">Force Full Spurt</span>
                       </label>
-                      <Tooltip content="When ON, the uma always sprints at max speed in the final stretch — even without enough stamina. Remaining HP can go negative, showing how much stamina you're short. When OFF, the uma slows down if stamina is low, matching real race behavior." position="bottom" className="stacalc-info-tooltip">
+                      <Tooltip content={globalsimMode ? "Not used by GlobalSim" : "When ON, the uma always sprints at max speed in the final stretch — even without enough stamina. Remaining HP can go negative, showing how much stamina you're short. When OFF, the uma slows down if stamina is low, matching real race behavior."} position="bottom" className="stacalc-info-tooltip">
                         <HelpCircle size={14} class="stacalc-info-icon" />
                       </Tooltip>
                     </div>
