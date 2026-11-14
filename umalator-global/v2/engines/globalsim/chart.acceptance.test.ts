@@ -38,6 +38,7 @@ import { createGlobalsimWorkerCore, WasmApi } from './workerCore';
 import {
 	runGlobalsimSkillChart, createChartCollector, buildGlobalsimChartJobs, withSkillSwappedIn,
 	GlobalsimSkillChartInput, CHART_FILTER_MAX_L, CHART_FILTER_SPREAD_L,
+	CHART_DEFAULT_SEEDS, CHART_MAX_SEEDS, resolveChartSeedCount,
 } from './chart';
 import { newAggregate, addPair, summarizeAggregate, ci95, medianOf, SeedCompactRecord } from './metrics';
 import type { SkillChartResult } from '../../skill-chart-types';
@@ -268,10 +269,9 @@ test('(e) collector: streaming merge (B-before-A), win/tie rates, CI, round-2 me
 
 	const rows1 = c1.rows(), rows2 = c2.rows();
 	t.equal(rows1.length, 1, 'one streamed row');
-	// Arrival order changes the float SUM order (marginSumSq last bits), so
-	// CI equality is checked to 1e-9 — not bitwise — by design.
-	t.ok(Math.abs(rows2[0].globalsim!.ci95[0] - rows1[0].globalsim!.ci95[0]) < 1e-9
-		&& Math.abs(rows2[0].globalsim!.ci95[1] - rows1[0].globalsim!.ci95[1]) < 1e-9, 'B-before-A streaming merge ⇒ identical CI (1e-9)');
+	// summarizeAggregate sums the SORTED margins, so arrival order cannot shift the
+	// float-sum last bits — mean and CI are bitwise-identical regardless of order.
+	t.deepEqual(rows2[0].globalsim!.ci95, rows1[0].globalsim!.ci95, 'B-before-A streaming merge ⇒ bitwise-identical CI');
 	t.equal(rows1[0].mean, rows2[0].mean, 'identical mean regardless of arrival order');
 
 	// Independent metrics.ts computation on the same pairs.
@@ -335,5 +335,65 @@ test('job topology: baseline covers all seeds once; variant jobs grouped per ski
 	const keys = new Set(v.jobs.map(j => j.setupKey));
 	t.ok(keys.size <= 9, 'auto-gate: ≤ one preparation per gate for the variant');
 	t.ok([...keys].every(k => k.startsWith('gs|chart|k200011|')), 'setupKey names the variant (chart namespace)');
+	t.end();
+});
+
+// ── seed-count cap: the Samples field (up to 10000) must not size the chart ──
+// The chart's per-skill seed count comes from the shared compare Samples field
+// (app-v2 sampleCount → chart.ts total). The classic chart ignores Samples
+// (fixed 25 + 175 = 200); a 10000-samples compare setting would otherwise
+// make the GlobalSim chart run 10000 seeds/skill (hours). CHART_MAX_SEEDS caps it.
+
+test('seed cap: resolveChartSeedCount clamps the Samples field to ≤ CHART_MAX_SEEDS (unit)', t => {
+	t.equal(CHART_MAX_SEEDS, 1000, 'the chart seed ceiling is 1000');
+	t.equal(CHART_MAX_SEEDS < 10000, true, 'the ceiling is well below the Samples max (10000)');
+	t.equal(resolveChartSeedCount(undefined), CHART_DEFAULT_SEEDS, 'default (undefined) stays 200 — classic parity, byte-identical');
+	t.equal(resolveChartSeedCount(500), 500, 'below the cap: unchanged (app default 500 path)');
+	t.equal(resolveChartSeedCount(CHART_MAX_SEEDS), 1000, 'exactly at the cap: unchanged');
+	t.equal(resolveChartSeedCount(1001), 1000, 'just above the cap: clamped to 1000');
+	t.equal(resolveChartSeedCount(10000), 1000, 'the Samples max (10000) clamps to 1000');
+	t.ok(resolveChartSeedCount(10000) <= CHART_MAX_SEEDS, 'sampleCount 10000 ⇒ effective total ≤ 1000 (the checkup requirement)');
+	t.equal(resolveChartSeedCount(0), 1, 'floor of 1 preserved');
+	t.equal(resolveChartSeedCount(-25), 1, 'negative floors to 1');
+	t.equal(resolveChartSeedCount(199.4), 199, 'round-to-nearest preserved');
+	t.end();
+});
+
+class CountingChartWorker implements WorkerLike {
+	readonly baselineSeeds = new Set<number>();
+	private cbs: ((e: { data: any }) => void)[] = [];
+	private dead = false;
+	postMessage(m: any): void { queueMicrotask(() => { if (!this.dead) this.respond(m); }); }
+	addEventListener(type: 'message' | 'error', cb: any): void { if (type === 'message') this.cbs.push(cb); }
+	terminate(): void { this.dead = true; }
+	private fire(data: any): void { if (!this.dead) for (const cb of this.cbs) cb({ data }); }
+	private respond(m: any): void {
+		if (m.type === 'prepare') { this.fire({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: true }); return; }
+		if (m.type === 'run') {
+			// The baseline pass runs over the FULL resolved seed list once — its
+			// dispatch count IS the effective per-skill total.
+			if (String(m.jobId).split('|')[0] === 'base') for (const s of m.seeds as number[]) this.baselineSeeds.add(s);
+			const records = (m.seeds as number[]).map(seed => ({ seed, finishTimeRaw: 10.5, finishOrder: 1 }));
+			this.fire({ type: 'chunk', jobId: m.jobId, ok: true, records });
+		}
+	}
+}
+
+test('seed cap: sampleCount 10000 dispatches ≤ CHART_MAX_SEEDS baseline seeds (fake factory)', async t => {
+	const workers: CountingChartWorker[] = [];
+	const factory: WorkerFactory = () => { const w = new CountingChartWorker(); workers.push(w); return w; };
+	const rows = await runGlobalsimSkillChart(chartInput({
+		skills: ['200011'],
+		sampleCount: 10000,
+		threads: 2,
+		workerFactory: factory,
+	}));
+	let dispatched = 0;
+	for (const w of workers) dispatched += w.baselineSeeds.size;
+	t.ok(dispatched > 0, `baseline seeds were dispatched (${dispatched})`);
+	t.ok(dispatched <= CHART_MAX_SEEDS, `effective per-skill seeds ≤ ${CHART_MAX_SEEDS} despite sampleCount 10000 (got ${dispatched})`);
+	t.equal(dispatched, CHART_MAX_SEEDS, 'effective per-skill total is exactly the cap (1000, not 10000)');
+	t.ok(rows.length === 1, 'one skill row produced');
+	t.ok((rows[0].globalsim?.n ?? 0) <= CHART_MAX_SEEDS, `row sample count ≤ ${CHART_MAX_SEEDS}`);
 	t.end();
 });

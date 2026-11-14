@@ -51,7 +51,7 @@ import skillmeta from '../../../../skill_meta.json';
 import { buildGlobalSimRequest, AdapterConfig } from './adapter';
 import { buildMobField, deriveGate, MobPreset, MobError } from './mobs';
 import { createGlobalsimPool, GlobalsimPool, PoolJob, WorkerFactory, resolveThreadCount } from './pool';
-import { DEFAULT_CHUNK_SIZE, globalsimSeedList, hashString, mergeCanonicalField } from './compare';
+import { DEFAULT_CHUNK_SIZE, globalsimSeedList, hashString64, mergeCanonicalField } from './compare';
 import { SeedCompactRecord, CompareAggregate, newAggregate, addPair, summarizeAggregate } from './metrics';
 import type { SkillChartResult, SkillChartGlobalsim } from '../../skill-chart-types';
 
@@ -62,6 +62,26 @@ export const CHART_DEFAULT_SEEDS = 200;
 /** Classic round-1 keep filter (simulator.worker.ts:259-262), in lengths. */
 export const CHART_FILTER_MAX_L = 0.1;
 export const CHART_FILTER_SPREAD_L = 0.1;
+/**
+ * Hard ceiling on the chart's per-skill seed count. The classic chart ignores
+ * the UI Samples field (fixed 25 + 175 = 200, or 50 fast), but app-v2 wires the
+ * GlobalSim chart to the shared *compare* Samples setting, which clamps to
+ * 1..10000 — so an unguarded sampleCount lets a 10000-sample compare setting
+ * size the chart into an hours-long run (baseline over 10000 seeds, round 2
+ * adding ~9975 more per surviving skill). Cap the chart at 1000 seeds/skill;
+ * the compare runner keeps its own (uncapped) sampleCount, unchanged.
+ */
+export const CHART_MAX_SEEDS = 1000;
+
+/**
+ * Resolve the chart's per-skill seed count from the caller's sampleCount.
+ * Mirrors the former inline resolution exactly (default CHART_DEFAULT_SEEDS,
+ * round, floor 1) and adds the CHART_MAX_SEEDS ceiling. Pure and exported so
+ * the ceiling is unit-testable without running wasm.
+ */
+export function resolveChartSeedCount(sampleCount?: number): number {
+	return Math.min(CHART_MAX_SEEDS, Math.max(1, Math.round(sampleCount ?? CHART_DEFAULT_SEEDS)));
+}
 
 export interface ChartRaceConditions {
 	courseId: string | number;
@@ -89,7 +109,8 @@ export interface GlobalsimSkillChartInput extends ChartRaceConditions {
 	skills: readonly string[];
 	/** User-visible base seed; the seed list is globalsimSeedList(seedBase, n). */
 	seedBase: number;
-	/** Total paired seeds per surviving skill (default 200 = 25 + 175). */
+	/** Total paired seeds per surviving skill (default 200 = 25 + 175;
+	 *  clamped to [1, CHART_MAX_SEEDS] — see resolveChartSeedCount). */
 	sampleCount?: number;
 	/** Fast mode: single CHART_FAST_SEEDS round, no round-2 filter. */
 	fastMode?: boolean;
@@ -160,7 +181,7 @@ export function buildGlobalsimChartJobs(
 		const player = (res.value as any).horses[0];
 		const merged = mergeCanonicalField(player, gate, mobs);
 		const request = { ...(res.value as any), horses: merged.horses, playerHorseIndex: merged.playerIndex };
-		const setupKey = `gs|chart|${variantKey}|c${conds.courseId}|g${gate}|${hashString(JSON.stringify({ g: conds.ground, w: conds.weather, s: conds.season, t: conds.time, gr: conds.grade ?? null, h: request.horses }))}`;
+		const setupKey = `gs|chart|${variantKey}|c${conds.courseId}|g${gate}|${hashString64(JSON.stringify({ g: conds.ground, w: conds.weather, s: conds.season, t: conds.time, gr: conds.grade ?? null, h: request.horses }))}`;
 		for (let c = 0; c < groupSeeds.length; c += chunkSize) {
 			jobs.push({
 				id: `${variantKey}|g${gate}|${options.idTag ?? ''}${c}`,
@@ -265,7 +286,7 @@ export async function runGlobalsimSkillChart(input: GlobalsimSkillChartInput): P
 	const startedAt = Date.now();
 	const threads = input.threads ?? resolveThreadCount();
 	const fast = input.fastMode === true;
-	const total = Math.max(1, Math.round(input.sampleCount ?? CHART_DEFAULT_SEEDS));
+	const total = resolveChartSeedCount(input.sampleCount);
 	const round1N = Math.min(fast ? CHART_FAST_SEEDS : CHART_ROUND1_SEEDS, total);
 	const seeds = globalsimSeedList(input.seedBase, total);
 	const seeds1 = seeds.slice(0, round1N);

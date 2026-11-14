@@ -765,6 +765,44 @@ body {
   padding: var(--space-xs) var(--space-sm);
 }
 
+/* Persistent failure notice: GlobalSim skill table never loaded (retries
+   exhausted) — runs are refused until the page is reloaded. Doubles as the
+   message style of the shared dismissible run-error block below it. */
+.v2-globalsim-fail {
+  color: var(--color-error);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/* Dismissible run-error block in the results area (failed asset fetch,
+   adapter buildErrors rejection, 'produced no results', wasm load). */
+.v2-globalsim-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-xs) 0 var(--space-sm);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+.v2-globalsim-error > span {
+  flex: 1;
+  min-width: 0;
+  /* buildErrors join multi-line messages */
+  white-space: pre-line;
+}
+.v2-globalsim-error-dismiss {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
 /* GlobalSim mob-field selector in the conditions strip (integration plan Phase 3). */
 .v2-globalsim-field {
   display: flex;

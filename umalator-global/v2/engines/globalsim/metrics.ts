@@ -123,12 +123,24 @@ export function samplePlayerTail(
 	}
 	const out: number[][] = [];
 	if (slice.length === 0) return out;
-	let j = 0;
+	const n = slice.length;
+	// A lone retained frame carries no slope to interpolate or extrapolate: every
+	// grid point resolves to that constant sample (matches the old w=0 collapse).
+	if (n === 1) {
+		for (let k = 0; k < TAIL_SAMPLES; k++) out.push([k * TAIL_STEP, slice[0][1], slice[0][2]]);
+		return out;
+	}
+	// The grid walks BACKWARDS in time (k grows ⇒ t falls from finishTimeRaw), while
+	// slice is time-ASCENDING. Walk the bracket's LEFT index DOWN in lockstep with
+	// the grid so each point interpolates the segment that actually brackets it;
+	// only points outside the retained span extrapolate (finish end past
+	// slice[n-1], oldest end before slice[0]).
+	let lo = n - 2;
 	for (let k = 0; k < TAIL_SAMPLES; k++) {
 		const t = Math.max(0, finishTimeRaw - k * TAIL_STEP);
-		while (j + 2 < slice.length && slice[j + 1][0] <= t) j++;
-		const a = slice[j];
-		const b = slice[Math.min(j + 1, slice.length - 1)];
+		while (lo > 0 && slice[lo][0] > t) lo--;
+		const a = slice[lo];
+		const b = slice[lo + 1];
 		const w = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 0;
 		out.push([k * TAIL_STEP, a[1] + w * (b[1] - a[1]), a[2] + w * (b[2] - a[2])]);
 	}
@@ -224,6 +236,8 @@ export interface CompareAggregate {
 	hpEmpty2: number;
 	rushSeeds1: number; rushSeeds2: number;       // seeds with rushingStartCount > 0
 	rushStarts1: number; rushStarts2: number;     // total rushingStartCount
+	/** Streaming running totals — fold in arrival order, so their last bits DO depend on
+	 *  chunk delivery order; summarizeAggregate ignores them and re-sums the sorted margins. */
 	marginSum: number; marginSumSq: number;
 	minMargin: number; maxMargin: number;
 	methodCounts: { frames: number; 'delta-speed': number; 'delta-avg': number; tie: number };
@@ -319,10 +333,20 @@ export function medianOf(sorted: number[]): number {
 /** Finalise an aggregate into display stats. */
 export function summarizeAggregate(agg: CompareAggregate): CompareSummary {
 	const n = agg.n;
-	const mean = n > 0 ? agg.marginSum / n : NaN;
-	const variance = n > 1 ? Math.max(0, agg.marginSumSq / n - mean * mean) : 0;
-	const stdDev = Math.sqrt(variance);
+	// Sum over the SORTED margins (also the median's array), not over the
+	// streaming agg.marginSum/marginSumSq: float addition is not associative, and
+	// those running totals fold in pool chunk-arrival order, so two runs of the
+	// same seed list with different arrival orders could differ by last-ULP bits
+	// in mean/stdDev/CI. The sorted multiset is identical for any arrival order,
+	// which makes the displayed mean/CI schedule-independent.
 	const sorted = agg.margins.slice().sort((a, b) => a - b);
+	let marginSum = 0, marginSumSq = 0;
+	for (const m of sorted) { marginSum += m; marginSumSq += m * m; }
+	const mean = n > 0 ? marginSum / n : NaN;
+	// Sample (Bessel ÷(n−1)) variance: streaming n is small (chart round 1 = 25) and the
+	// population ÷n σ makes the CI too narrow there. n === 1 keeps σ = 0 → zero-width [mean, mean] CI.
+	const variance = n > 1 ? Math.max(0, (marginSumSq - n * mean * mean) / (n - 1)) : 0;
+	const stdDev = Math.sqrt(variance);
 	return {
 		n, mean, median: medianOf(sorted),
 		min: n > 0 ? agg.minMargin : NaN, max: n > 0 ? agg.maxMargin : NaN,

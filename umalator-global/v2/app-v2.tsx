@@ -81,7 +81,7 @@ import { SimulationSettings } from "./sim-settings";
 import { loadGlobalsimSkillTable } from "./engines/globalsim/skills";
 import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
 import { runGlobalsimCompare } from "./engines/globalsim/compare";
-import { runGlobalsimSkillChart } from "./engines/globalsim/chart";
+import { runGlobalsimSkillChart, CHART_MAX_SEEDS } from "./engines/globalsim/chart";
 import {
   resolveThreadCount,
   loadThreadsOption,
@@ -173,6 +173,13 @@ function hasGlyph(char: string): boolean {
 // Corner arrow with fallback: ⮌ (U+2B8C) -> ↩ (U+21A9)
 const CORNER_ARROW = hasGlyph("⮌") ? "⮌" : "↩";
 
+// Single source for the skill-table load-failure notice: the table effect
+// raises it when its retries are exhausted, and both run handlers refuse to
+// start a run with the same message. All GlobalSim failure messages (this one
+// included) surface in the shared results-area error block (globalsimError).
+const GLOBALSIM_TABLE_FAIL_MSG =
+  "GlobalSim skill table failed to load — reload the page";
+
 // Minimal strings for RaceTrack
 const STRINGS = {
   racetrack: {
@@ -222,6 +229,23 @@ function MaintenanceTime() {
   const start = new Date('2026-03-03T07:00:00Z');
   const end = new Date('2026-03-03T09:00:00Z');
   return <>{timeFmt.format(start)} – {timeFmt.format(end)}, {dateFmt.format(start)}</>;
+}
+
+// Undo a GlobalSim coverage-gate strip (see the drop effect in App): re-add every
+// stashed skill id to the build (skipping any that are already there) and restore
+// its forced position only when it originally had one. Runs when the engine leaves
+// globalsim mode, so an uncovered skill never dies just from toggling the engine.
+function restoreDroppedSkills(
+  uma: UmaState,
+  stash: Map<string, string | undefined>,
+): UmaState {
+  const skills = [...uma.skills];
+  const forcedSkillPositions = { ...uma.forcedSkillPositions };
+  for (const [id, pos] of stash) {
+    if (!skills.includes(id)) skills.push(id);
+    if (pos !== undefined) forcedSkillPositions[id] = pos;
+  }
+  return { ...uma, skills, forcedSkillPositions };
 }
 
 function App() {
@@ -297,11 +321,26 @@ function App() {
   // Phase 7: the choice persists in localStorage (storage.ts engine-choice
   // helpers, same safety pattern as pool.ts loadThreadsOption) and travels in
   // the share-URL hash. Restore precedence: URL hash (loadFromHash below,
-  // applied after this initial value) > localStorage > DEFAULT_ENGINE ('v2';
-  // the single constant to flip after Phase 6's live acceptance).
+  // applied after this initial value) > localStorage > DEFAULT_ENGINE — now
+  // 'globalsim' in storage.ts, flipped after Phase 6's live acceptance.
+  // Pre-Phase-7 links carry no engine field and deserialize to an explicit
+  // 'v2', so they still restore classic v2 as authored.
   const [engine, setEngine] = useState<SimEngine>(() => loadEngineChoice());
   useEffect(() => {
     saveEngineChoice(engine);
+    // A stale GlobalSim error never applies to another engine's results.
+    setGlobalsimError(null);
+    // Same staleness rule for the loaded skill table: every consumer reads a
+    // non-null globalsimSkillIds as "GlobalSim mode is active" (skills.tsx hides
+    // the forced-position control on it and coverage-filters the picker and
+    // templates; the skill chart pane, uma panel and the classic chart
+    // pre-filter gate on it too). Once loaded it was never unloaded, so after
+    // one globalsim visit a classic session kept the globalsim filtering and
+    // lost the "Force @ position (m)" input even though classic runs honor it.
+    // Unload on leaving globalsim; re-entering re-runs the table effect below,
+    // and skills.ts caches the table module-wide, so that reload is a cache hit,
+    // not a refetch.
+    if (engine !== "globalsim") setGlobalsimSkillIds(null);
   }, [engine]);
   const globalsimMode = engine === "globalsim";
   // Active GlobalSim skill table (keys of globalsim/skills.json, fetched once when
@@ -313,6 +352,16 @@ function App() {
   const [globalsimUncoveredCount, setGlobalsimUncoveredCount] = useState<number | null>(null);
   // Skills removed from imported/loaded builds while in GlobalSim mode (inline note).
   const [globalsimDropped, setGlobalsimDropped] = useState(0);
+  // True once the GlobalSim skill-table fetch failed even after its in-module
+  // retries. Without the table every coverage gate is off (the adapter skips
+  // its unknown-skill check and supplement-id jobs all fail), so runs are
+  // refused and a persistent notice points at a reload.
+  const [globalsimTableFailed, setGlobalsimTableFailed] = useState(false);
+  // Visible surface for every GlobalSim runtime failure (failed asset fetch,
+  // adapter buildErrors rejection, 'produced no results', wasm load) — set by
+  // both run handlers' catches and by the skill-table effect, cleared when a
+  // new run starts, on engine change, or on dismiss.
+  const [globalsimError, setGlobalsimError] = useState<string | null>(null);
   // GlobalSim worker-pool size option (Phase 4 §4.1): persisted by pool.ts.
   const [globalsimThreads, setGlobalsimThreads] = useState<ThreadsOption>(() => loadThreadsOption());
   useEffect(() => { saveThreadsOption(globalsimThreads); }, [globalsimThreads]);
@@ -334,7 +383,20 @@ function App() {
     if (engine !== "globalsim" || globalsimSkillIds) return;
     let alive = true;
     loadGlobalsimSkillTable().then((table) => {
-      if (!alive || !table) return;
+      if (!alive) return;
+      if (!table) {
+        // Retries inside skills.ts exhausted: record it so the run handlers
+        // refuse to start a gated run without the table (engine toggling back
+        // into globalsim re-runs this effect and retries the whole sequence),
+        // and raise the notice in the shared results-area error surface.
+        setGlobalsimTableFailed(true);
+        setGlobalsimError(GLOBALSIM_TABLE_FAIL_MSG);
+        return;
+      }
+      setGlobalsimTableFailed(false);
+      // A late successful load (retry after an earlier failure) retires only
+      // the table notice — an unrelated run error stays visible until cleared.
+      setGlobalsimError((prev) => (prev === GLOBALSIM_TABLE_FAIL_MSG ? null : prev));
       const ids = new Set(Object.keys(table));
       setGlobalsimSkillIds(ids);
       setGlobalsimSkillTable(table);
@@ -497,25 +559,70 @@ function App() {
     savedSession.current?.uma2 ?? defaultUmaState,
   );
 
+  // The GlobalSim switch must be non-destructive. The drop effect below gates the
+  // working uma1/uma2 builds while in globalsim mode, but on its own that permanently
+  // strips uncovered skill ids from the working builds (and the debounced auto-save
+  // persists the gated state to localStorage, so the loss outlives even a reload).
+  // Every id the drop effect removes — with its forced position, when it had one — is
+  // stashed here per uma slot (uma1 = slot 0, uma2 = slot 1), and leaving globalsim
+  // puts exactly those back: the switch's own removal is undone, while edits made
+  // during globalsim (covered skills added/removed, stats, strategy) survive intact.
+  // A globalsim -> v1/v2 round-trip therefore returns the pre-switch skills, and the
+  // auto-save effect then writes the restored builds back into the session.
+  //   - This effect is declared ABOVE the drop effect so the per-toggle counter reset
+  //     is enqueued before that effect's increments (React applies queued state
+  //     updates in enqueue order), and so a restore on leaving globalsim precedes any
+  //     later drop pass — which no-ops anyway while the engine is not globalsim.
+  const globalsimDroppedStash = useRef<Array<Map<string, string | undefined>>>([
+    new Map(),
+    new Map(),
+  ]);
+  const prevEngineRef = useRef<SimEngine>(engine);
+  useEffect(() => {
+    const prev = prevEngineRef.current;
+    if (prev === engine) return;
+    prevEngineRef.current = engine;
+    if (prev === "globalsim") {
+      // Leaving globalsim: put back exactly what the drop effect stashed away.
+      const stash1 = globalsimDroppedStash.current[0];
+      const stash2 = globalsimDroppedStash.current[1];
+      globalsimDroppedStash.current = [new Map(), new Map()];
+      if (stash1.size) setUma1((uma) => restoreDroppedSkills(uma, stash1));
+      if (stash2.size) setUma2((uma) => restoreDroppedSkills(uma, stash2));
+    }
+    // Per-toggle counter: reset on every engine change (0 when leaving; on entering,
+    // this toggle's drops re-add to it in the drop effect that runs right after), so
+    // the "Dropped N" note reports this toggle only, never a session-wide total.
+    setGlobalsimDropped(0);
+  }, [engine]);
+
   // GlobalSim mode (D5): uncovered skills must never reach the engine, so skills outside
   // the active table are dropped from any build state entering the app — session/URL-hash
   // restore, saved slots, JSON/paste/OCR imports, roster and preset loads. Behavior
-  // outside GlobalSim mode is untouched.
+  // outside GlobalSim mode is untouched, and the drops are reversible: every stripped
+  // id goes into globalsimDroppedStash above, which restores them on leaving globalsim.
   useEffect(() => {
     if (engine !== "globalsim" || !globalsimSkillIds) return;
-    const dropUncovered = (uma: UmaState) => {
+    const dropUncovered = (
+      uma: UmaState,
+      stash: Map<string, string | undefined>,
+    ) => {
       const skills = uma.skills.filter((id) => globalsimSkillIds.has(id));
       if (skills.length === uma.skills.length) return;
       const forcedSkillPositions = { ...uma.forcedSkillPositions };
       for (const id of uma.skills) {
-        if (!globalsimSkillIds.has(id)) delete forcedSkillPositions[id];
+        if (!globalsimSkillIds.has(id)) {
+          // undefined when the skill had no forced position (restore must not add one).
+          stash.set(id, forcedSkillPositions[id]);
+          delete forcedSkillPositions[id];
+        }
       }
       setGlobalsimDropped((n) => n + uma.skills.length - skills.length);
       return { ...uma, skills, forcedSkillPositions };
     };
-    const next1 = dropUncovered(uma1);
+    const next1 = dropUncovered(uma1, globalsimDroppedStash.current[0]);
     if (next1) setUma1(next1);
-    const next2 = dropUncovered(uma2);
+    const next2 = dropUncovered(uma2, globalsimDroppedStash.current[1]);
     if (next2) setUma2(next2);
   }, [engine, globalsimSkillIds, uma1, uma2]);
 
@@ -820,6 +927,7 @@ function App() {
     setSkillChartResults(new Map());
     setSkillChartProgress({});
     setSelectedSkillForChart(""); // Clear selection when starting new run
+    setGlobalsimError(null); // superseded by this run
 
     const course = courseData[courseId];
     if (!course) {
@@ -863,6 +971,19 @@ function App() {
       const controller = new AbortController();
       chartAbortRef.current = controller;
       (async () => {
+        // The skill table is mandatory in GlobalSim mode: without it the
+        // coverage gate is off (unknown skills reach the engine, every
+        // supplement-id job fails and the run ends with n=0). Never run
+        // degraded — await the table, then fail visibly.
+        if (globalsimTableFailed) {
+          throw new Error(GLOBALSIM_TABLE_FAIL_MSG);
+        }
+        const skillTable = globalsimSkillTable ?? (await loadGlobalsimSkillTable());
+        if (!skillTable) {
+          setGlobalsimTableFailed(true);
+          throw new Error(GLOBALSIM_TABLE_FAIL_MSG);
+        }
+        const knownSkillIds = globalsimSkillIds ?? new Set(Object.keys(skillTable));
         const courseIds = await loadGlobalsimCourseIds();
         if (!courseIds) {
           throw new Error(
@@ -883,7 +1004,9 @@ function App() {
         setSkillChartProgress({ 0: { round: 1, total: chartFastMode ? 1 : 2 } });
         const rows = await runGlobalsimSkillChart({
           uma: toHorseState(uma1),
-          skills: activateableSkills,
+          // Coverage filter by the awaited table (the one at the top of this
+          // handler was a no-op while the table was still in flight).
+          skills: activateableSkills.filter((id) => knownSkillIds.has(id)),
           courseId,
           distance: course.distance,
           ground,
@@ -891,13 +1014,15 @@ function App() {
           season,
           time,
           grade: Grade.G1,
-          knownSkillIds: globalsimSkillIds ?? undefined,
-          skillData: globalsimSkillTable ?? undefined,
+          knownSkillIds,
+          skillData: skillTable,
           courseIds,
           mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
           fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
           seedBase: seed || Math.floor(Math.random() * 0xFFFFFFFF),
-          sampleCount: samples,
+          // Cap the chart's per-skill seeds: `samples` is the shared compare
+          // field (up to 10000); chart.ts also clamps this independently.
+          sampleCount: Math.min(samples, CHART_MAX_SEEDS),
           fastMode: chartFastMode,
           threads: resolveThreadCount(globalsimThreads),
           workerFactory: globalsimWorkerFactory,
@@ -912,7 +1037,10 @@ function App() {
         console.log("[GlobalSim] skill chart finished:", rows.length, "skills");
       })()
         .catch((e) => {
-          if ((e as any)?.name !== "AbortError") console.error("[GlobalSim] skill chart failed:", e);
+          if ((e as any)?.name === "AbortError") return; // superseded by a new run
+          console.error("[GlobalSim] skill chart failed:", e);
+          // Surface it: the chart pane otherwise just sits at its empty state.
+          setGlobalsimError(e instanceof Error ? e.message : String(e));
         })
         .finally(() => {
           if (chartAbortRef.current === controller) chartAbortRef.current = null;
@@ -974,6 +1102,7 @@ function App() {
     chartFastMode,
     globalsimSkillIds,
     globalsimSkillTable,
+    globalsimTableFailed,
     // GlobalSim chart path (Phase 5)
     engine,
     samples,
@@ -985,6 +1114,7 @@ function App() {
 
   // Run simulation via worker
   const handleRunSimulation = useCallback(() => {
+    setGlobalsimError(null); // superseded by this run
     if (autoSeed) {
       setSeed(Math.floor(Math.random() * 0xFFFFFFFF));
     }
@@ -1004,6 +1134,19 @@ function App() {
       // classic simulator.worker.ts path.
       if (engine === "globalsim") {
         (async () => {
+          // The skill table is mandatory in GlobalSim mode (same reason as
+          // the chart path): a missing table means no unknown-skill check and
+          // a guaranteed n=0 failure. Never run degraded — await it, then
+          // fail visibly instead of silently skipping the coverage gate.
+          if (globalsimTableFailed) {
+            throw new Error(GLOBALSIM_TABLE_FAIL_MSG);
+          }
+          const skillTable = globalsimSkillTable ?? (await loadGlobalsimSkillTable());
+          if (!skillTable) {
+            setGlobalsimTableFailed(true);
+            throw new Error(GLOBALSIM_TABLE_FAIL_MSG);
+          }
+          const knownSkillIds = globalsimSkillIds ?? new Set(Object.keys(skillTable));
           const courseIds = await loadGlobalsimCourseIds();
           if (!courseIds) {
             throw new Error(
@@ -1033,8 +1176,8 @@ function App() {
             season,
             time,
             grade: Grade.G1,
-            knownSkillIds: globalsimSkillIds ?? undefined,
-            skillData: globalsimSkillTable ?? undefined,
+            knownSkillIds,
+            skillData: skillTable,
             courseIds,
             mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
             fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
@@ -1047,7 +1190,11 @@ function App() {
           });
           console.log("[GlobalSim] compare finished:", res.globalsim);
         })()
-          .catch((e) => console.error("[GlobalSim] compare failed:", e))
+          .catch((e) => {
+            console.error("[GlobalSim] compare failed:", e);
+            // Surface it: the results pane otherwise just sits at its empty state.
+            setGlobalsimError(e instanceof Error ? e.message : String(e));
+          })
           .finally(() => setIsRunning(false));
         return;
       }
@@ -1099,8 +1246,8 @@ function App() {
           options: {
             // Stamina mode has no GlobalSim path (plan D6): with 'globalsim'
             // selected it still runs classic v2, so the simulation switches
-            // disabled in the settings bar by GlobalSim keep feeding THEIR
-            // classic values through here (disable ≠ reset — values persist).
+            // stay ENABLED in the settings bar in this mode and their live
+            // values flow through to this hpcalc run.
             ...buildSimulationOptions({
               seed,
               syncRng,
@@ -1145,6 +1292,7 @@ function App() {
     // GlobalSim compare path (Phase 4)
     globalsimSkillIds,
     globalsimSkillTable,
+    globalsimTableFailed,
     globalsimFieldPreset,
     globalsimGate,
     globalsimThreads,
@@ -1897,6 +2045,29 @@ function App() {
                   )}
                 </div>
 
+                {/* Shared GlobalSim error surface: any runtime failure
+                    (skills.json/courses.json/geometry/wasm fetch, adapter
+                    buildErrors rejection, 'produced no results') lands here —
+                    the compare/chart results pane would otherwise just sit at
+                    its empty state with the error in the console only.
+                    Dismissible; cleared by the next run or an engine switch. */}
+                {globalsimError && (
+                  <div
+                    class="v2-globalsim-fail v2-globalsim-error"
+                    role="alert"
+                  >
+                    <span>{globalsimError}</span>
+                    <button
+                      type="button"
+                      class="v2-globalsim-error-dismiss"
+                      aria-label="Dismiss error"
+                      onClick={() => setGlobalsimError(null)}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
                 {/* Mode-specific content below track */}
                 {mode === "skill" ? (
                   <div class="v2-skill-chart-container">
@@ -2076,12 +2247,11 @@ function App() {
                           type="checkbox"
                           checked={forceFullSpurt}
                           onChange={(e) => setForceFullSpurt((e.target as HTMLInputElement).checked)}
-                          disabled={globalsimMode}
                         />
                         <span class="v2-switch-slider" />
                         <span class="v2-switch-label">Force Full Spurt</span>
                       </label>
-                      <Tooltip content={globalsimMode ? "Not used by GlobalSim" : "When ON, the uma always sprints at max speed in the final stretch — even without enough stamina. Remaining HP can go negative, showing how much stamina you're short. When OFF, the uma slows down if stamina is low, matching real race behavior."} position="bottom" className="stacalc-info-tooltip">
+                      <Tooltip content="When ON, the uma always sprints at max speed in the final stretch — even without enough stamina. Remaining HP can go negative, showing how much stamina you're short. When OFF, the uma slows down if stamina is low, matching real race behavior." position="bottom" className="stacalc-info-tooltip">
                         <HelpCircle size={14} class="stacalc-info-icon" />
                       </Tooltip>
                     </div>

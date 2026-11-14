@@ -1144,6 +1144,14 @@ export function SkillsSection({ skills, onChange, courseDistance, forcedSkillPos
 					const isUnique = uniqueSkillId && id === uniqueSkillId;
 					const sc = starCount || 3;
 					const minLvVal = sc % 3 + Math.floor(sc / 3);
+					// GlobalSim mode: the engine has no forced-position equivalent and
+					// the adapter always drops these values (engines/globalsim/adapter.ts,
+					// 'forced-skill-positions-ignored'), so hide the control instead of
+					// letting edits be silently discarded. The forcedSkillPositions state
+					// stays untouched — classic runs keep honoring it.
+					const positionChange = !globalsimSkillIds && onForcedPositionChange
+						? (pos: string) => onForcedPositionChange(id, pos)
+						: undefined;
 					return (
 						<SkillChip
 							key={id}
@@ -1151,7 +1159,7 @@ export function SkillsSection({ skills, onChange, courseDistance, forcedSkillPos
 							onRemove={() => handleRemoveSkill(id)}
 							courseDistance={courseDistance}
 							forcedPosition={forcedSkillPositions?.[id]}
-							onPositionChange={onForcedPositionChange ? (pos) => onForcedPositionChange(id, pos) : undefined}
+							onPositionChange={positionChange}
 							lv={isUnique ? uniqueLv : undefined}
 							onLvChange={isUnique ? onUniqueLvChange : undefined}
 							minLv={isUnique ? minLvVal : undefined}

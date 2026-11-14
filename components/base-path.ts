@@ -23,7 +23,13 @@ const DEFAULT_BASE = '/uma-tools';
  * configured BASE_PATH. Paths not under the default prefix are returned
  * unchanged, and under the default BASE_PATH this is an identity mapping
  * (byte-for-byte identical URLs).
+ *
+ * Non-string input (undefined/null: a `icons[id]` lookup for an id that has no
+ * icons.json entry — imported/roster outfits carry unchecked ids, storage.ts)
+ * is returned unchanged, so callers keep their `|| fallback` behavior instead
+ * of throwing during render.
  */
 export function resolveBase(raw: string): string {
+	if (typeof raw !== 'string') return raw;
 	return raw.startsWith(DEFAULT_BASE + '/') ? BASE_PATH + raw.slice(DEFAULT_BASE.length) : raw;
 }

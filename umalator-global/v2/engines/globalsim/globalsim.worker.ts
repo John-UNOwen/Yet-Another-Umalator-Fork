@@ -13,7 +13,8 @@
  *
  * `importScripts` is intentionally avoided: the wasm-bindgen glue is an ES
  * module (init + named exports), so this worker must be type:'module' and
- * import it that way (globalsim-pool.ts creates it with {type:'module'}).
+ * import it that way — the globalsimWorkerFactory in app-v2.tsx creates it
+ * with {type:'module'}.
  */
 
 import { createGlobalsimWorkerCore, WasmApi } from './workerCore';

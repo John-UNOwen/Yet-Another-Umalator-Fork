@@ -118,6 +118,11 @@ export interface PoolOptions {
 }
 
 export interface GlobalsimPool {
+	/**
+	 * Run one batch; resolves when it drains. `errors` carries ONLY this
+	 * batch's job errors — a second runJobs on the same pool never
+	 * re-reports an earlier batch's (chart.ts concatenates each result).
+	 */
 	runJobs(jobs: PoolJob[]): Promise<{ errors: Array<{ jobId: string; error: string }> }>;
 	dispose(): void;
 	/**
@@ -265,13 +270,17 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			if (running) return Promise.reject(new Error('globalsim pool is already running a batch'));
 			if (aborted) return Promise.reject(new Error('globalsim pool was aborted'));
 			if (disposed) return Promise.reject(new Error('globalsim pool is disposed'));
+			// The pool-level `errors` array accumulates across batches (chart.ts
+			// runs one batch per round on the same pool and concatenates each
+			// result), so resolve ONLY the entries added during this call.
+			const errorsFrom = errors.length;
 			queue.push(...jobs.map(job => ({ job, requeues: 0 })));
 			const n = Math.min(threads, Math.max(1, queue.length));
 			while (slots.length < n) makeSlot();
 			return new Promise<void>((resolve, reject) => {
 				running = { resolve, reject };
 				dispatch();
-			}).then(() => ({ errors }));
+			}).then(() => ({ errors: errors.slice(errorsFrom) }));
 		},
 		dispose(): void {
 			disposed = true;

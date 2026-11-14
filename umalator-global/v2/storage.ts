@@ -761,7 +761,9 @@ export async function deserializeStateFromHash(hash: string): Promise<ShareableS
 			weather: typeof parsed.weather === 'number' ? parsed.weather : 1,
 			season: typeof parsed.season === 'number' ? parsed.season : 4,
 			time: typeof parsed.time === 'number' ? parsed.time : 2,
-			samples: typeof parsed.samples === 'number' ? parsed.samples : 500,
+			// Clamp like the Samples input (sim-settings.tsx) — a crafted link
+			// must not hand globalsimSeedList a huge unclamped count (§6.3).
+			samples: typeof parsed.samples === 'number' ? Math.max(1, Math.min(10000, parsed.samples)) : 500,
 			uma1,
 			uma2,
 			skillHints: (parsed.skillHints && typeof parsed.skillHints === 'object') ? parsed.skillHints : {},

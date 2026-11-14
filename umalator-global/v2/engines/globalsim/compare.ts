@@ -25,9 +25,10 @@
  * ## Results shape
  *
  * The returned object matches the classic CompareResults the existing
- * results pane consumes (results = sorted margin array in lengths, positive =
- * UMA 2 ahead — the umalator/compare.ts sign; runData = the four
- * representative frame-bearing snapshots) plus an additive `globalsim`
+ * results pane consumes (results = the margin array in lengths, appended in
+ * chunk-arrival order — unsorted; consumers such as the results pane re-sort
+ * it; positive = UMA 2 ahead — the umalator/compare.ts sign; runData = the
+ * four representative frame-bearing snapshots) plus an additive `globalsim`
  * extension block the pane renders only for this engine (win rates, ties,
  * 95% CI, placing histograms, HP-empty/rushing rates, engine version line).
  * Panes with no GlobalSim source (stamina survival, pacer gap, posKeep/duel/
@@ -66,11 +67,38 @@ export function globalsimSeedList(baseSeed: number, count: number): number[] {
 	return out;
 }
 
-/** FNV-1a hash (base36) — shared with chart.ts for setupKey building. */
+/**
+ * FNV-1a hash (base36). Kept exported unchanged (seed pairing never used
+ * it — globalsimSeedList derives the seed list). The setupKey identity uses
+ * hashString64 below.
+ */
 export function hashString(s: string): string {
 	let h = 0x811C9DC5;
 	for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
 	return (h >>> 0).toString(36);
+}
+
+/**
+ * 64-bit-equivalent preparation fingerprint for setupKey identity (base36).
+ *
+ * pool.ts dispatch (pool.ts:250/254) reuses a worker's live preparation on
+ * setupKey equality ALONE, so the hash must be collision-free at chart
+ * scale: a big chart is ~2700 distinct preparations, and a bare 32-bit key
+ * collides with birthday probability ~2700²/2³³ ≈ 8.5e-4 per run — one
+ * skill's seeds would silently run on another preparation's field. This
+ * computes a second FNV-1a over the same string with a different offset
+ * basis (the FNV-1 basis 0xCBF43926, same prime), and returns both hashes
+ * as fixed-width zero-padded base36 concatenated (7 chars ≥ 36⁷ > 2³², so
+ * the pair is unambiguously recoverable from the string). Same canonical
+ * string in, same fingerprint out — determinism preserved.
+ */
+export function hashString64(s: string): string {
+	let h1 = 0x811C9DC5, h2 = 0xCBF43926;
+	for (let i = 0; i < s.length; i++) {
+		h1 ^= s.charCodeAt(i); h1 = Math.imul(h1, 0x01000193);
+		h2 ^= s.charCodeAt(i); h2 = Math.imul(h2, 0x01000193);
+	}
+	return (h1 >>> 0).toString(36).padStart(7, '0') + (h2 >>> 0).toString(36).padStart(7, '0');
 }
 
 export interface GlobalsimCompareInput {
@@ -194,7 +222,7 @@ export function buildCompareJobs(
 			const player = (res.value as any).horses[0];
 			const merged = mergeCanonicalField(player, gate, mobs);
 			const request = { ...(res.value as any), horses: merged.horses, playerHorseIndex: merged.playerIndex };
-			const setupKey = `gs|${mode}|v${variant}|c${input.courseId}|g${gate}|${hashString(JSON.stringify({ g: input.ground, w: input.weather, s: input.season, t: input.time, gr: input.grade ?? null, h: request.horses }))}`;
+			const setupKey = `gs|${mode}|v${variant}|c${input.courseId}|g${gate}|${hashString64(JSON.stringify({ g: input.ground, w: input.weather, s: input.season, t: input.time, gr: input.grade ?? null, h: request.horses }))}`;
 			for (let c = 0; c < groupSeeds.length; c += chunkSize) {
 				jobs.push({
 					id: `${variant}|${gate}|${c}`,
@@ -365,6 +393,12 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 		const repPool = createGlobalsimPool({
 			factory: input.workerFactory,
 			threads,
+			// Same table injection as the sampling pool: these requests also
+			// omit skillData (buildCompareJobs config.skillData === null), so a
+			// rep worker without the injection silently falls back to the
+			// engine's legacy bundled table (diverged finishes; prepare fails
+			// 'Missing retail initialization field' on supplement ids).
+			skillData: input.skillData,
 			onChunk: (job, records) => {
 				const target = job.id.startsWith('1|') ? fullB : fullA;
 				for (const r of records as FullRunData[]) if (!r.error) target.set(r.seed, r);
@@ -372,7 +406,7 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 		});
 		try {
 			const repErrors = await repPool.runJobs(repJobs);
-			if (repErrors.errors.length) console.warn('[GlobalSim] representative runs failed:', repErrors.errors);
+			if (repErrors.errors.length) console.warn('[GlobalSim] representative runs failed (check the rep pool skill-table injection):', repErrors.errors);
 		} finally { repPool.dispose(); }
 	}
 	const snapshotFor = (seed: number): unknown | null => {

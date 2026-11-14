@@ -103,3 +103,54 @@ test('supplement entries prepare and activate in the engine', (t) => {
 	}
 	t.end();
 });
+
+/**
+ * Module-level fetch behavior (no engine needed): a transient skills.json
+ * failure must not permanently disable the coverage gate — the loader retries
+ * with capped backoff, and only a fully exhausted sequence returns null (and
+ * that failure is not cached: the next caller starts a fresh sequence).
+ */
+test('skill table fetch retries transient failures with capped backoff', async (t) => {
+	const { loadGlobalsimSkillTable, loadGlobalsimSkillIds, SKILL_TABLE_RETRY_DELAYS_MS } = await import('./skills');
+	const origFetch = globalThis.fetch;
+	const origSetTimeout = globalThis.setTimeout;
+	try {
+		// Collapse the real backoff so the test is instant; record the delays.
+		const delays: number[] = [];
+		globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+			delays.push(ms ?? 0);
+			fn();
+			return 0 as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout;
+
+		// Sequence 1: every attempt fails → null after 1 + 3 retries, backoff
+		// capped at the documented delays.
+		let calls = 0;
+		globalThis.fetch = (() => {
+			calls++;
+			return Promise.reject(new Error('transient'));
+		}) as unknown as typeof fetch;
+		t.equal(await loadGlobalsimSkillTable(), null, 'exhausted sequence returns null');
+		t.equal(calls, 1 + SKILL_TABLE_RETRY_DELAYS_MS.length, 'one attempt + capped retries (3 retries)');
+		t.deepEqual(delays, SKILL_TABLE_RETRY_DELAYS_MS, 'backoff delays are the capped sequence');
+
+		// Sequence 2 (fresh caller — failures are never cached): one transient
+		// blip then success → the table arrives despite the blip.
+		const table = { '100001': {}, '200002': {} };
+		globalThis.fetch = (() => {
+			calls++;
+			if (calls % 2 === 1) return Promise.reject(new Error('transient blip'));
+			return Promise.resolve({ ok: true, json: async () => table });
+		}) as unknown as typeof fetch;
+		const ids = await loadGlobalsimSkillIds();
+		t.ok(ids, 'transient blip then success returns the ids');
+		t.same([...(ids as Set<string>)].sort(), ['100001', '200002'], 'ids are the table keys');
+		const callsAfterLoad = calls;
+		t.deepEqual(await loadGlobalsimSkillTable(), table, 'success is cached for the session');
+		t.equal(calls, callsAfterLoad, 'cached success triggers no further fetch');
+	} finally {
+		globalThis.fetch = origFetch;
+		globalThis.setTimeout = origSetTimeout;
+	}
+	t.end();
+});

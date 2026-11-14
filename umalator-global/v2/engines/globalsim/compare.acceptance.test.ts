@@ -17,6 +17,8 @@
  *   (c) determinism: the same seed list twice ⇒ byte-identical aggregates.
  *   (d) both margin methods agree within 0.05 L on frame runs (real wasm).
  *   (e) is covered in pool.test.ts (fake worker factory).
+ *   (f) the representative-run pool receives the injected skill table too
+ *       (scripted workers; regression — rep requests omit skillData).
  */
 
 // Same CC_GLOBAL-before-import trick as adapter.test.ts.
@@ -230,3 +232,67 @@ async function collectFull(horse: HorseState, variant: number, seeds: number[]):
 	});
 	return out;
 }
+
+// ── (f) rep-run pool receives the injected skill table (scripted workers) ────
+
+test('(f) representative-run pool receives the injected skill table (scripted workers)', async t => {
+	// Scripted bridge implementing the engine's table contract: a prepare
+	// request that omits skillData (adapter config.skillData === null — the
+	// path buildCompareJobs takes whenever input.skillData is set) only
+	// initializes if the worker got the pool's first-message {type:'skillData'}
+	// injection; without one the engine falls back to its own legacy table and
+	// ids outside it fail prepare ('Missing retail initialization field').
+	const table = { __fixture_table__: { name: 'merged table' } };
+	interface Rec { firstMsg: any; sawFullPrepare: boolean; fullPrepareWithoutTable: number }
+	const workers: Rec[] = [];
+	const scriptedFactory: WorkerFactory = (): WorkerLike => {
+		const rec: Rec = { firstMsg: null, sawFullPrepare: false, fullPrepareWithoutTable: 0 };
+		workers.push(rec);
+		let heldSkillData: unknown = null;
+		const msgCbs: ((e: { data: any }) => void)[] = [];
+		const send = (m: any) => queueMicrotask(() => { for (const cb of msgCbs) cb({ data: m }); });
+		return {
+			postMessage: (m: any) => {
+				if (rec.firstMsg === null) rec.firstMsg = m;
+				queueMicrotask(() => {
+					if (m.type === 'skillData') { heldSkillData = m.skillData; return; }
+					if (m.type === 'prepare') {
+						const omitTable = (m.request as any).skillData == null;
+						if (String(m.setupKey).includes('|full|')) {
+							rec.sawFullPrepare = true;
+							if (omitTable && heldSkillData == null) rec.fullPrepareWithoutTable++;
+						}
+						send({ type: 'prepared', id: m.id, ok: !omitTable || heldSkillData != null });
+						return;
+					}
+					if (m.type === 'run') {
+						const variant = Number(String(m.jobId).split('|')[0]);
+						const records = (m.seeds as number[]).map((seed: number) => m.mode === 'full'
+							? { seed, finishTimeRaw: variant ? 124 : 125, finishOrder: 3, startDelayTime: 0,
+								t: [0, 1, 2], pos: [0, 500, 1000], speed: [10, 11, 11], hp: [100, 90, 80], skillEvents: [] }
+							: { seed, finishTimeRaw: variant ? 124 : 125, finishOrder: 3, tail: null });
+						send({ type: 'chunk', jobId: m.jobId, ok: true, records });
+					}
+				});
+			},
+			addEventListener: (type: string, cb: any) => { if (type === 'message') msgCbs.push(cb); },
+			terminate: () => { /* scripted: nothing to tear down */ },
+		};
+	};
+	const h = horseWithSkills(['100011']);
+	const res = await runGlobalsimCompare(compareInput(h, h, {
+		skillData: table, workerFactory: scriptedFactory, sampleCount: 4, threads: 1,
+	}));
+	const repWorkers = workers.filter(w => w.sawFullPrepare);
+	t.ok(repWorkers.length > 0, 'representative-run workers were created');
+	t.equal(res.globalsim.doneSeeds, 4, 'sampling pass completed through the scripted bridge');
+	for (const w of workers) {
+		t.equal(w.firstMsg?.type, 'skillData', 'every pool worker’s first message is the skill-table injection');
+		t.equal(w.firstMsg?.skillData, table, 'and carries the exact injected table');
+	}
+	t.equal(repWorkers.reduce((s, w) => s + w.fullPrepareWithoutTable, 0), 0,
+		'no full-mode prepare reached the engine without the table (legacy-table fallback)');
+	t.ok(res.runData.minrun && res.runData.maxrun && res.runData.meanrun && res.runData.medianrun,
+		'all four representative snapshots built (null = rep runs silently failed)');
+	t.end();
+});

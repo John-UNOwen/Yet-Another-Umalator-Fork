@@ -12,29 +12,52 @@
  * uncovered skills never reach the engine (decision D5 — same ids the
  * adapter's `knownSkillIds` validation accepts).
  *
- * Fetched once per session and cached. A failed fetch is not cached — the
- * next caller retries (e.g. after the missing asset gets built).
+ * Fetched once per session and cached. A single transient failure must not
+ * kill the coverage gate for the whole session (one-shot callers — app-v2's
+ * mount effect — never re-call after a null), so the fetch retries with a
+ * capped backoff before giving up. Only a fully failed retry sequence returns
+ * null, and it is not cached — the next caller starts a fresh sequence (e.g.
+ * after the missing asset gets built).
  */
 
 interface SkillTable { ids: Set<string>; defs: Record<string, unknown> }
 
 import { BASE_PATH } from '../../../../components/base-path';
 
+/** Backoff before retries 1/2/3 after a failed attempt (3 retries, ≤10 s). */
+export const SKILL_TABLE_RETRY_DELAYS_MS = [1000, 4000, 10000];
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 let pending: Promise<SkillTable | null> | null = null;
+
+async function fetchTableOnce(): Promise<SkillTable> {
+	const r = await fetch(`${BASE_PATH}/globalsim/skills.json`);
+	if (!r.ok) throw new Error(`HTTP ${r.status}`);
+	const table = (await r.json()) as Record<string, unknown>;
+	return { ids: new Set(Object.keys(table)), defs: table };
+}
+
+async function fetchTableWithRetries(): Promise<SkillTable | null> {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			return await fetchTableOnce();
+		} catch (e) {
+			if (attempt >= SKILL_TABLE_RETRY_DELAYS_MS.length) {
+				console.warn('[GlobalSim] active skill table unavailable:', e);
+				return null;
+			}
+			await delay(SKILL_TABLE_RETRY_DELAYS_MS[attempt]);
+		}
+	}
+}
 
 function fetchTable(): Promise<SkillTable | null> {
 	if (!pending) {
-		pending = fetch(`${BASE_PATH}/globalsim/skills.json`)
-			.then(r => {
-				if (!r.ok) throw new Error(`HTTP ${r.status}`);
-				return r.json();
-			})
-			.then((table: Record<string, unknown>) => ({ ids: new Set(Object.keys(table)), defs: table }))
-			.catch(e => {
-				console.warn('[GlobalSim] active skill table unavailable:', e);
-				pending = null; // don't cache failures — the next caller retries
-				return null;
-			});
+		pending = fetchTableWithRetries().then((table) => {
+			if (!table) pending = null; // don't cache failures — the next caller retries
+			return table;
+		});
 	}
 	return pending;
 }

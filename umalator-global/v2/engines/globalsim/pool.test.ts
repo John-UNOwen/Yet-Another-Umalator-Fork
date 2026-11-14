@@ -23,7 +23,7 @@ import {
 	autoThreadCount, resolveThreadCount, loadThreadsOption, saveThreadsOption,
 	THREADS_STORAGE_KEY, MAX_THREADS, AUTO_THREADS_MAX,
 } from './pool';
-import { buildCompareJobs, globalsimSeedList, GlobalsimCompareInput, DEFAULT_CHUNK_SIZE } from './compare';
+import { buildCompareJobs, globalsimSeedList, hashString64, GlobalsimCompareInput, DEFAULT_CHUNK_SIZE } from './compare';
 import { parseMobPresets } from './mobs';
 import { HorseState, SkillSet } from '../../../../components/HorseDefTypes';
 import { GroundCondition, Weather, Season, Time } from '../../../../uma-skill-tools/RaceParameters';
@@ -165,6 +165,27 @@ test('non-dead prepare failure = immediate job error, no requeue', async t => {
 	t.end();
 });
 
+test('second runJobs on the same pool reports only its own batch errors', async t => {
+	// Regression: runJobs used to resolve with the SAME pool-level errors array,
+	// never reset — chart.ts calls runJobs once per round and pushes ...res.errors
+	// into jobErrors each time, so batch 1's errors were re-counted in batch 2.
+	const { factory } = scripted((m, w) => {
+		if (m.type === 'prepare') w.fire(preparedOk(m));
+		else if (m.type === 'run') {
+			if (String(m.jobId).includes('bad')) w.fire({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: false, dead: false, error: `boom ${m.jobId}` });
+			else w.fire(chunkOk(m));
+		}
+	});
+	const pool = createGlobalsimPool({ factory, threads: 1 });
+	const res1 = await pool.runJobs([job('b1.bad', 'X', [1]), job('b1.ok', 'X', [2])]);
+	t.deepEqual(res1.errors.map(e => e.jobId), ['b1.bad'], 'batch 1 reports only its own failure');
+	const res2 = await pool.runJobs([job('b2.bad', 'Y', [3]), job('b2.ok', 'Y', [4])]);
+	t.deepEqual(res2.errors.map(e => e.jobId), ['b2.bad'], 'batch 2 contains only the new errors, not batch 1 ones');
+	t.notEqual(res2.errors, res1.errors, 'each batch resolves with a distinct array');
+	pool.dispose();
+	t.end();
+});
+
 test('order-independent merge: out-of-order chunk delivery yields identical summaries', t => {
 	// Scheduler-independent half of acceptance (e): chunk records may arrive in
 	// any order; the main-thread merge (addPair) is order-independent, which is
@@ -243,6 +264,23 @@ test('buildCompareJobs: auto gate groups seeds by derived gate (≤9 setups per 
 	const total = v0.reduce((s, j) => s + j.seeds.length, 0);
 	t.equal(total, 200, 'variant 0 covers every seed exactly once');
 	for (const j of jobs) t.ok(j.seeds.length <= DEFAULT_CHUNK_SIZE, 'chunks stay ≤ 25 even inside a gate group');
+	t.end();
+});
+
+test('hashString64: deterministic 64-bit-equivalent setup fingerprint (setupKey identity)', t => {
+	// pool.ts trusts setupKey equality alone when reusing a preparation, so
+	// the hash must be deterministic and collision-free at chart scale
+	// (~2700 preparations on a big chart; a 32-bit FNV key collided ~0.1%/run).
+	const canon = JSON.stringify({ g: 2, w: 1, s: 0, t: 1, gr: null, h: [{ gateIndex: 3, uid: 'a' }] });
+	t.equal(hashString64(canon), hashString64(canon), 'deterministic: same canonical string in, same fingerprint out');
+	t.equal(hashString64(canon).length, 14, 'fixed 7+7 zero-padded base36 width (36^7 > 2^32 ⇒ unambiguous pair)');
+	const near = canon.replace('"gateIndex":3', '"gateIndex":4');
+	t.notEqual(hashString64(canon), hashString64(near), 'one-field near-miss splits (the collision shape a 32-bit key hit)');
+	const seen = new Set<string>();
+	for (let i = 0; i < 10000; i++) {
+		seen.add(hashString64(JSON.stringify({ g: 2, w: 1, s: 0, t: 1, gr: null, h: [{ gateIndex: i % 18, uid: 'uma' + i }] })));
+	}
+	t.equal(seen.size, 10000, '10000 distinct preparations ⇒ 10000 distinct fingerprints (~4× chart scale)');
 	t.end();
 });
 
