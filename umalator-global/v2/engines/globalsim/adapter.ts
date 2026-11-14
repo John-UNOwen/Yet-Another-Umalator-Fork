@@ -161,6 +161,17 @@ export interface AdapterConfig {
 	/** Optional coverage set (Phase 2 active skill table). When present, every
 	 *  emitted skill id must be in it — skills GlobalSim lacks never reach the engine. */
 	knownSkillIds?: ReadonlySet<string> | readonly string[];
+	/**
+	 * Engine skillData control (Phase 2 merged table):
+	 *   undefined → profile-v77's embedded skillData (pure v70; byte-identical
+	 *               to the pinned goldens);
+	 *   object    → replace skillData with it (the merged active table, so the
+	 *               21 batch-1 supplement skills initialize in the engine);
+	 *   null      → OMIT the skillData key entirely: the worker injects the
+	 *               table it received once via the pool's 'skillData' init
+	 *               message (workerCore), keeping per-prepare payloads small.
+	 */
+	skillData?: Record<string, unknown> | null;
 }
 
 export interface AdapterError {
@@ -388,6 +399,8 @@ export function buildGlobalSimRequest(input: AdapterRaceInput, config: AdapterCo
 
 	// Fixed key order keeps the serialized request byte-stable for a given input.
 	const request: GlobalSimRequest = { ...profileV77 };
+	if (config.skillData === null) delete (request as Partial<GlobalSimRequest>).skillData;
+	else if (config.skillData) request.skillData = config.skillData as GlobalSimRequest['skillData'];
 	request.seed = input.seed;
 	request.courseId = courseIdNum;
 	request.groundCondition = ground;

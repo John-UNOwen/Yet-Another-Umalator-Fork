@@ -105,6 +105,12 @@ export interface PoolOptions {
 	factory: WorkerFactory;
 	/** Resolved worker count (see resolveThreadCount). Default: auto. */
 	threads?: number;
+	/**
+	 * Merged active skill table (engine skillData): sent once to every worker
+	 * as its first message ({type:'skillData'}), so preparations can omit the
+	 * ~350 KB table per prepare (adapter config.skillData === null).
+	 */
+	skillData?: unknown;
 	/** Every completed chunk: records are SeedCompactRecord[] or FullRunData[]. */
 	onChunk?: (job: PoolJob, records: any[]) => void;
 	/** A chunk that failed twice (dead twice) or hit an input error. */
@@ -157,6 +163,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		slot.worker = opts.factory();
 		slot.preparedKey = null;
 		slot.expecting = null;
+		if (opts.skillData !== undefined) slot.worker.postMessage({ type: 'skillData', skillData: opts.skillData });
 		slot.worker.addEventListener('message', (e: { data: any }) => { if (!disposed && !aborted && slot.gen === gen) onWorkerMessage(slot, e.data); });
 		// A crashed worker (OOM / uncaught throw / wasm trap the runtime kills
 		// the thread for) lands here — same recovery path as an engine panic.

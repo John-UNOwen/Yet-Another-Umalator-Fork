@@ -30,6 +30,7 @@
     "test:globalsim-pool": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/pool.test.ts",
     "test:globalsim-compare": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/compare.acceptance.test.ts",
     "test:globalsim-chart": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/chart.acceptance.test.ts",
+    "test:globalsim-skilldata": "node tools/globalsim-coverage.mjs --out globalsim/skills.json && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/skilldata.acceptance.test.ts",
     "globalsim:coverage": "node tools/globalsim-coverage.mjs",
     "typecheck:roster": "bash tools/typecheck-roster.sh"
   },

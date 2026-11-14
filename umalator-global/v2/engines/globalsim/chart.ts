@@ -74,6 +74,8 @@ export interface ChartRaceConditions {
 	grade?: Grade;
 	/** Active GlobalSim skill table keys — the adapter's coverage gate (D5). */
 	knownSkillIds?: ReadonlySet<string>;
+	/** Merged active skill table (engine skillData) — see GlobalsimCompareInput. */
+	skillData?: Record<string, unknown>;
 	courseIds: ReadonlySet<string> | readonly string[];
 	mobPreset: MobPreset;
 	fixedGate?: number;
@@ -137,7 +139,7 @@ export function buildGlobalsimChartJobs(
 	}
 	const jobs: PoolJob[] = [];
 	const errors: string[] = [];
-	const config: AdapterConfig = { courseIds: conds.courseIds, knownSkillIds: conds.knownSkillIds };
+	const config: AdapterConfig = { courseIds: conds.courseIds, knownSkillIds: conds.knownSkillIds, skillData: conds.skillData ? null : undefined };
 	for (const [gate, groupSeeds] of groups) {
 		const { mobs, errors: mobErrors } = buildMobField(conds.mobPreset, 0, { fixedGate: gate });
 		if (mobErrors.length) {
@@ -307,7 +309,7 @@ export async function runGlobalsimSkillChart(input: GlobalsimSkillChartInput): P
 		paint(false);
 	};
 
-	const pool: GlobalsimPool = createGlobalsimPool({ factory: input.workerFactory, threads, onChunk });
+	const pool: GlobalsimPool = createGlobalsimPool({ factory: input.workerFactory, threads, skillData: input.skillData, onChunk });
 	const abortHandler = () => pool.abort();
 	if (input.signal) {
 		if (input.signal.aborted) { pool.dispose(); throw abortError(); }

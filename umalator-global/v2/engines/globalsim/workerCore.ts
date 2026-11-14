@@ -11,6 +11,9 @@
  *
  * ## Message protocol (main ⇄ worker)
  *
+ *   → {type:'skillData', skillData}                     (once per worker,
+ *     first message; injected into prepare requests that omit skillData)
+ *
  *   → {type:'prepare', id, setupKey, request, trackSkillId?}
  *     request = the full GlobalSim race request from adapter.ts (profile +
  *     9 runners; the seed field is a placeholder — PreparedRace.run overrides
@@ -75,8 +78,15 @@ export interface PrepareMsg {
 	 */
 	trackSkillId?: string;
 }
+/**
+ * One-time engine skillData injection (sent by the pool right after worker
+ * creation): the merged active skill table. handlePrepare injects it into
+ * requests that omit skillData (adapter config.skillData === null), so big
+ * charts never re-ship the ~350 KB table per preparation.
+ */
+export interface SkillDataMsg { type: 'skillData'; skillData: unknown }
 export interface RunMsg { type: 'run'; jobId: string; seeds: number[]; mode: 'compact' | 'full' }
-export type WorkerInMsg = PrepareMsg | RunMsg;
+export type WorkerInMsg = PrepareMsg | RunMsg | SkillDataMsg;
 
 /** True for errors that poison the wasm handle/instance (panic, dead handle). */
 export function isDeadlyError(text: string): boolean {
@@ -89,6 +99,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 	let wasmLoading: Promise<WasmApi> | null = null;
 	const geometryRegistered = new Set<number>();
 	let prepared: { setupKey: string; race: PreparedRaceInstance; trackSkillId?: string } | null = null;
+	let heldSkillData: unknown = null;
 
 	async function ensureWasm(): Promise<WasmApi> {
 		if (wasm) return wasm;
@@ -172,7 +183,13 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			const courseId = Number((m.request as any).courseId);
 			if (!Number.isFinite(courseId)) throw new Error('prepare request has no numeric courseId');
 			await ensureGeometry(w, courseId);
-			const json = JSON.stringify(m.request);
+			// skillData-omitting requests get the table this worker was given
+			// once (adapter config.skillData === null path).
+			const requestObj = m.request as Record<string, unknown>;
+			const requestFinal = heldSkillData != null && requestObj && requestObj.skillData == null
+				? { ...requestObj, skillData: heldSkillData }
+				: requestObj;
+			const json = JSON.stringify(requestFinal);
 			// Free the previous preparation before building the next one (a
 			// worker keeps at most one PreparedRace — memory bound).
 			if (prepared) { try { prepared.race.free(); } catch { /* already dead */ } prepared = null; }
@@ -234,6 +251,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 		/** Entry point: wire the host's message events into this. */
 		onMessage(msg: WorkerInMsg): void {
 			if (!msg || typeof msg !== 'object') return;
+			if (msg.type === 'skillData') { heldSkillData = (msg as SkillDataMsg).skillData; return; }
 			if (msg.type === 'prepare') void handlePrepare(msg as PrepareMsg);
 			else if (msg.type === 'run') handleRun(msg as RunMsg);
 		},

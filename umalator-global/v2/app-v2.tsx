@@ -77,7 +77,7 @@ import { StaCalcResults } from "./stacalc";
 // import { PasswordGate } from "./PasswordGate";
 import { FeedbackDrawer } from "./feedback-drawer";
 import { SimulationSettings } from "./sim-settings";
-import { loadGlobalsimSkillIds } from "./engines/globalsim/skills";
+import { loadGlobalsimSkillTable } from "./engines/globalsim/skills";
 import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
 import { runGlobalsimCompare } from "./engines/globalsim/compare";
 import { runGlobalsimSkillChart } from "./engines/globalsim/chart";
@@ -295,6 +295,9 @@ function App() {
   // Active GlobalSim skill table (keys of globalsim/skills.json, fetched once when
   // GlobalSim mode is enabled; null = classic behavior until it arrives).
   const [globalsimSkillIds, setGlobalsimSkillIds] = useState<Set<string> | null>(null);
+  // Full merged table (engine skillData) — injected into workers once per run
+  // so batch-1 supplement skills initialize in the engine (see skills.ts).
+  const [globalsimSkillTable, setGlobalsimSkillTable] = useState<Record<string, unknown> | null>(null);
   const [globalsimUncoveredCount, setGlobalsimUncoveredCount] = useState<number | null>(null);
   // Skills removed from imported/loaded builds while in GlobalSim mode (inline note).
   const [globalsimDropped, setGlobalsimDropped] = useState(0);
@@ -318,9 +321,11 @@ function App() {
   useEffect(() => {
     if (engine !== "globalsim" || globalsimSkillIds) return;
     let alive = true;
-    loadGlobalsimSkillIds().then((ids) => {
-      if (!alive || !ids) return;
+    loadGlobalsimSkillTable().then((table) => {
+      if (!alive || !table) return;
+      const ids = new Set(Object.keys(table));
       setGlobalsimSkillIds(ids);
+      setGlobalsimSkillTable(table);
       setGlobalsimUncoveredCount(
         Object.keys(skilldata).filter((id) => !ids.has(id)).length,
       );
@@ -872,6 +877,7 @@ function App() {
           time,
           grade: Grade.G1,
           knownSkillIds: globalsimSkillIds ?? undefined,
+          skillData: globalsimSkillTable ?? undefined,
           courseIds,
           mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
           fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
@@ -952,6 +958,7 @@ function App() {
     chartWorkers,
     chartFastMode,
     globalsimSkillIds,
+    globalsimSkillTable,
     // GlobalSim chart path (Phase 5)
     engine,
     samples,
@@ -1012,6 +1019,7 @@ function App() {
             time,
             grade: Grade.G1,
             knownSkillIds: globalsimSkillIds ?? undefined,
+            skillData: globalsimSkillTable ?? undefined,
             courseIds,
             mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
             fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
@@ -1117,6 +1125,7 @@ function App() {
     handleRunSkillChart,
     // GlobalSim compare path (Phase 4)
     globalsimSkillIds,
+    globalsimSkillTable,
     globalsimFieldPreset,
     globalsimGate,
     globalsimThreads,

@@ -86,6 +86,13 @@ export interface GlobalsimCompareInput {
 	grade?: Grade;
 	/** Active GlobalSim skill table keys — the adapter's coverage gate (D5). */
 	knownSkillIds?: ReadonlySet<string>;
+	/**
+	 * Merged active skill table (engine skillData, from /uma-tools/globalsim/
+	 * skills.json). When set, requests omit the table and the pool injects it
+	 * once per worker — required for the batch-1 supplement skills to
+	 * initialize in the engine (profile-v77's own skillData is v70-only).
+	 */
+	skillData?: Record<string, unknown>;
 	/** Valid engine course ids (courses.ts loader). */
 	courseIds: ReadonlySet<string> | readonly string[];
 	mobPreset: MobPreset;
@@ -155,7 +162,7 @@ export function buildCompareJobs(
 	}
 	const jobs: PoolJob[] = [];
 	const errors: string[] = [];
-	const config: AdapterConfig = { courseIds: input.courseIds, knownSkillIds: input.knownSkillIds };
+	const config: AdapterConfig = { courseIds: input.courseIds, knownSkillIds: input.knownSkillIds, skillData: input.skillData ? null : undefined };
 	for (const variant of [0, 1] as const) {
 		const horse = variant === 0 ? input.uma1 : input.uma2;
 		for (const [gate, groupSeeds] of groups) {
@@ -332,6 +339,7 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 	const pool = createGlobalsimPool({
 		factory: input.workerFactory,
 		threads,
+		skillData: input.skillData,
 		onChunk: onRecord,
 	});
 	let jobErrors: Array<{ jobId: string; error: string }> = [];

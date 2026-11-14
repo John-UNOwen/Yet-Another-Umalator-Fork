@@ -16,17 +16,18 @@
  * next caller retries (e.g. after the missing asset gets built).
  */
 
-let pending: Promise<Set<string> | null> | null = null;
+interface SkillTable { ids: Set<string>; defs: Record<string, unknown> }
 
-/** Keys of the active GlobalSim skill table, or null when the fetch fails. */
-export function loadGlobalsimSkillIds(): Promise<Set<string> | null> {
+let pending: Promise<SkillTable | null> | null = null;
+
+function fetchTable(): Promise<SkillTable | null> {
 	if (!pending) {
 		pending = fetch('/uma-tools/globalsim/skills.json')
 			.then(r => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.json();
 			})
-			.then((table: Record<string, unknown>) => new Set(Object.keys(table)))
+			.then((table: Record<string, unknown>) => ({ ids: new Set(Object.keys(table)), defs: table }))
 			.catch(e => {
 				console.warn('[GlobalSim] active skill table unavailable:', e);
 				pending = null; // don't cache failures — the next caller retries
@@ -34,4 +35,18 @@ export function loadGlobalsimSkillIds(): Promise<Set<string> | null> {
 			});
 	}
 	return pending;
+}
+
+/** Keys of the active GlobalSim skill table, or null when the fetch fails. */
+export async function loadGlobalsimSkillIds(): Promise<Set<string> | null> {
+	return (await fetchTable())?.ids ?? null;
+}
+
+/**
+ * The full merged table (engine skillData shape) — passed as `skillData` to
+ * runGlobalsimCompare/runGlobalsimSkillChart so the engine initializes the
+ * batch-1 supplement skills too (profile-v77's own skillData is v70-only).
+ */
+export async function loadGlobalsimSkillTable(): Promise<Record<string, unknown> | null> {
+	return (await fetchTable())?.defs ?? null;
 }
