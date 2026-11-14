@@ -1,178 +1,104 @@
-# Moomoolator
+# Yet-Another-Umalator-Fork
 
-*A modern Uma Musume race simulator with bilingual JP/EN support*
-
-[![Live Demo](https://img.shields.io/badge/demo-umalator.app-blue)](https://umalator.app/umalator-global)
+[![Deploy site to GitHub Pages](https://github.com/John-UNOwen/Yet-Another-Umalator-Fork/actions/workflows/pages.yml/badge.svg)](https://github.com/John-UNOwen/Yet-Another-Umalator-Fork/actions/workflows/pages.yml)
+[![CI](https://github.com/John-UNOwen/Yet-Another-Umalator-Fork/actions/workflows/ci.yml/badge.svg)](https://github.com/John-UNOwen/Yet-Another-Umalator-Fork/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-green)](uma-skill-tools/LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178c6)](https://www.typescriptlang.org/)
-[![Preact](https://img.shields.io/badge/Preact-10.x-673ab8)](https://preactjs.com/)
-[![Bilingual](https://img.shields.io/badge/lang-JP%20%2B%20EN-red)](https://umalator.app/umalator)
 
-> A hybrid fork of [alpha123/umalator](https://github.com/alpha123/umalator) and [kachi-dev/umalator](https://github.com/kachi-dev/umalator) with a redesigned interface and quality-of-life improvements.
+Live: **https://john-unowen.github.io/Yet-Another-Umalator-Fork/**
 
-![Moomoolator Interface](docs/screenshot.png)
+A personal fork of [TheCing/uma-tools](https://github.com/TheCing/uma-tools) (Moomoolator), which itself is a hybrid fork of [alpha123/umalator](https://github.com/alpha123/umalator) and [kachi-dev/umalator](https://github.com/kachi-dev/umalator). The fork exists for one change: Compare and Skill modes in the v2 Global simulator run [GlobalSim](https://github.com/daftuyda/GlobalSim), a full-field Rust race engine, instead of the idealized single-uma solver. GlobalSim is vendored as an unmodified git submodule (currently v77) and compiled to WebAssembly that runs in browser Web Workers. The original engines are still selectable.
 
-## Live Tools
+![Umalator interface](docs/screenshot.png)
 
-| Tool | Description |
-|------|-------------|
-| **[/umalator-global](https://umalator.app/umalator-global)** | Global simulator (English) |
-| **[/umalator](https://umalator.app/umalator)** | Bilingual JP simulator |
-| **[/hp-calculator](https://umalator.app/hp-calculator)** | HP survival rate calculator |
+## The live site
 
----
+The Pages deployment serves the v2 Global simulator at the site root. The repository's other tools (the JP simulator, HP calculator, event tracker and so on) are present in the source tree but not deployed here; the upstream project hosts those at [umalator.app](https://umalator.app/).
 
-## Why Moomoolator?
+GitHub Pages has no server components, so two upstream features change. Screenshot OCR import needs your own Gemini API key (the shared proxy does not exist here), and the feedback form is hidden. Everything else runs client-side.
 
-### True Bilingual Support
-The only simulator with full JP/EN language mixing:
-- UI in English, skill names in Japanese (or vice versa)
-- Switch languages without losing your build
-- Perfect for players who learned on JP but play Global
+## What runs where
 
-### Mobile-First Design
-Fully responsive interface with dedicated mobile navigation—theorycraft from anywhere.
+The engine selector sits in the header settings: GlobalSim (the default), classic v2, and classic v1. Your choice persists between visits, and a Copy Link share restores the engine the author was using; links made before the fork open classic v2.
 
-### Modern UX
-- Guided onboarding tour for new users
-- Uma Card export (shareable PNG with embedded build data)
-- AI-powered OCR import from screenshots
-- Native-feeling modal dialogs
-- Dark/light themes
+GlobalSim mode changes what Compare and the skill chart measure:
 
----
+- Every simulated race carries nine runners: the tested uma plus eight mobs from a fixed preset (`umalator-global/v2/engines/globalsim/mob-presets.json`). Compare races both builds over paired seeds and reports the full-field finish difference, win rate, ties, HP-out and rushing rates, and min/max/mean/median snapshots with representative replays.
+- The skill chart reports, per skill, the mean margin with a 95% CI against the baseline build, how often the skill fired, and the resulting win rate.
+- Race outcomes come from the engine's own frame data, so position, speed and HP curves in the track overlay are real full-field traces.
+- Skills are gated to the engine's skill table: 751 entries (730 validated against engine v70 plus 21 supplemented, see `globalsim/skills-supplement.json`). Uncovered skills, outfits and awakenings are hidden in GlobalSim mode, and the settings panel shows how many of your skills are not yet covered.
+- The Simulation threads setting sizes the worker pool. Auto uses one fewer core than your machine reports, between 1 and 8.
 
-## Comparison
+## Reading the numbers
 
-| | Moomoolator | VFalator | alpha123 |
-|---|:-----------:|:--------:|:--------:|
-| **Bilingual JP+EN** | **Yes** | - | - |
-| **English UI** | Yes | Yes | Yes |
-| **Japanese UI** | Yes | Yes | - |
-| **Modern UI** | Yes | Yes | - |
-| **Mobile** | Yes | - | - |
-| **Uma Card PNG** | Yes | - | - |
-| **OCR Import** | Yes | - | - |
-| **Onboarding Tour** | Yes | - | - |
-
----
-
-## Quick Start
-
-### Using the Simulator
-
-1. Visit one of the [live tools](#live-tools) above
-2. Select a track and course from the header
-3. Click **Uma** to configure your horse's stats, aptitudes, and skills
-4. Click **RUN** to simulate races
-5. View results in the track overlay and results panel
-
-### Understanding Results
-
-Results are measured in **horse lengths** (bashin):
-- **1 horse length = 2.5 meters**
-- **Positive values**: Uma 2 finishes ahead
-- **Negative values**: Uma 1 finishes ahead
-
----
-
-## Features
-
-### Race Simulation
-- **Compare Mode**: Pit two Uma builds head-to-head across hundreds of simulated races
-- **Statistical Analysis**: View min/max/mean/median results
-- **Track Visualization**: Interactive course with corners, slopes, and skill regions
-
-### Build Management
-- **Save/Load Builds**: Store multiple horse configurations locally
-- **Uma Card Export**: Save builds as shareable PNG images with embedded data
-- **OCR Import**: Extract stats from in-game screenshots using Google Gemini AI
-- **JSON Import/Export**: For backup and sharing
-
-### Champions Meeting Presets
-Quick-load race conditions for upcoming CM and LoH events with correct track, weather, season, and ground settings.
-
----
+Margins are horse lengths (bashin), 1 length = 2.5 meters. Positive means Uma 2 finishes ahead; this matches the classic CLI tool's `posDifference` sign convention. The 95% CI reflects how much the sampled seeds scatter; a CI that crosses zero means the margin is within seed noise at that sample size.
 
 ## Development
 
-### Prerequisites
-- Node.js 20+
-
-### Local Development
+Prerequisites: Node.js 20+ (CI uses 22). Rust stable, the `wasm32-unknown-unknown` target and `wasm-pack` 0.15.1 are needed only when rebuilding the engine from the submodule.
 
 ```bash
-cd umalator-global
+npm install
 
-# Start dev server with hot reload
-node build.mjs --serve
+# develop the app
+cd umalator-global && node build.mjs --serve    # http://localhost:8000/umalator-global/v2/
+npm run dev:v2                                  # the same app through the Vite dev server
 
-# Access at http://localhost:8000/umalator-global/
+# build
+node umalator-global/build.mjs                  # esbuild bundles + globalsim assets
+npm run build:v2                                # Vite production build to umalator-global/v2/dist
+
+# rebuild the engine wasm (needs Rust + wasm-pack)
+git submodule update --init --recursive
+cd globalsim-wasm && wasm-pack build --target web --release --out-dir pkg
+cd .. && node umalator-global/build.mjs         # copies pkg, geometry and the merged skill table into globalsim/
 ```
 
-### Production Build
+The asset prefix defaults to `/uma-tools`. Set `CC_BASE_PATH` at build time to change it; empty string serves assets from the site root. Every build script, the Vite configs and the dev servers honor it, and the Pages workflow fills it in from the repository name, so renaming or moving the deployment needs no code change.
+
+### Tests
 
 ```bash
-node build.mjs          # Minified production build
-node build.mjs --debug  # Unminified with assertions
+npm run test:globalsim            # adapter goldens, byte-identical request building
+npm run test:globalsim-metrics    # margin math, tail grid, aggregates, CI
+npm run test:globalsim-pool       # worker pool scheduling, crash and abort policy
+npm run test:globalsim-mobs       # field construction, seed-derived gates
+npm run test:globalsim-skills     # skill table coverage against the native engine
+npm run test:globalsim-skilldata  # per-worker table injection, engine fallback guard
+npm run test:globalsim-compare    # end-to-end compare through the real wasm
+npm run test:globalsim-chart      # end-to-end chart through the real wasm
+node globalsim-wasm/test/phase0.mjs --seeds 25   # wasm vs native byte parity
 ```
 
-### Project Structure
+CI (`.github/workflows/ci.yml`) runs the engine's own `cargo test`, the parity check and these suites on every push.
+
+### Layout
 
 ```
-umalator-global/
-├── v2/                      # V2 UI source
-│   ├── app-v2.tsx          # Main application
-│   ├── components/         # Reusable UI components
-│   └── *.css               # Styles
-├── build.mjs               # esbuild configuration
-├── skill_data.json         # English skill definitions
-├── course_data.json        # Race course data
-└── umas.json               # Character data
+globalsim-wasm/                    wasm-bindgen wrapper around the engine
+vendor/GlobalSim/                  the engine, unmodified submodule
+umalator-global/v2/                the simulator app
+  engines/globalsim/               adapter, worker core, pool, compare, chart, metrics
+globalsim/                         deploy assets; skills-supplement.json is committed,
+                                   wasm/ geometry/ skills.json are generated
+tools/globalsim-coverage.mjs       skill coverage gate and merged table generator
+docs/globalsim-upgrade.md          engine upgrade runbook
+.github/workflows/                 pages.yml (deploy), ci.yml, sync-upstream-data.yml
 ```
 
-### Updating Game Data
+## Deployment and data flow
 
-After game updates, regenerate data files from the master database:
-
-**Windows:**
-```batch
-update.bat [path-to-master.mdb]
-```
-
-**Linux/Mac:**
-```bash
-perl make_global_skill_data.pl /path/to/master.mdb > skill_data.json
-perl make_global_skillnames.pl /path/to/master.mdb > skillnames.json
-perl make_global_course_data.pl /path/to/master.mdb courseeventparams > course_data.json
-```
-
-Requires Perl with `DBI` and `DBD::SQLite` modules.
-
----
-
-## Technology
-
-- **Preact** - Lightweight UI framework
-- **TypeScript** - Type-safe development
-- **D3.js** - Data visualization
-- **esbuild** - Fast bundling
-- **Web Workers** - Parallel simulation
-
----
+- `pages.yml` builds the wasm, the app and the runtime assets, then deploys to GitHub Pages on every push to master.
+- `sync-upstream-data.yml` runs daily, pulls alpha123's Global game data, verifies the build, and opens a pull request against master. Merging is what deploys new data. If a brand-new skill has no engine definition yet, the coverage gate step fails on the PR; `docs/globalsim-upgrade.md` describes adding a supplement entry.
+- Engine version bumps follow the same runbook: bump the submodule, re-copy the request profile, rerun parity and coverage, update the version label.
 
 ## Credits
 
-Built on the work of:
-
-- **alpha123/umalator** - Original Global simulator by alpha123 & pecan
-- **kachi-dev/umalator (VFalator)** - VFcord version by kachi & Jecht
-- **Skill Data** - [GameTora](https://gametora.com/umamusume)
-- **Game** - Uma Musume: Pretty Derby © Cygames
-- **Community** - [Moomoo Discord](https://discord.gg/moomoocows)
-
----
+- **alpha123/umalator** by alpha123 & pecan, and **kachi-dev/umalator (VFalator)** by kachi & Jecht, for the simulator this fork builds on
+- **daftuyda/GlobalSim** for the full-field race engine (pinned as a submodule; it ships without a license declaration upstream, so it is vendored unmodified and unaffiliated)
+- **Skill data** from [GameTora](https://gametora.com/umamusume)
+- **Game**: Uma Musume: Pretty Derby, (C) Cygames
+- **Community**: [Moomoo Discord](https://discord.gg/moomoocows)
 
 ## License
 
-GPL-3.0-or-later - See [LICENSE](uma-skill-tools/LICENSE)
+GPL-3.0-or-later, see [LICENSE](uma-skill-tools/LICENSE), for this repository's code.
