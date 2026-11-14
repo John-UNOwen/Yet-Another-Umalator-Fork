@@ -637,12 +637,13 @@ export function loadPreferences(): Preferences {
 export type SimEngine = 'v1' | 'v2' | 'globalsim';
 
 /**
- * Single place the app's default engine is decided (plan §5 Phase 7). Flip this
- * to 'globalsim' only after Phase 6's live acceptance on the Pages deploy; the
- * share-hash restore treats an absent engine as this default, so old links keep
- * working either way.
+ * Single place the app's default engine is decided (plan §5 Phase 7). Flipped
+ * to 'globalsim' after Phase 6's live acceptance passed on the Pages deploy
+ * (plan: default once Phases 4–6 pass). A persisted choice and URL-hash
+ * engine still win over this default; pre-Phase-7 share links deserialize to
+ * 'v2' explicitly, so they keep opening in classic v2 as authored.
  */
-export const DEFAULT_ENGINE: SimEngine = 'v2';
+export const DEFAULT_ENGINE: SimEngine = 'globalsim';
 
 const ENGINE_KEY = 'umalator_v2_engine';
 
@@ -764,10 +765,11 @@ export async function deserializeStateFromHash(hash: string): Promise<ShareableS
 			uma1,
 			uma2,
 			skillHints: (parsed.skillHints && typeof parsed.skillHints === 'object') ? parsed.skillHints : {},
-			// Phase 7: a link that names an engine restores it; an absent/unknown
-			// engine stays undefined so the app keeps its persisted/default choice
-			// (older links behave exactly as before).
-			engine: normalizeEngine(parsed.engine) ?? undefined,
+			// Phase 7: a link that names an engine restores it. An absent/unknown
+			// engine means a pre-Phase-7 link — those were built when classic v2
+			// was the only default, so they restore 'v2' regardless of the app's
+			// current default (a link replays as its author saw it).
+			engine: normalizeEngine(parsed.engine) ?? 'v2',
 		};
 	} catch (e) {
 		console.error('Failed to deserialize state from hash:', e);
