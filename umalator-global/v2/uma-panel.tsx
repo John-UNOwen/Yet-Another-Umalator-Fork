@@ -143,6 +143,9 @@ interface UmaPortraitProps {
 	onSelect: (outfitId: string) => void;
 	hideNotInGame?: boolean;
 	rosterRating?: number;
+	/** GlobalSim mode: active skill table. Outfits whose unique skill id isn't in it are
+	 *  hidden from the search/quick-select list (outfits with no unique stay visible). */
+	globalsimSkillIds?: ReadonlySet<string> | null;
 }
 
 // Outfit values may be a string (epithet) or an object with an epithet property
@@ -161,7 +164,7 @@ function searchNames(query: string): string[] {
 	return umaAltIds.filter(oid => umaNamesForSearch[oid].indexOf(q) > -1);
 }
 
-export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterRating }: UmaPortraitProps) {
+export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterRating, globalsimSkillIds }: UmaPortraitProps) {
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState('');
 	const [activeIdx, setActiveIdx] = useState(-1);
@@ -181,8 +184,16 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 			const notInGameSet = new Set(notInGame.outfits);
 			results = results.filter(oid => !notInGameSet.has(oid));
 		}
+		// GlobalSim mode: hide outfits whose unique skill isn't in the active table
+		// (outfits with no unique skill — empty id — stay visible).
+		if (globalsimSkillIds) {
+			results = results.filter(oid => {
+				const uid = uniqueSkillForUma(oid, 3);
+				return !uid || globalsimSkillIds.has(uid);
+			});
+		}
 		return results;
-	}, [searchQuery, hideNotInGame, showUnreleased]);
+	}, [searchQuery, hideNotInGame, showUnreleased, globalsimSkillIds]);
 
 	// Random mob portrait for empty state
 	const randomMob = useMemo(() =>
@@ -566,9 +577,12 @@ interface V2UmaPanelProps {
 	hideNotInGame?: boolean;
 	wideSkills?: boolean;
 	setWideSkills?: (v: boolean) => void;
+	/** GlobalSim mode: active skill table (keys of globalsim/skills.json). Null/undefined
+	 *  = classic behavior. Gates the outfit list and the skill picker (decision D5). */
+	globalsimSkillIds?: ReadonlySet<string> | null;
 }
 
-export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title = 'Umamusume', courseDistance, hideNotInGame = false, wideSkills = false, setWideSkills }: V2UmaPanelProps) {
+export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title = 'Umamusume', courseDistance, hideNotInGame = false, wideSkills = false, setWideSkills, globalsimSkillIds }: V2UmaPanelProps) {
 	const [savedSlots, setSavedSlots] = useState<string[]>([]);
 	const [isOCRModalOpen, setIsOCRModalOpen] = useState(false);
 	const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -844,7 +858,7 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 			</div>
 
 			{/* Character portrait and selector */}
-			<UmaPortrait outfitId={state.outfitId} onSelect={handleOutfitSelect} hideNotInGame={hideNotInGame} rosterRating={state.rosterRating} />
+			<UmaPortrait outfitId={state.outfitId} onSelect={handleOutfitSelect} hideNotInGame={hideNotInGame} rosterRating={state.rosterRating} globalsimSkillIds={globalsimSkillIds} />
 
 			{/* Stats */}
 			<CollapsibleSection title="Stats" defaultOpen={true}>
@@ -905,6 +919,7 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 					courseDistance={courseDistance}
 					strategy={state.strategy}
 					hideNotInGame={hideNotInGame}
+					globalsimSkillIds={globalsimSkillIds}
 					wideLayout={wideSkills}
 					forcedSkillPositions={state.forcedSkillPositions}
 					onForcedPositionChange={(skillId, position) => {

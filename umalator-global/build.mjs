@@ -414,6 +414,29 @@ function generateCMPresets() {
 
 generateCMPresets();
 
+// Build the GlobalSim active skill table (v70 validated ∪ globalsim/skills-supplement.json)
+// into globalsim/skills.json at the site root, where the v2 app fetches it as
+// /uma-tools/globalsim/skills.json for its GlobalSim-mode skill gating (integration plan
+// Phase 2). The same tool run is the coverage gate: a live-on-Global skill missing from
+// the active table (or a malformed supplement) fails the build loudly rather than
+// shipping a silent hole in the table.
+function generateGlobalsimSkills() {
+	const tool = path.join(root, 'tools', 'globalsim-coverage.mjs');
+	const outPath = path.join(root, 'globalsim', 'skills.json');
+	fs.mkdirSync(path.dirname(outPath), { recursive: true });
+	let stdout;
+	try {
+		stdout = execSync(`node "${tool}" --out "${outPath}"`, { encoding: 'utf-8' });
+	} catch (e) {
+		const tail = `${e.stdout || ''}\n${e.stderr || ''}`.split('\n').filter(l => /^(ERROR|COVERAGE:)/.test(l)).join('\n');
+		throw new Error(`globalsim/skills.json generation failed (node tools/globalsim-coverage.mjs):\n${tail || e.message}`);
+	}
+	const summary = stdout.split('\n').filter(l => /^(WARN |COVERAGE:)/.test(l)).join(' | ');
+	console.log(`globalsim/skills.json: ${summary || 'generated'}`);
+}
+
+generateGlobalsimSkills();
+
 // v1 was retired 2026-08-27; its routes now serve v2 at the root (see _redirects).
 // Only the v2 bundle is built here.
 

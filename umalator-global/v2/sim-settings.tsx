@@ -27,7 +27,10 @@ const STRATEGY_ROWS: Array<{ key: keyof DuelingRates; label: string; sub?: strin
 	{ key: 'endCloser',   label: 'End Closer',   sub: 'Oikomi' },
 ];
 
-export type SimEngine = 'v1' | 'v2';
+// 'globalsim' = GlobalSim mode (integration plan Phase 2b): the app gates skills and
+// outfits to the active GlobalSim skill table; the race pipeline still runs the classic
+// engine until Compare/Chart integration lands (Phases 4–5).
+export type SimEngine = 'v1' | 'v2' | 'globalsim';
 
 interface SimSettingsProps {
 	engine: SimEngine;
@@ -54,6 +57,8 @@ interface SimSettingsProps {
 	setAutoSeed: (v: boolean) => void;
 	hideNotInGame: boolean;
 	setHideNotInGame: (v: boolean) => void;
+	/** Count of uma-tools skills missing from the active GlobalSim table (GlobalSim mode notice). */
+	globalsimUncoveredCount?: number | null;
 	mode?: string;
 }
 
@@ -82,6 +87,7 @@ export function SimulationSettings({
 	setAutoSeed,
 	hideNotInGame,
 	setHideNotInGame,
+	globalsimUncoveredCount,
 	mode,
 }: SimSettingsProps) {
 	// Dueling rates popover
@@ -198,17 +204,19 @@ export function SimulationSettings({
 				{/* Engine v1 is alpha123's published solver, vendored verbatim (see
 				    tools/sync-upstream-engine.mjs); v2 is ours. Rush, dueling, lead competition
 				    and lane movement exist only in v2, so they disable under v1 rather than
-				    silently doing nothing. */}
-				<Tooltip content="v2 is our engine. v1 is alpha123's upstream engine — fewer mechanics, useful as a reference point." position="bottom">
-					<label class="v2-switch">
-						<input
-							type="checkbox"
-							checked={engine === 'v2'}
-							onChange={() => setEngine(engine === 'v2' ? 'v1' : 'v2')}
-						/>
-						<span class="v2-switch-slider" />
-						<span class="v2-switch-label">Engine {engine}</span>
-					</label>
+				    silently doing nothing. GlobalSim (beta) (integration plan Phase 2b) gates
+				    the skill pickers, the chart candidate list and the uma outfits to the
+				    active GlobalSim skill table; the race pipeline still runs the classic
+				    engine until the wasm pipeline lands in Phases 4–5. */}
+				<Tooltip content="v2 is our engine. v1 is alpha123's upstream engine — fewer mechanics, useful as a reference point. GlobalSim (beta) gates skills and outfits to the GlobalSim skill table; results currently use the classic engine." position="bottom">
+					<span class="v2-sim-label">
+						Engine
+						<span class="v2-engine-toggle" role="group" aria-label="Simulation engine">
+							<button type="button" class={engine === 'v1' ? 'active' : ''} onClick={() => setEngine('v1')}>v1</button>
+							<button type="button" class={engine === 'v2' ? 'active' : ''} onClick={() => setEngine('v2')}>v2</button>
+							<button type="button" class={engine === 'globalsim' ? 'active' : ''} onClick={() => setEngine('globalsim')}>GlobalSim (beta)</button>
+						</span>
+					</span>
 				</Tooltip>
 
 				<Tooltip content={mode === "stamina" ? "Always enabled in Stamina mode" : "Skills check wisdom for activation"} position="bottom">
@@ -357,6 +365,15 @@ export function SimulationSettings({
 						<span class="v2-switch-label">In-Game Only</span>
 					</label>
 				</Tooltip>
+
+				{engine === 'globalsim' && (
+					<span class="v2-globalsim-notice">
+						GlobalSim simulation lands in Compare/Chart next; results currently use the classic engine.
+						{typeof globalsimUncoveredCount === 'number' && (
+							` ${globalsimUncoveredCount} skills not yet supported by GlobalSim.`
+						)}
+					</span>
+				)}
 			</div>
 		</div>
 	);

@@ -76,6 +76,7 @@ import { StaCalcResults } from "./stacalc";
 // import { PasswordGate } from "./PasswordGate";
 import { FeedbackDrawer } from "./feedback-drawer";
 import { SimulationSettings } from "./sim-settings";
+import { loadGlobalsimSkillIds } from "./engines/globalsim/skills";
 import { MobileNav, MobileView } from "./mobile-nav";
 import {
   loadSession,
@@ -88,6 +89,7 @@ import {
   type ColorPalette,
 } from "./storage";
 import courseData from "../course_data.json";
+import skilldata from "../skill_data.json";
 import skillnames from "../skillnames.json";
 import skillmeta from "../../skill_meta.json";
 import "./v2.css";
@@ -271,7 +273,31 @@ function App() {
   }, [duelingRates]);
   const [laneMovement, setLaneMovement] = useState(true);
   // 'v2' = our engine, 'v1' = alpha123's vendored upstream engine (tools/sync-upstream-engine.mjs)
-  const [engine, setEngine] = useState<'v1' | 'v2'>('v2');
+  // 'globalsim' = GlobalSim mode (integration plan Phase 2b): gates skills/outfits to the
+  // active GlobalSim skill table; the race pipeline still runs the classic engine (v2)
+  // until Compare/Chart integration lands (Phases 4–5).
+  const [engine, setEngine] = useState<'v1' | 'v2' | 'globalsim'>('v2');
+  const globalsimMode = engine === "globalsim";
+  // Active GlobalSim skill table (keys of globalsim/skills.json, fetched once when
+  // GlobalSim mode is enabled; null = classic behavior until it arrives).
+  const [globalsimSkillIds, setGlobalsimSkillIds] = useState<Set<string> | null>(null);
+  const [globalsimUncoveredCount, setGlobalsimUncoveredCount] = useState<number | null>(null);
+  // Skills removed from imported/loaded builds while in GlobalSim mode (inline note).
+  const [globalsimDropped, setGlobalsimDropped] = useState(0);
+  useEffect(() => {
+    if (engine !== "globalsim" || globalsimSkillIds) return;
+    let alive = true;
+    loadGlobalsimSkillIds().then((ids) => {
+      if (!alive || !ids) return;
+      setGlobalsimSkillIds(ids);
+      setGlobalsimUncoveredCount(
+        Object.keys(skilldata).filter((id) => !ids.has(id)).length,
+      );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [engine, globalsimSkillIds]);
   const [autoSeed, setAutoSeed] = useState(false);
   const [forceFullSpurt, setForceFullSpurt] = useState(true);
 
@@ -422,6 +448,28 @@ function App() {
   const [uma2, setUma2] = useState<UmaState>(
     savedSession.current?.uma2 ?? defaultUmaState,
   );
+
+  // GlobalSim mode (D5): uncovered skills must never reach the engine, so skills outside
+  // the active table are dropped from any build state entering the app — session/URL-hash
+  // restore, saved slots, JSON/paste/OCR imports, roster and preset loads. Behavior
+  // outside GlobalSim mode is untouched.
+  useEffect(() => {
+    if (engine !== "globalsim" || !globalsimSkillIds) return;
+    const dropUncovered = (uma: UmaState) => {
+      const skills = uma.skills.filter((id) => globalsimSkillIds.has(id));
+      if (skills.length === uma.skills.length) return;
+      const forcedSkillPositions = { ...uma.forcedSkillPositions };
+      for (const id of uma.skills) {
+        if (!globalsimSkillIds.has(id)) delete forcedSkillPositions[id];
+      }
+      setGlobalsimDropped((n) => n + uma.skills.length - skills.length);
+      return { ...uma, skills, forcedSkillPositions };
+    };
+    const next1 = dropUncovered(uma1);
+    if (next1) setUma1(next1);
+    const next2 = dropUncovered(uma2);
+    if (next2) setUma2(next2);
+  }, [engine, globalsimSkillIds, uma1, uma2]);
 
   // Map of groupId -> skillId for owned skills (for "Hide Owned" filter in skill chart)
   const hasSkills = useMemo(() => {
@@ -730,7 +778,7 @@ function App() {
       uma1,
       course,
       racedef,
-    );
+    ).filter((id) => !globalsimSkillIds || globalsimSkillIds.has(id));
 
     if (activateableSkills.length === 0) {
       console.warn("[V2] No activateable skills found for this course");
@@ -789,6 +837,7 @@ function App() {
     seed,
     chartWorkers,
     chartFastMode,
+    globalsimSkillIds,
   ]);
 
   // Run simulation via worker
@@ -826,7 +875,8 @@ function App() {
             competeFight,
             duelingRates: competeFight ? duelingRates : undefined,
             laneMovement,
-            engine,
+            // GlobalSim mode still runs the classic engine (Phases 4–5 wire the wasm pool).
+            engine: engine === 'globalsim' ? 'v2' : engine,
           }),
         },
       });
@@ -859,7 +909,7 @@ function App() {
               competeFight,
               duelingRates: competeFight ? duelingRates : undefined,
               laneMovement,
-              engine,
+              engine: engine === 'globalsim' ? 'v2' : engine,
             }),
             forceFullSpurt,
           },
@@ -1541,6 +1591,7 @@ function App() {
               setAutoSeed={setAutoSeed}
               hideNotInGame={hideNotInGame}
               setHideNotInGame={setHideNotInGame}
+              globalsimUncoveredCount={globalsimUncoveredCount}
               mode={mode}
             />
 
@@ -1768,6 +1819,7 @@ function App() {
                         hideOwned={hideOwned}
                         hidePurple={hidePurple}
                         hideNotInGame={hideNotInGame}
+                        globalsimSkillIds={globalsimSkillIds}
                         dirty={false}
                         selectedSkillId={selectedSkillForChart}
                         hiddenSkills={hiddenSkills}
@@ -1925,6 +1977,13 @@ function App() {
                 </div>
 
                 <div class="v2-drawer-content">
+                  {globalsimMode && globalsimDropped > 0 && (
+                    <div class="v2-globalsim-note">
+                      Dropped {globalsimDropped} uncovered skill
+                      {globalsimDropped === 1 ? "" : "s"} on import (not yet supported
+                      by GlobalSim)
+                    </div>
+                  )}
                   {activeUmaTab === 1 && (
                     <V2UmaPanel
                       state={uma1}
@@ -1941,6 +2000,7 @@ function App() {
                       hideNotInGame={hideNotInGame}
                       wideSkills={wideSkills}
                       setWideSkills={setWideSkills}
+                      globalsimSkillIds={globalsimSkillIds}
                     />
                   )}
                   {mode === "compare" && activeUmaTab === 2 && (
@@ -1959,6 +2019,7 @@ function App() {
                       hideNotInGame={hideNotInGame}
                       wideSkills={wideSkills}
                       setWideSkills={setWideSkills}
+                      globalsimSkillIds={globalsimSkillIds}
                     />
                   )}
                   {activeUmaTab === "trainees" && (
@@ -2317,6 +2378,7 @@ function App() {
                         setAutoSeed={setAutoSeed}
                         hideNotInGame={hideNotInGame}
                         setHideNotInGame={setHideNotInGame}
+                        globalsimUncoveredCount={globalsimUncoveredCount}
                         mode={mode}
                       />
                     </div>

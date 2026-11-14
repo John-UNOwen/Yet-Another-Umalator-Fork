@@ -38,6 +38,8 @@ interface SkillChartPaneProps {
 	hideOwned: boolean;
 	hidePurple: boolean;
 	hideNotInGame: boolean;
+	/** GlobalSim mode: active skill table — rows outside it are hidden (decision D5). */
+	globalsimSkillIds?: ReadonlySet<string> | null;
 	dirty?: boolean;
 	selectedSkillId?: string;
 	hiddenSkills: Set<string>;
@@ -187,12 +189,18 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 			data = data.filter(row => !notInGameSet.has(row.id));
 		}
 
+		// GlobalSim mode: uncovered skills never reach the engine, so no rows for them.
+		if (props.globalsimSkillIds) {
+			const active = props.globalsimSkillIds;
+			data = data.filter(row => active.has(row.id));
+		}
+
 		if (props.hiddenSkills.size > 0) {
 			data = data.filter(row => !props.hiddenSkills.has(row.id));
 		}
 
 		return data;
-	}, [props.data, props.hideOwned, props.hidePurple, props.hideNotInGame, props.hasSkills, props.hiddenSkills]);
+	}, [props.data, props.hideOwned, props.hidePurple, props.hideNotInGame, props.globalsimSkillIds, props.hasSkills, props.hiddenSkills]);
 
 	const columns: ColumnDef<SkillChartResult, any>[] = useMemo(() => [{
 		id: 'hide',

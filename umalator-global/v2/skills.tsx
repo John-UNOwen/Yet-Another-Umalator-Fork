@@ -682,9 +682,11 @@ interface SkillPickerModalProps {
 	onSelect: (skillId: string) => void;
 	selectedSkills: string[];
 	hideNotInGame: boolean;
+	/** GlobalSim mode: active skill table — skills outside it are hidden (decision D5). */
+	globalsimSkillIds?: ReadonlySet<string> | null;
 }
 
-export function SkillPickerModal({ isOpen, onClose, onSelect, selectedSkills, hideNotInGame }: SkillPickerModalProps) {
+export function SkillPickerModal({ isOpen, onClose, onSelect, selectedSkills, hideNotInGame, globalsimSkillIds }: SkillPickerModalProps) {
 	const [searchQuery, setSearchQuery] = useState('');
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [showUnreleased, setShowUnreleased] = useState(false);
@@ -776,11 +778,14 @@ export function SkillPickerModal({ isOpen, onClose, onSelect, selectedSkills, hi
 				if (notInGame.skills.indexOf(id) > -1) return false;
 			}
 
+			// GlobalSim mode: skills outside the active table are hidden outright (D5).
+			if (globalsimSkillIds && !globalsimSkillIds.has(id)) return false;
+
 			return true;
 		});
 		// Apply sorting
 		return filtered.sort(getSortComparator(sortOption));
-	}, [searchQuery, activeFilters, activeIconTypes, sortOption, hideNotInGame, showUnreleased]);
+	}, [searchQuery, activeFilters, activeIconTypes, sortOption, hideNotInGame, showUnreleased, globalsimSkillIds]);
 
 	const handleKeyDown = useCallback((e: KeyboardEvent) => {
 		const len = filteredSkills.length;
@@ -1037,6 +1042,9 @@ interface SkillsSectionProps {
 	forcedSkillPositions?: Record<string, string>;
 	onForcedPositionChange?: (skillId: string, position: string) => void;
 	hideNotInGame: boolean;
+	/** GlobalSim mode: active skill table. Hides uncovered skills in the picker and
+	 *  drops them from the template quick-add (decision D5). */
+	globalsimSkillIds?: ReadonlySet<string> | null;
 	wideLayout?: boolean;
 	uniqueSkillId?: string;
 	uniqueLv?: number;
@@ -1075,7 +1083,7 @@ function skillOrder(a: string, b: string): number {
 	return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export function SkillsSection({ skills, onChange, courseDistance, forcedSkillPositions, onForcedPositionChange, hideNotInGame, wideLayout, uniqueSkillId, uniqueLv, onUniqueLvChange, starCount, strategy }: SkillsSectionProps) {
+export function SkillsSection({ skills, onChange, courseDistance, forcedSkillPositions, onForcedPositionChange, hideNotInGame, globalsimSkillIds, wideLayout, uniqueSkillId, uniqueLv, onUniqueLvChange, starCount, strategy }: SkillsSectionProps) {
 	const [isPickerOpen, setIsPickerOpen] = useState(false);
 
 	const handleAddSkill = useCallback((skillId: string) => {
@@ -1103,8 +1111,10 @@ export function SkillsSection({ skills, onChange, courseDistance, forcedSkillPos
 		if (!strategy || !courseDistance) return [] as string[];
 		const styleIds = TEMPLATE_STYLE_SKILLS[strategy];
 		if (!styleIds) return [];
-		return [...styleIds, ...templateDistanceSkills(courseDistance)];
-	}, [strategy, courseDistance]);
+		const ids = [...styleIds, ...templateDistanceSkills(courseDistance)];
+		// GlobalSim mode: don't quick-add skills the active table doesn't cover.
+		return globalsimSkillIds ? ids.filter(id => globalsimSkillIds.has(id)) : ids;
+	}, [strategy, courseDistance, globalsimSkillIds]);
 
 	const handleAddTemplate = useCallback(() => {
 		if (templateIds.length === 0) return;
@@ -1183,6 +1193,7 @@ export function SkillsSection({ skills, onChange, courseDistance, forcedSkillPos
 				onSelect={handleAddSkill}
 				selectedSkills={skills}
 				hideNotInGame={hideNotInGame}
+				globalsimSkillIds={globalsimSkillIds}
 			/>
 		</div>
 	);
