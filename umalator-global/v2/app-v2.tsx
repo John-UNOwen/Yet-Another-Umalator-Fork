@@ -2370,7 +2370,17 @@ function App() {
                 </a>
                 &nbsp;|&nbsp;
                 <a
-                  href="/hp-calculator/"
+                  href="https://github.com/daftuyda/GlobalSim"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  GlobalSim engine
+                </a>
+                &nbsp;|&nbsp;
+                {/* Absolute on purpose: the Pages deploy serves only the v2 app,
+                    so a root-relative /hp-calculator/ would 404 there. */}
+                <a
+                  href="https://umalator.app/hp-calculator/"
                   target="_blank"
                   rel="noopener"
                 >

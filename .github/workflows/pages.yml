@@ -1,7 +1,13 @@
 # GitHub Pages deployment for the GlobalSim fork (integration plan Phase 6).
-# Build order matters: the Rust/wasm step is the long pole, the site build and
-# the GlobalSim static assets (merged skill table, per-course geometry, wasm)
-# are independent of each other.
+#
+# The v2 app is the site root: _site/ = vite dist + the runtime assets it
+# fetches (icons/, fonts/, globalsim/). The asset prefix is NOT hardcoded —
+# CC_BASE_PATH is filled from the repo name, so the Pages project works under
+# any repo name (and a root-level/custom-domain deploy just sets CC_BASE_PATH='').
+# Pages ignores _redirects/Functions, so no Cloudflare-era routing here.
+#
+# Cloudflare-dependent features build inert: empty OCR_PROXY_URL (OCR falls
+# back to a user-supplied Gemini key) and empty TURNSTILE_SITEKEY.
 name: Deploy site to GitHub Pages
 
 on:
@@ -41,31 +47,40 @@ jobs:
           cargo install wasm-pack --version 0.15.1 --locked
           wasm-pack build --target web --release --out-dir pkg
 
-      - name: Assemble globalsim static assets
+      - name: Build the v2 site
+        env:
+          CC_BASE_PATH: /${{ github.event.repository.name }}
+        run: |
+          npm ci
+          npm run build:v2
+
+      - name: Assemble globalsim runtime assets
         run: |
           mkdir -p globalsim/wasm globalsim/geometry
           cp globalsim-wasm/pkg/globalsim_wasm.js globalsim-wasm/pkg/globalsim_wasm_bg.wasm globalsim/wasm/
           cp vendor/GlobalSim/data/course_geometry/*.json globalsim/geometry/
-          node tools/globalsim-coverage.mjs --out globalsim/skills.json   # also the CI coverage gate
-
-      - name: Build the v2 site
-        run: |
-          npm ci
-          npm run build:global
-
-      - name: License notice files
-        run: |
-          cp vendor/GlobalSim/LICENSE globalsim/LICENSE-GlobalSim 2>/dev/null || cp vendor/GlobalSim/COPYING globalsim/LICENSE-GlobalSim || true
-          ls vendor/GlobalSim | grep -i -E '^(LICENSE|COPYING|NOTICE)' || true
+          node tools/globalsim-coverage.mjs --out globalsim/skills.json   # the CI coverage gate, too
+          # courses.json is committed; regenerate from course_data.json if missing
+          test -f globalsim/courses.json || node -e "
+            const fs=require('fs');
+            const g=JSON.parse(fs.readFileSync('umalator-global/course_data.json','utf8'));
+            fs.writeFileSync('globalsim/courses.json', JSON.stringify(Object.keys(g).map(Number).sort((a,b)=>a-b)));
+          "
+          # Third-party license notices bundled by the engine (upstream ships no top-level LICENSE)
+          mkdir -p globalsim/licenses && cp vendor/GlobalSim/licenses/*.txt globalsim/licenses/
 
       - name: Prepare Pages artifact
+        env:
+          CC_BASE_PATH: /${{ github.event.repository.name }}
         run: |
-          touch .nojekyll
-          # _site receives only what the site serves; no git, no master.mdb, no sources.
-          rsync -a --exclude '.git*' --exclude 'docs/master.mdb' --exclude 'node_modules' \
-            --exclude 'vendor' --exclude 'globalsim-wasm/target' --exclude 'globalsim-wasm/pkg' \
-            --exclude 'test' --exclude 'tools' --exclude 'functions' --exclude '_redirects' \
-            ./ _site/
+          # _site receives only what the site serves — no git, no mdb, no sources.
+          mkdir -p _site
+          cp -r umalator-global/v2/dist/. _site/
+          cp -r icons fonts _site/
+          cp -r globalsim _site/globalsim
+          cp og-image-v2.png _site/ 2>/dev/null || true
+          touch _site/.nojekyll
+          du -sh _site
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
