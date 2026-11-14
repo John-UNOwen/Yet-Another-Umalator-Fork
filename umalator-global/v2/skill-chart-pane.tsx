@@ -54,6 +54,24 @@ function formatBasinn(info: any) {
 }
 
 /**
+ * GlobalSim rows (Phase 5): Mean shows the paired-seed margin mean ± half
+ * the 95% CI in lengths. Missing values render as em-dashes (the existing
+ * per-engine unavailable pattern, see results-pane).
+ */
+function formatMeanCell(info: any) {
+	const gs = info.row.original.globalsim;
+	if (!gs) return formatBasinn(info);
+	const mean = info.getValue() as number;
+	const half = Number.isFinite(gs.ci95[0]) && Number.isFinite(gs.ci95[1]) ? (gs.ci95[1] - gs.ci95[0]) / 2 : NaN;
+	const title = `GlobalSim margin: mean ± 95% CI · ${gs.n} paired seeds · win ${(gs.winRate * 100).toFixed(1)}% / loss ${(gs.lossRate * 100).toFixed(1)}% / tie ${(gs.tieRate * 100).toFixed(1)}%`;
+	return (
+		<span class="v2-gs-chart-mean" title={title}>
+			{Number.isFinite(mean) ? `${mean.toFixed(2).replace('-0.00', '0.00')} ±${Number.isFinite(half) ? half.toFixed(2) : '—'} L` : '—'}
+		</span>
+	);
+}
+
+/**
  * Skill name cell with icon
  */
 function SkillNameCell(props: { id: string; showUmaIcons: boolean }) {
@@ -202,6 +220,10 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 		return data;
 	}, [props.data, props.hideOwned, props.hidePurple, props.hideNotInGame, props.globalsimSkillIds, props.hasSkills, props.hiddenSkills]);
 
+	// GlobalSim rows present? (Phase 5) Gates the extra columns on/off; the
+	// classic table (v1/v2 engine data) never carries a globalsim block.
+	const gsActive = useMemo(() => props.data.some(r => !!r.globalsim), [props.data]);
+
 	const columns: ColumnDef<SkillChartResult, any>[] = useMemo(() => [{
 		id: 'hide',
 		header: () => null,
@@ -239,14 +261,55 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 	}, {
 		header: headerRenderer(radioGroup, selectedType, 'mean', 'Mean', headerClick),
 		accessorKey: 'mean',
-		cell: formatBasinn,
+		cell: formatMeanCell,
 		sortDescFirst: true
 	}, {
 		header: headerRenderer(radioGroup, selectedType, 'median', 'Median', headerClick),
 		accessorKey: 'median',
 		cell: formatBasinn,
 		sortDescFirst: true
+	},
+	// GlobalSim-only extra columns (Phase 5). Absent unless a row carries a
+	// globalsim block, so the classic table — columns and rows — renders as
+	// before. Mean margin stays the primary margin sort (classic behavior).
+	...(gsActive ? [{
+		header: (c: any) => <span onClick={c.header.column.getToggleSortingHandler()}>Fires</span>,
+		id: 'gsact',
+		accessorFn: (row: SkillChartResult) => row.globalsim?.activationRate ?? NaN,
+		cell: (info: any) => {
+			const gs = info.row.original.globalsim;
+			const rate = gs?.activationRate;
+			if (!gs || rate == null || !Number.isFinite(rate)) return <span title="Activation tracking unavailable for this engine/row">—</span>;
+			const mean = gs.activationMean;
+			return <span title={`${Number.isFinite(mean as number) ? (mean as number).toFixed(2) : '—'} activations per race`}>{`${(rate * 100).toFixed(0)}%`}</span>;
+		},
+		sortingFn: (a: any, b: any) => {
+			const x = a.getValue('gsact'); const y = b.getValue('gsact');
+			const xf = Number.isFinite(x); const yf = Number.isFinite(y);
+			return xf && yf ? +(y < x) - +(x < y) : +xf - +yf;
+		},
+		sortDescFirst: true,
 	}, {
+		header: (c: any) => <span onClick={c.header.column.getToggleSortingHandler()}>Win %</span>,
+		id: 'gswin',
+		accessorFn: (row: SkillChartResult) => row.globalsim?.winRate ?? NaN,
+		cell: (info: any) => {
+			const gs = info.row.original.globalsim;
+			if (!gs) return <span>—</span>;
+			return (
+				<span title={`Win ${(gs.winRate * 100).toFixed(1)}% · Loss ${(gs.lossRate * 100).toFixed(1)}% · Tie ${(gs.tieRate * 100).toFixed(1)}% (paired seeds, margin > 0 = skill ahead)`}>
+					{Number.isFinite(gs.winRate) ? `${(gs.winRate * 100).toFixed(0)}%` : '—'}
+				</span>
+			);
+		},
+		sortingFn: (a: any, b: any) => {
+			const x = a.getValue('gswin'); const y = b.getValue('gswin');
+			const xf = Number.isFinite(x); const yf = Number.isFinite(y);
+			return xf && yf ? +(y < x) - +(x < y) : +xf - +yf;
+		},
+		sortDescFirst: true,
+	}] satisfies ColumnDef<SkillChartResult, any>[] : []),
+	{
 		header: (c) => <span onClick={c.header.column.getToggleSortingHandler()}>SP Cost</span>,
 		id: 'spcost',
 		accessorFn: (row) => ({ id: row.id, hint: props.hints.get(row.id) || 0 }),
@@ -280,7 +343,7 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 			return xf && yf ? +(y < x) - +(x < y) : +xf - +yf;
 		},
 		sortDescFirst: true
-	}], [selectedType, props.showUmaIcons, props.hints, props.hasSkills, radioGroup, props.onHideSkill]);
+	}], [selectedType, props.showUmaIcons, props.hints, props.hasSkills, radioGroup, props.onHideSkill, gsActive]);
 
 	const [sorting, setSorting] = useState<SortingState>([{ id: 'median', desc: true }]);
 

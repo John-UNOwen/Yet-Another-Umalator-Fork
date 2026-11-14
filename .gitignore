@@ -41,3 +41,6 @@ videos/
 /docs/Oguri Cap*.json
 .upstream-engine-cache/
 .sync-summary.txt
+
+# vision-router artifacts (local tool output)
+/.dsh-vision-router/

@@ -92,6 +92,13 @@ export interface PoolJob {
 	request: unknown;
 	seeds: number[];
 	mode: 'compact' | 'full';
+	/**
+	 * Optional: skill id the worker should count activations of for the player
+	 * runner in every compact record of this job (Phase 5 chart — the worker
+	 * only pays for the events of this ONE skill; see workerCore extractCompact).
+	 * Travels with the prepare message, so it is part of the preparation.
+	 */
+	trackSkillId?: string;
 }
 
 export interface PoolOptions {
@@ -107,6 +114,13 @@ export interface PoolOptions {
 export interface GlobalsimPool {
 	runJobs(jobs: PoolJob[]): Promise<{ errors: Array<{ jobId: string; error: string }> }>;
 	dispose(): void;
+	/**
+	 * Cancel a running batch (Phase 5 chart Stop path): every live worker is
+	 * terminated, queued and in-flight jobs are dropped WITHOUT requeue, and
+	 * the pending runJobs promise REJECTS with an 'aborted' error. A no-op
+	 * after dispose or a second abort.
+	 */
+	abort(): void;
 	/** Number of live workers (tests). */
 	size(): number;
 }
@@ -126,8 +140,9 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	const queue: Queued[] = [];
 	const slots: Slot[] = [];
 	const errors: Array<{ jobId: string; error: string }> = [];
-	let running: { resolve: () => void } | null = null;
+	let running: { resolve: () => void; reject: (e: Error) => void } | null = null;
 	let disposed = false;
+	let aborted = false;
 
 	function makeSlot(): Slot {
 		const slot: Slot = { gen: 0, worker: null, preparedKey: null, inflight: null, expecting: null };
@@ -142,10 +157,10 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		slot.worker = opts.factory();
 		slot.preparedKey = null;
 		slot.expecting = null;
-		slot.worker.addEventListener('message', (e: { data: any }) => { if (!disposed && slot.gen === gen) onWorkerMessage(slot, e.data); });
+		slot.worker.addEventListener('message', (e: { data: any }) => { if (!disposed && !aborted && slot.gen === gen) onWorkerMessage(slot, e.data); });
 		// A crashed worker (OOM / uncaught throw / wasm trap the runtime kills
 		// the thread for) lands here — same recovery path as an engine panic.
-		slot.worker.addEventListener('error', () => { if (!disposed && slot.gen === gen) failWorker(slot, 'worker crashed'); });
+		slot.worker.addEventListener('error', () => { if (!disposed && !aborted && slot.gen === gen) failWorker(slot, 'worker crashed'); });
 	}
 
 	function failWorker(slot: Slot, reason: string): void {
@@ -165,12 +180,13 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				queue.unshift(failed);   // exactly one requeue of the in-flight chunk
 			}
 		}
-		if (disposed) return;
+		if (disposed || aborted) return;
 		attachWorker(slot);             // recreate eagerly (loads wasm lazily on next prepare)
 		dispatch();
 	}
 
 	function onWorkerMessage(slot: Slot, data: any): void {
+		if (disposed || aborted) return;
 		if (!data || typeof data !== 'object' || !slot.inflight) return;
 		const job = slot.inflight.job;
 		if (data.type === 'prepared') {
@@ -216,7 +232,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 
 	/** Give every idle worker a job, preferring its held preparation. */
 	function dispatch(): void {
-		if (!running || disposed) return;
+		if (!running || disposed || aborted) return;
 		for (const slot of slots) {
 			if (slot.inflight || queue.length === 0) continue;
 			let idx = slot.preparedKey == null ? -1 : queue.findIndex(q => q.job.setupKey === slot.preparedKey);
@@ -228,7 +244,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				slot.worker!.postMessage({ type: 'run', jobId: next.job.id, seeds: next.job.seeds, mode: next.job.mode });
 			} else {
 				slot.expecting = 'prepared';
-				slot.worker!.postMessage({ type: 'prepare', id: next.job.id, setupKey: next.job.setupKey, request: next.job.request });
+				slot.worker!.postMessage({ type: 'prepare', id: next.job.id, setupKey: next.job.setupKey, request: next.job.request, trackSkillId: next.job.trackSkillId });
 			}
 		}
 		if (running && queue.length === 0 && slots.every(s => !s.inflight)) {
@@ -240,11 +256,13 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	return {
 		runJobs(jobs: PoolJob[]): Promise<{ errors: Array<{ jobId: string; error: string }> }> {
 			if (running) return Promise.reject(new Error('globalsim pool is already running a batch'));
+			if (aborted) return Promise.reject(new Error('globalsim pool was aborted'));
+			if (disposed) return Promise.reject(new Error('globalsim pool is disposed'));
 			queue.push(...jobs.map(job => ({ job, requeues: 0 })));
 			const n = Math.min(threads, Math.max(1, queue.length));
 			while (slots.length < n) makeSlot();
-			return new Promise<void>(resolve => {
-				running = { resolve };
+			return new Promise<void>((resolve, reject) => {
+				running = { resolve, reject };
 				dispatch();
 			}).then(() => ({ errors }));
 		},
@@ -255,6 +273,22 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			queue.length = 0;
 			running?.resolve();
 			running = null;
+		},
+		abort(): void {
+			if (disposed || aborted) return;
+			aborted = true;
+			queue.length = 0;
+			for (const slot of slots) {
+				slot.inflight = null;
+				slot.expecting = null;
+				try { slot.worker?.terminate(); } catch { /* already gone */ }
+				slot.worker = null;
+			}
+			slots.length = 0;
+			// Pending runJobs promise rejects; nothing is requeued (Stop semantics).
+			const r = running;
+			running = null;
+			r?.reject(new Error('globalsim pool aborted'));
 		},
 		size(): number { return slots.length; },
 	};

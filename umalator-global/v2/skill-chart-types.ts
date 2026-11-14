@@ -8,6 +8,30 @@
 import type { RaceSnapshot } from './results-pane';
 
 /**
+ * Additive GlobalSim block on a chart row (Phase 5). Present only on rows
+ * produced by engines/globalsim/chart.ts; classic rows never have it, so the
+ * classic table renders exactly as before. Sign convention matches compare
+ * metrics: min/max/mean/median are margin lengths, positive = the skill helps.
+ */
+export interface SkillChartGlobalsim {
+  /** Paired seeds with a margin so far (streams up during the run). */
+  n: number;
+  /** 95% CI on the mean margin, lengths. [NaN, NaN] before the first pair. */
+  ci95: [number, number];
+  /** Share of paired seeds where margin > 0 / < 0 / === 0 (fractions of n). */
+  winRate: number;
+  lossRate: number;
+  tieRate: number;
+  /** Player activations of the TESTED skill per sampled seed (mean; rate = share of seeds with ≥1). */
+  activationMean?: number;
+  activationRate?: number;
+  /** Per-seed engine errors counted into this row. */
+  seedErrors: number;
+  /** 1 = round-1-only sample, 2 = refilled through round 2 (sampleCount differs). */
+  round: number;
+}
+
+/**
  * Single skill test result
  */
 export interface SkillChartResult {
@@ -17,6 +41,10 @@ export interface SkillChartResult {
   mean: number;
   median: number;
   results: number[];  // Sorted bashin differences
+  /** Samples behind min/max/mean/median (classic rows set it too, untyped). */
+  sampleCount?: number;
+  /** GlobalSim engine rows only — see SkillChartGlobalsim. */
+  globalsim?: SkillChartGlobalsim;
   runData: {
     minrun: RaceSnapshot;
     maxrun: RaceSnapshot;

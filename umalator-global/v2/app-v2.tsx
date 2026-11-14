@@ -80,6 +80,7 @@ import { SimulationSettings } from "./sim-settings";
 import { loadGlobalsimSkillIds } from "./engines/globalsim/skills";
 import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
 import { runGlobalsimCompare } from "./engines/globalsim/compare";
+import { runGlobalsimSkillChart } from "./engines/globalsim/chart";
 import {
   resolveThreadCount,
   loadThreadsOption,
@@ -286,9 +287,9 @@ function App() {
   }, [duelingRates]);
   const [laneMovement, setLaneMovement] = useState(true);
   // 'v2' = our engine, 'v1' = alpha123's vendored upstream engine (tools/sync-upstream-engine.mjs)
-  // 'globalsim' = GlobalSim engine (integration plan): compare runs the wasm
-  // full-field engine via engines/globalsim/pool.ts (Phase 4); chart still uses
-  // the classic pipeline until Phase 5.
+  // 'globalsim' = GlobalSim engine (integration plan): compare AND the skill
+  // chart run the wasm full-field engine via engines/globalsim/pool.ts
+  // (compare = Phase 4, chart = Phase 5).
   const [engine, setEngine] = useState<'v1' | 'v2' | 'globalsim'>('v2');
   const globalsimMode = engine === "globalsim";
   // Active GlobalSim skill table (keys of globalsim/skills.json, fetched once when
@@ -775,8 +776,25 @@ function App() {
     }
   }, []);
 
+  // GlobalSim worker-pool entry (Phase 4) — same bundler URL pattern as the
+  // classic simWorker above, so esbuild (build.mjs) and Vite both emit it.
+  // Declared before handleRunSkillChart (Phase 5) because both it and
+  // handleRunSimulation depend on it.
+  const globalsimWorkerFactory: WorkerFactory = useCallback(
+    () =>
+      new Worker(new URL("./engines/globalsim/globalsim.worker.ts", import.meta.url), {
+        type: "module",
+      }),
+    [],
+  );
+
   // Run skill chart via 4 workers
+  // GlobalSim chart (Phase 5): AbortController per run — starting a new run
+  // cancels the previous pool (terminate workers, drop queues, reject).
+  const chartAbortRef = useRef<AbortController | null>(null);
   const handleRunSkillChart = useCallback(() => {
+    chartAbortRef.current?.abort();
+    chartAbortRef.current = null;
     setIsRunning(true);
     setCompletedWorkers(0);
     setSkillChartResults(new Map());
@@ -813,6 +831,72 @@ function App() {
     if (activateableSkills.length === 0) {
       console.warn("[V2] No activateable skills found for this course");
       setIsRunning(false);
+      return;
+    }
+
+    // GlobalSim engine (Phase 5): the chart runs through the wasm worker pool
+    // — a shared per-seed baseline + one "+skill" variant per candidate,
+    // paired by seed (plan §5 Phase 5). Candidates are already activateable +
+    // coverage-filtered above (Phase 2b). The classic path below is unchanged
+    // for v1/v2.
+    if (engine === "globalsim") {
+      const controller = new AbortController();
+      chartAbortRef.current = controller;
+      (async () => {
+        const courseIds = await loadGlobalsimCourseIds();
+        if (!courseIds) {
+          throw new Error(
+            "GlobalSim course table unavailable (/uma-tools/globalsim/courses.json) — run `node umalator-global/build.mjs` once to generate the GlobalSim assets.",
+          );
+        }
+        // UmaState → HorseState, same conversion as the GlobalSim compare path.
+        const toHorseState = (u: typeof uma1) => {
+          const w: any = convertUmaStateForWorker(u);
+          return new HorseState({
+            ...w,
+            starCount: (u as any).starCount,
+            uniqueLv: (u as any).uniqueLv,
+          })
+            .set("skills", fromJS(w.skills))
+            .set("forcedSkillPositions", ImmMap(w.forcedSkillPositions || {}));
+        };
+        setSkillChartProgress({ 0: { round: 1, total: chartFastMode ? 1 : 2 } });
+        const rows = await runGlobalsimSkillChart({
+          uma: toHorseState(uma1),
+          skills: activateableSkills,
+          courseId,
+          distance: course.distance,
+          ground,
+          weather,
+          season,
+          time,
+          grade: Grade.G1,
+          knownSkillIds: globalsimSkillIds ?? undefined,
+          courseIds,
+          mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
+          fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
+          seedBase: seed || Math.floor(Math.random() * 0xFFFFFFFF),
+          sampleCount: samples,
+          fastMode: chartFastMode,
+          threads: resolveThreadCount(globalsimThreads),
+          workerFactory: globalsimWorkerFactory,
+          // Streaming rows → the existing chart table (fills progressively).
+          onProgress: (rows) =>
+            setSkillChartResults(new Map(rows.map((r) => [r.id, r]))),
+          // Reuses the classic per-worker round progress display (id 0).
+          onRound: (round, total) =>
+            setSkillChartProgress({ 0: { round, total } }),
+          signal: controller.signal,
+        });
+        console.log("[GlobalSim] skill chart finished:", rows.length, "skills");
+      })()
+        .catch((e) => {
+          if ((e as any)?.name !== "AbortError") console.error("[GlobalSim] skill chart failed:", e);
+        })
+        .finally(() => {
+          if (chartAbortRef.current === controller) chartAbortRef.current = null;
+          setIsRunning(false);
+        });
       return;
     }
 
@@ -868,19 +952,16 @@ function App() {
     chartWorkers,
     chartFastMode,
     globalsimSkillIds,
+    // GlobalSim chart path (Phase 5)
+    engine,
+    samples,
+    globalsimFieldPreset,
+    globalsimGate,
+    globalsimThreads,
+    globalsimWorkerFactory,
   ]);
 
   // Run simulation via worker
-  // GlobalSim worker-pool entry (Phase 4) — same bundler URL pattern as the
-  // classic simWorker above, so esbuild (build.mjs) and Vite both emit it.
-  const globalsimWorkerFactory: WorkerFactory = useCallback(
-    () =>
-      new Worker(new URL("./engines/globalsim/globalsim.worker.ts", import.meta.url), {
-        type: "module",
-      }),
-    [],
-  );
-
   const handleRunSimulation = useCallback(() => {
     if (autoSeed) {
       setSeed(Math.floor(Math.random() * 0xFFFFFFFF));

@@ -67,6 +67,12 @@ export interface SeedCompactRecord {
 	lastSpurtStartDistance?: number;
 	startDelayTime?: number;
 	/**
+	 * Phase 5 chart: the player's activation count of the preparation's
+	 * trackSkillId (see workerCore PrepareMsg). Present only when the job
+	 * tracked a skill; per-seed count of THAT skill's activations.
+	 */
+	activations?: number;
+	/**
 	 * Fixed grid sampled backwards from the player's own finish:
 	 * [dtBeforeFinish, pos, speed] for dtBeforeFinish = k * TAIL_STEP,
 	 * k = 0 … TAIL_SAMPLES-1 (clamped at t = 0). Null when the reply had no

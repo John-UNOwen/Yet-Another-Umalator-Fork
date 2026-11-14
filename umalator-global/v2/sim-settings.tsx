@@ -213,7 +213,7 @@ export function SimulationSettings({
 				    the skill pickers, the chart candidate list and the uma outfits to the
 				    active GlobalSim skill table; the race pipeline still runs the classic
 				    engine until the wasm pipeline lands in Phases 4–5. */}
-				<Tooltip content="v2 is our engine. v1 is alpha123's upstream engine — fewer mechanics, useful as a reference point. GlobalSim (beta) gates skills and outfits to the GlobalSim skill table; results currently use the classic engine." position="bottom">
+				<Tooltip content="v2 is our engine. v1 is alpha123's upstream engine — fewer mechanics, useful as a reference point. GlobalSim (beta) runs Compare and the skill chart on the GlobalSim full-field wasm engine, and gates skills and outfits to the GlobalSim skill table." position="bottom">
 					<span class="v2-sim-label">
 						Engine
 						<span class="v2-engine-toggle" role="group" aria-label="Simulation engine">
@@ -391,7 +391,7 @@ export function SimulationSettings({
 
 				{engine === 'globalsim' && (
 					<span class="v2-globalsim-notice">
-						Compare runs the GlobalSim full-field engine (9-runner mob field, margin in lengths, win rate). Chart still uses the classic engine until Phase 5.
+						Compare and skill chart run the GlobalSim full-field engine (9-runner mob field, margin in lengths, win rate).
 						{typeof globalsimUncoveredCount === 'number' && (
 							` ${globalsimUncoveredCount} skills not yet supported by GlobalSim.`
 						)}

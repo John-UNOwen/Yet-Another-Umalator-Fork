@@ -11,9 +11,11 @@
  *
  * ## Message protocol (main ⇄ worker)
  *
- *   → {type:'prepare', id, setupKey, request}     request = the full
- *     GlobalSim race request from adapter.ts (profile + 9 runners; the seed
- *     field is a placeholder — PreparedRace.run overrides it per seed).
+ *   → {type:'prepare', id, setupKey, request, trackSkillId?}
+ *     request = the full GlobalSim race request from adapter.ts (profile +
+ *     9 runners; the seed field is a placeholder — PreparedRace.run overrides
+ *     it per seed). trackSkillId (Phase 5 chart): count the player's
+ *     activations of that one skill in each compact record.
  *     ← {type:'prepared', id, setupKey, ok, error?, dead?}
  *     dead:true means the wasm handle/instance may be poisoned (engine panic)
  *     and the pool should recreate the worker.
@@ -61,7 +63,18 @@ export interface WorkerCoreDeps {
 	geometryBase?: string;
 }
 
-export interface PrepareMsg { type: 'prepare'; id: string; setupKey: string; request: unknown }
+export interface PrepareMsg {
+	type: 'prepare';
+	id: string;
+	setupKey: string;
+	request: unknown;
+	/**
+	 * Optional (Phase 5 chart): count the PLAYER's activations of this one
+	 * skill in every compact record of the preparation (skillEvents are in
+	 * the engine reply; counting a single id keeps the compact payload small).
+	 */
+	trackSkillId?: string;
+}
 export interface RunMsg { type: 'run'; jobId: string; seeds: number[]; mode: 'compact' | 'full' }
 export type WorkerInMsg = PrepareMsg | RunMsg;
 
@@ -75,7 +88,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 	let wasm: WasmApi | null = null;
 	let wasmLoading: Promise<WasmApi> | null = null;
 	const geometryRegistered = new Set<number>();
-	let prepared: { setupKey: string; race: PreparedRaceInstance } | null = null;
+	let prepared: { setupKey: string; race: PreparedRaceInstance; trackSkillId?: string } | null = null;
 
 	async function ensureWasm(): Promise<WasmApi> {
 		if (wasm) return wasm;
@@ -93,7 +106,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 		geometryRegistered.add(courseId);
 	}
 
-	function extractCompact(reply: any, seed: number): SeedCompactRecord {
+	function extractCompact(reply: any, seed: number, trackSkillId?: string): SeedCompactRecord {
 		const pi = reply.playerHorseIndex as number;
 		const res = reply.results && reply.results[pi];
 		if (!res || typeof res.finishTimeRaw !== 'number') {
@@ -101,7 +114,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 		}
 		const frames = Array.isArray(reply.frames) ? reply.frames : null;
 		const tail = frames ? samplePlayerTail(frames, pi, res.finishTimeRaw) : null;
-		return {
+		const rec: SeedCompactRecord = {
 			seed,
 			finishTimeRaw: res.finishTimeRaw,
 			finishOrder: res.finishOrder,
@@ -112,6 +125,17 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			startDelayTime: res.startDelayTime ?? 0,
 			tail: tail && tail.length ? tail : null,
 		};
+		// Phase 5 chart: the worker-side activation count of the ONE tracked
+		// skill (player runner only). Numeric + string skillIds both match —
+		// write_json emits numeric ids, tests may feed strings.
+		if (trackSkillId && Array.isArray(reply.skillEvents)) {
+			let n = 0;
+			for (const ev of reply.skillEvents) {
+				if (ev && ev.horseIndex === pi && String(ev.skillId ?? ev.id) === trackSkillId) n++;
+			}
+			rec.activations = n;
+		}
+		return rec;
 	}
 
 	/** Player frames truncated at the first frame whose t ≥ finishTimeRaw (classic arrays end at the finish). */
@@ -153,7 +177,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			// worker keeps at most one PreparedRace — memory bound).
 			if (prepared) { try { prepared.race.free(); } catch { /* already dead */ } prepared = null; }
 			const race = new w.PreparedRace(json);
-			prepared = { setupKey: m.setupKey, race };
+			prepared = { setupKey: m.setupKey, race, trackSkillId: m.trackSkillId };
 			deps.postMessage({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: true });
 		} catch (e: any) {
 			const msg = String(e && e.message || e);
@@ -201,7 +225,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 				records.push({ seed, error: `reply parse failed: ${String(e && e.message || e)}` });
 				continue;
 			}
-			records.push(m.mode === 'full' ? extractFull(reply, seed) : extractCompact(reply, seed));
+			records.push(m.mode === 'full' ? extractFull(reply, seed) : extractCompact(reply, seed, prepared.trackSkillId));
 		}
 		deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: true, records });
 	}

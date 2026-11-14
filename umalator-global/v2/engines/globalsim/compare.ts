@@ -66,7 +66,8 @@ export function globalsimSeedList(baseSeed: number, count: number): number[] {
 	return out;
 }
 
-function hashString(s: string): string {
+/** FNV-1a hash (base36) — shared with chart.ts for setupKey building. */
+export function hashString(s: string): string {
 	let h = 0x811C9DC5;
 	for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
 	return (h >>> 0).toString(36);
@@ -202,7 +203,7 @@ export function buildCompareJobs(
 }
 
 /** Player + mobs in canonical ascending-gateIndex order (adapter's rule, §6.1). */
-function mergeCanonicalField(player: any, playerGate: number, mobs: any[]): { horses: any[]; playerIndex: number } {
+export function mergeCanonicalField(player: any, playerGate: number, mobs: any[]): { horses: any[]; playerIndex: number } {
 	const rows = [{ ...player, gateIndex: playerGate }, ...mobs];
 	rows.sort((a, b) => a.gateIndex - b.gateIndex);
 	return { horses: rows, playerIndex: rows.findIndex(r => r.gateIndex === playerGate) };
