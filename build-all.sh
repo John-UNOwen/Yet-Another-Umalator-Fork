@@ -28,6 +28,10 @@ echo "Copying v2 to root..."
 cp umalator-global/v2/dist/index.html ./index.html
 cp umalator-global/v2/dist/favicon.svg ./favicon.svg 2>/dev/null || true
 cp umalator-global/v2/dist/simulator.worker.js ./simulator.worker.js 2>/dev/null || true
+# globalsim.worker.js sits at the v2 dist root (worker.rollupOptions entryFileNames
+# '[name].js') and the main bundle resolves it as ../globalsim.worker.js from
+# /assets/, i.e. the site root — it must be copied here or the default engine 404s.
+cp umalator-global/v2/dist/globalsim.worker.js ./globalsim.worker.js 2>/dev/null || true
 rm -rf assets
 cp -r umalator-global/v2/dist/assets ./assets
 

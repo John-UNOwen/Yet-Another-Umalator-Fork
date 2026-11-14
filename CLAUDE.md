@@ -761,7 +761,7 @@ Essential for working with skill conditions, race parameters, and understanding 
 
 ```bash
 # Build all applications
-node umalator/build.mjs
+npm run build:all  # = build:global; JP v1 retired, no umalator/ build step
 node umalator-global/build.mjs  # Builds both v1 and v2
 node hp-calculator/build.mjs
 node events/build.mjs

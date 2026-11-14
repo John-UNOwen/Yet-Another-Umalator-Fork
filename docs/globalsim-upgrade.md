@@ -120,16 +120,26 @@ Rename + rewire (then commit):
 still prepare inside the new engine. Run the merged-table build + coverage:
 
 ```powershell
-npm run globalsim:coverage          # regenerates globalsim/coverage-report.md + skills.merged.json
-npm run test:globalsim-skilldata    # merged table injected into the real (wasm) engine
-npm run test:globalsim-skills       # every supplement entry prepares AND activates (stdin worker)
+npm run globalsim:coverage:write    # regenerates the tracked globalsim/coverage-report.md
+npm run globalsim:coverage          # the gate: exit 1 on an uncovered live skill, writes nothing
+npm run test:globalsim-skilldata    # merged table -> globalsim/skills.json, injected into the real (wasm) engine
+npm run test:globalsim-skills       # merged table -> globalsim/skills.merged.json; every supplement entry prepares AND activates (stdin worker)
 ```
 
 ```sh
+npm run globalsim:coverage:write
 npm run globalsim:coverage
 npm run test:globalsim-skilldata
 npm run test:globalsim-skills
 ```
+
+`globalsim:coverage:write` is `node tools/globalsim-coverage.mjs --write`; the bare
+`globalsim:coverage` (and `globalsim:coverage:merged`, which writes only
+`globalsim/skills.merged.json`) is the same tool without `--write`, so it prints the
+report to stdout and **writes no files** — regenerating the tracked report needs the
+`:write` form. The merged tables the suites load (`globalsim/skills.json`,
+`globalsim/skills.merged.json`, both gitignored) are written by the `--out` flag that
+the two suite scripts pass themselves.
 
 Known failure signature: the engine rejects an entry at prepare with
 **`Missing retail initialization field`** when its condition/field vocabulary
@@ -145,7 +155,18 @@ against the new engine's docs/SKILLS.md (conditions must parse AND the skill
 must activate — `test:globalsim-skills` checks both), or, if it cannot be
 ported cleanly, drop it from the supplement and let the coverage gate hide the
 skill again. Re-run this step until green. Commit the regenerated
-`globalsim/coverage-report.md` (tracked).
+`globalsim/coverage-report.md` (tracked) — it is only ever refreshed by
+`globalsim:coverage:write`, never by the gate run, so check it is not stale
+(`git --no-pager diff --stat globalsim/coverage-report.md`) before committing.
+
+Also refresh the committed `globalsim/courses.json` on every engine bump — it is
+the app's course-id validation set, copied from the engine's own
+`vendor/GlobalSim/data/course_data.json` (STRING keys, in `Object.keys` order;
+the app gate does `Set(ids).has(String(courseId))`, so numeric ids would reject
+every course). `npm run build:global` regenerates it from the new submodule pin
+(`generateGlobalsimAssets()` in `umalator-global/build.mjs`) — commit the file
+whenever it changes, because the Pages deploy serves the **committed** copy and a
+stale set silently rejects courses the new engine supports.
 
 ## 5. Rebuild wasm and regenerate the vNN goldens
 
@@ -222,7 +243,7 @@ npm run test:globalsim-skilldata
 npm run test:globalsim-compare  # full compare pipeline vs real wasm
 npm run test:globalsim-chart
 npm run test:globalsim-skills
-npm run globalsim:coverage
+npm run globalsim:coverage      # the gate — prints the report, writes nothing
 npm run typecheck:roster
 npm run build:v2 && npm run build:global
 ```

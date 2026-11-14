@@ -41,11 +41,24 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      # Same cache + key as ci.yml (both runners are Linux, so the two
+      # workflows share the binary): wasm-pack is compiled from crates.io,
+      # pinned — a wasm-bindgen CLI that mismatches the lib in the lockfile
+      # breaks pkg generation. Install only on cache miss.
+      - name: Cache wasm-pack 0.15.1
+        id: cache-wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-0.15.1
+
+      - name: Install wasm-pack 0.15.1
+        if: steps.cache-wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.1 --locked
+
       - name: Build globalsim-wasm
         working-directory: globalsim-wasm
-        run: |
-          cargo install wasm-pack --version 0.15.1 --locked
-          wasm-pack build --target web --release --out-dir pkg
+        run: wasm-pack build --target web --release --out-dir pkg
 
       - name: Build the v2 site
         env:
@@ -60,11 +73,14 @@ jobs:
           cp globalsim-wasm/pkg/globalsim_wasm.js globalsim-wasm/pkg/globalsim_wasm_bg.wasm globalsim/wasm/
           cp vendor/GlobalSim/data/course_geometry/*.json globalsim/geometry/
           node tools/globalsim-coverage.mjs --out globalsim/skills.json   # the CI coverage gate, too
-          # courses.json is committed; regenerate from course_data.json if missing
+          # courses.json is committed; regenerate from the engine's course table if missing.
+          # Must stay identical to generateGlobalsimAssets() part (iii) in umalator-global/build.mjs:
+          # STRING keys of vendor/GlobalSim/data/course_data.json — the app gate does
+          # Set(ids).has(String(courseId)), so numeric ids would reject every course.
           test -f globalsim/courses.json || node -e "
             const fs=require('fs');
-            const g=JSON.parse(fs.readFileSync('umalator-global/course_data.json','utf8'));
-            fs.writeFileSync('globalsim/courses.json', JSON.stringify(Object.keys(g).map(Number).sort((a,b)=>a-b)));
+            const ids = Object.keys(JSON.parse(fs.readFileSync('vendor/GlobalSim/data/course_data.json','utf-8')));
+            fs.writeFileSync('globalsim/courses.json', JSON.stringify(ids) + '\n');
           "
           # Third-party license notices bundled by the engine (upstream ships no top-level LICENSE)
           mkdir -p globalsim/licenses && cp vendor/GlobalSim/licenses/*.txt globalsim/licenses/

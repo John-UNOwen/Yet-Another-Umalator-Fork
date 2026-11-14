@@ -4,11 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build:jp": "cd umalator && node build.mjs",
     "build:global": "cd umalator-global && node build.mjs",
-    "build:all": "npm run build:jp && npm run build:global",
+    "build:all": "npm run build:global",
     "dev": "cd umalator-global && node build.mjs --serve 3000",
-    "dev:jp": "cd umalator && node build.mjs --serve 3000",
     "serve": "npm run build:global && node serve.mjs",
     "dev:v2": "cd umalator-global/v2 && npx vite",
     "build:v2": "cd umalator-global/v2 && npx vite build",
@@ -32,6 +30,8 @@
     "test:globalsim-chart": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/chart.acceptance.test.ts",
     "test:globalsim-skilldata": "node tools/globalsim-coverage.mjs --out globalsim/skills.json && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/skilldata.acceptance.test.ts",
     "globalsim:coverage": "node tools/globalsim-coverage.mjs",
+    "globalsim:coverage:write": "node tools/globalsim-coverage.mjs --write",
+    "globalsim:coverage:merged": "node tools/globalsim-coverage.mjs --out globalsim/skills.merged.json",
     "typecheck:roster": "bash tools/typecheck-roster.sh"
   },
   "author": "pecan",
