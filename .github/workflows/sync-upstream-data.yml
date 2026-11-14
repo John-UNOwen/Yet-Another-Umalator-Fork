@@ -1,10 +1,14 @@
 name: Sync upstream Global data
 
-# Hands-off. alpha123 pushes Global game data constantly (231 commits in six months);
-# this pulls it in and commits on its own. There is no review step: the rules that make
-# a blind merge unsafe are enforced inside tools/sync-upstream-data.mjs, which aborts
-# without writing if any guard trips. A tripped guard fails the run loudly instead of
-# committing something wrong.
+# Hands-off pull, human merge. alpha123 pushes Global game data constantly; this
+# pulls it in, verifies it builds and passes the engine tests, then opens a PULL
+# REQUEST against master (the fork's Pages deploy branch) — no direct commits to
+# any branch. The rules that make a blind merge unsafe are enforced inside
+# tools/sync-upstream-data.mjs, which aborts without writing if any guard trips;
+# a tripped guard fails the run loudly instead of opening a PR. Merging the PR is
+# what deploys the data to the live Pages site (pages.yml), and the coverage gate
+# below shows there whether a brand-new skill needs a GlobalSim supplement entry
+# before merge (docs/globalsim-upgrade.md).
 
 on:
   schedule:
@@ -17,6 +21,7 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync:
@@ -24,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: master
           # need real history so the script's git operations work
           fetch-depth: 0
 
@@ -54,10 +59,20 @@ jobs:
         if: steps.sync.outputs.changed == 'yes'
         run: cd uma-skill-tools && npm ci --no-audit --no-fund && npm test
 
-      - name: Commit
+      - name: GlobalSim coverage gate (informational for the PR)
         if: steps.sync.outputs.changed == 'yes'
+        continue-on-error: true
         run: |
-          rm -f .sync-summary.txt
+          # New in-game skills without engine definitions fail this gate: that is the
+          # signal to supplement globalsim/skills-supplement.json before merging.
+          node tools/globalsim-coverage.mjs --write
+
+      - name: Commit + open PR against master
+        if: steps.sync.outputs.changed == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -f .sync-summary.txt globalsim/coverage-report.md   # report refresh is not part of the sync PR
           git config user.name  'uma-tools bot'
           git config user.email 'noreply@umalator.app'
           # data only. bundles are rebuilt by Pages; never commit build output here.
@@ -70,7 +85,15 @@ jobs:
           if git diff --cached --quiet; then
             echo "nothing staged after all"; exit 0
           fi
+          BRANCH="sync/upstream-data-${GITHUB_RUN_ID}"
+          git checkout -b "$BRANCH"
           git commit -m "data: sync Global data from upstream" \
                      -m "${{ steps.sync.outputs.summary }}" \
                      -m "Automated by .github/workflows/sync-upstream-data.yml."
-          git push origin HEAD:dev
+          git push origin "HEAD:$BRANCH"
+          gh pr create --base master --head "$BRANCH" \
+            --title "data: sync Global data from upstream" \
+            --body "Automated daily upstream data sync. Summary: ${{ steps.sync.outputs.summary }}
+
+          Merge to deploy to the Pages site. If the *GlobalSim coverage gate* step failed, a brand-new skill has no engine definition yet — supplement \`globalsim/skills-supplement.json\` first (docs/globalsim-upgrade.md)." \
+            || echo "PR already exists or gh failed — branch pushed: $BRANCH"
