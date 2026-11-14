@@ -59,6 +59,9 @@ interface SimSettingsProps {
 	setHideNotInGame: (v: boolean) => void;
 	/** Count of uma-tools skills missing from the active GlobalSim table (GlobalSim mode notice). */
 	globalsimUncoveredCount?: number | null;
+	/** GlobalSim worker count ('auto' = cores − 1, capped at 8; persisted by pool.ts). */
+	threads?: 'auto' | number;
+	setThreads?: (v: 'auto' | number) => void;
 	mode?: string;
 }
 
@@ -88,6 +91,8 @@ export function SimulationSettings({
 	hideNotInGame,
 	setHideNotInGame,
 	globalsimUncoveredCount,
+	threads,
+	setThreads,
 	mode,
 }: SimSettingsProps) {
 	// Dueling rates popover
@@ -366,9 +371,27 @@ export function SimulationSettings({
 					</label>
 				</Tooltip>
 
+				{engine === 'globalsim' && setThreads && (
+					<Tooltip content="Web Workers running the GlobalSim wasm engine (Auto = CPU cores − 1, up to 8)" position="bottom">
+						<label class="v2-setting">
+							<span class="v2-setting-label">Sim threads</span>
+							<select
+								class="v2-select v2-select-sm"
+								value={String(threads ?? 'auto')}
+								onChange={(e) => setThreads(e.currentTarget.value === 'auto' ? 'auto' : Number(e.currentTarget.value))}
+							>
+								<option value="auto">Auto</option>
+								{Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+									<option key={n} value={String(n)}>{n}</option>
+								))}
+							</select>
+						</label>
+					</Tooltip>
+				)}
+
 				{engine === 'globalsim' && (
 					<span class="v2-globalsim-notice">
-						GlobalSim simulation lands in Compare/Chart next; results currently use the classic engine.
+						Compare runs the GlobalSim full-field engine (9-runner mob field, margin in lengths, win rate). Chart still uses the classic engine until Phase 5.
 						{typeof globalsimUncoveredCount === 'number' && (
 							` ${globalsimUncoveredCount} skills not yet supported by GlobalSim.`
 						)}

@@ -7982,3 +7982,87 @@ tr:hover .v2-skill-hide-btn {
     --color-surface-overlay: #ffffff;
   }
 }
+
+/* ── GlobalSim full-field stats block (Phase 4) ─────────────────────────── */
+.v2-gs-stats .v2-gs-progress {
+	margin-left: auto;
+	font-size: 11px;
+	color: var(--color-text-secondary, #8a93a6);
+}
+.v2-gs-stats .v2-metric-value {
+	font-size: 12px;
+}
+.v2-gs-placing {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+	margin: 6px 0;
+}
+.v2-gs-placing-label {
+	width: 46px;
+	font-size: 11px;
+	color: var(--color-text-secondary, #8a93a6);
+}
+.v2-gs-placing-bars {
+	display: flex;
+	align-items: flex-end;
+	gap: 3px;
+	height: 34px;
+	flex: 1;
+}
+.v2-gs-placing-bar {
+	flex: 1;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+	align-items: center;
+	position: relative;
+}
+.v2-gs-placing-fill {
+	width: 100%;
+	min-width: 8px;
+	border-radius: 2px 2px 0 0;
+	background: var(--color-accent, #2a77c5);
+	opacity: 0.75;
+}
+.v2-gs-placing.uma1 .v2-gs-placing-fill { background: #2a77c5; }
+.v2-gs-placing.uma2 .v2-gs-placing-fill { background: #c52a2a; }
+.v2-gs-placing-n {
+	position: absolute;
+	top: -2px;
+	font-size: 9px;
+	color: var(--color-text-secondary, #8a93a6);
+}
+.v2-gs-warn {
+	font-size: 11px;
+	color: #d7a13c;
+	margin-top: 4px;
+}
+.v2-gs-engine-line {
+	font-size: 10px;
+	color: var(--color-text-secondary, #8a93a6);
+	margin-top: 8px;
+	opacity: 0.8;
+}
+
+/* Sim-threads select (GlobalSim engine, Phase 4) */
+.v2-setting {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+.v2-setting-label {
+	font-size: 11px;
+	color: var(--color-text-secondary, #8a93a6);
+}
+.v2-select.v2-select-sm {
+	font: inherit;
+	font-size: 11px;
+	padding: 3px 4px;
+	border-radius: 6px;
+	background: var(--color-surface-elevated, #181c26);
+	color: var(--color-text, #e8ebf0);
+	border: 1px solid var(--color-border, #2a2f3a);
+}

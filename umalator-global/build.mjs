@@ -437,6 +437,73 @@ function generateGlobalsimSkills() {
 
 generateGlobalsimSkills();
 
+// GlobalSim static assets for dev + Pages (integration plan Phase 4):
+//   globalsim/wasm/      ← globalsim-wasm/pkg (the wasm-bindgen build)
+//   globalsim/geometry/  ← vendor/GlobalSim/data/course_geometry/*.json (33 MB,
+//                          skip-if-exists — they only change when the submodule moves)
+//   globalsim/courses.json ← the engine course-id list the v2 adapter validates against
+// The worker loads them at /uma-tools/globalsim/… — the same prefix rewrite
+// skills.json uses (dev server strip, Vite dev plugin, Pages _redirects).
+function generateGlobalsimAssets() {
+	const site = path.join(root, 'globalsim');
+	const pkgDir = path.join(root, 'globalsim-wasm', 'pkg');
+	const wasmDst = path.join(site, 'wasm');
+	fs.mkdirSync(wasmDst, { recursive: true });
+
+	// (i) wasm pkg — copy when built; else try wasm-pack (PATH only — no
+	// hardcoded user paths); else WARN loudly and continue: classic mode is
+	// unaffected, GlobalSim compare fails at run time with a clear message.
+	const pkgFiles = ['globalsim_wasm.js', 'globalsim_wasm_bg.wasm', 'globalsim_wasm.d.ts', 'globalsim_wasm_bg.wasm.d.ts'];
+	const havePkg = fs.existsSync(path.join(pkgDir, 'globalsim_wasm.js')) && fs.existsSync(path.join(pkgDir, 'globalsim_wasm_bg.wasm'));
+	if (!havePkg) {
+		try {
+			execSync('wasm-pack --version', { stdio: 'ignore' });
+			console.log('globalsim/wasm: pkg missing — running wasm-pack build (globalsim-wasm, target web)…');
+			execSync('wasm-pack build --target web --release --out-dir pkg', { cwd: path.join(root, 'globalsim-wasm'), stdio: 'inherit' });
+		} catch {
+			console.warn('*** globalsim-wasm/pkg is missing and wasm-pack is unavailable — /globalsim/wasm/ NOT updated.');
+			console.warn('*** Classic modes are unaffected; GlobalSim compare will fail until you run:');
+			console.warn('***   cd globalsim-wasm && wasm-pack build --target web --release --out-dir pkg');
+		}
+	}
+	let copied = 0;
+	for (const f of pkgFiles) {
+		const src = path.join(pkgDir, f);
+		if (!fs.existsSync(src)) continue;
+		fs.copyFileSync(src, path.join(wasmDst, f));
+		copied++;
+	}
+	if (copied) console.log(`globalsim/wasm: ${copied} pkg file(s) copied`);
+
+	// (ii) course geometry (33 MB) — cheap skip-if-exists copy; the files are
+	// pinned by the submodule, so an existing copy is never stale in practice.
+	const geomSrc = path.join(root, 'vendor', 'GlobalSim', 'data', 'course_geometry');
+	const geomDst = path.join(site, 'geometry');
+	if (fs.existsSync(geomSrc)) {
+		fs.mkdirSync(geomDst, { recursive: true });
+		let gCopied = 0, gSkipped = 0;
+		for (const f of fs.readdirSync(geomSrc).filter(f => f.endsWith('.json'))) {
+			const dst = path.join(geomDst, f);
+			if (fs.existsSync(dst)) { gSkipped++; continue; }
+			fs.copyFileSync(path.join(geomSrc, f), dst);
+			gCopied++;
+		}
+		console.log(`globalsim/geometry: ${gCopied} copied, ${gSkipped} up-to-date`);
+	} else {
+		console.warn('*** vendor/GlobalSim/data/course_geometry missing (submodule not checked out?) — geometry files NOT updated.');
+	}
+
+	// (iii) courses.json — the adapter's course-id validation set (tiny).
+	const courseDataPath = path.join(root, 'vendor', 'GlobalSim', 'data', 'course_data.json');
+	if (fs.existsSync(courseDataPath)) {
+		const ids = Object.keys(JSON.parse(fs.readFileSync(courseDataPath, 'utf-8')));
+		fs.writeFileSync(path.join(site, 'courses.json'), JSON.stringify(ids) + '\n');
+		console.log(`globalsim/courses.json: ${ids.length} course ids`);
+	}
+}
+
+generateGlobalsimAssets();
+
 // v1 was retired 2026-08-27; its routes now serve v2 at the root (see _redirects).
 // Only the v2 bundle is built here.
 

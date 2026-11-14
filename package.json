@@ -26,6 +26,9 @@
     "test:globalsim": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/adapter.test.ts",
     "test:globalsim-skills": "node tools/globalsim-coverage.mjs --out globalsim/skills.merged.json && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/skills.test.ts",
     "test:globalsim-mobs": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/mobs.test.ts",
+    "test:globalsim-metrics": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/metrics.test.ts",
+    "test:globalsim-pool": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/pool.test.ts",
+    "test:globalsim-compare": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/compare.acceptance.test.ts",
     "globalsim:coverage": "node tools/globalsim-coverage.mjs",
     "typecheck:roster": "bash tools/typecheck-roster.sh"
   },

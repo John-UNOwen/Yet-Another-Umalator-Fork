@@ -16,6 +16,11 @@ node_modules/
 /globalsim/skills.merged.json
 # Build-time active GlobalSim skill table (written by umalator-global/build.mjs).
 /globalsim/skills.json
+# Build-copied GlobalSim wasm pkg + 33 MB course geometry (also written by
+# build.mjs; globalsim/courses.json stays committed — it is tiny and the
+# adapter's course-id validation source).
+/globalsim/wasm/
+/globalsim/geometry/
 # umalator-global/not-in-game.json is now committed.
 # It is regenerated locally from docs/master.mdb via `node umalator-global/build.mjs`;
 # deploys read the committed version directly (master.mdb is not deployed).

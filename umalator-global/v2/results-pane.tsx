@@ -85,17 +85,42 @@ export interface FirstUmaStats {
 export interface CompareResults {
 	results: number[];  // Sorted bashin differences
 	runData: {
-		minrun: RaceSnapshot;
-		maxrun: RaceSnapshot;
-		meanrun: RaceSnapshot;
-		medianrun: RaceSnapshot;
-		allruns: AllRunsData;
+		minrun: RaceSnapshot | null;
+		maxrun: RaceSnapshot | null;
+		meanrun: RaceSnapshot | null;
+		medianrun: RaceSnapshot | null;
+		allruns?: AllRunsData;
 	};
 	staminaStats: {
 		uma1: UmaStaminaStats;
 		uma2: UmaStaminaStats;
 	};
 	firstUmaStats: FirstUmaStats;
+	/**
+	 * GlobalSim engine extension block (integration plan Phase 4). Present only
+	 * when engine === 'globalsim'; the classic engine leaves it undefined so
+	 * classic rendering is untouched. Panes with no GlobalSim source (stamina
+	 * survival, pacer gap) keep the existing per-engine unavailable state.
+	 */
+	globalsim?: GlobalSimStats;
+}
+
+/** Mirror of engines/globalsim/compare.ts GlobalsimStatsBlock (structural; type-only). */
+export interface GlobalSimStats {
+	engineLine: string;
+	ci95: [number, number];
+	winRateUma1: number; winRateUma2: number; tieRate: number;
+	placing1: number[]; placing2: number[];
+	hpEmptyRate1: number; hpEmptyRate2: number;
+	rushingRate1: number; rushingRate2: number;
+	methodCounts: { frames: number; 'delta-speed': number; 'delta-avg': number; tie: number };
+	seedErrors: number;
+	jobErrors: Array<{ jobId: string; error: string }>;
+	threads: number;
+	elapsedMs: number;
+	distanceM: number;
+	sampleCount: number;
+	doneSeeds: number;
 }
 
 // ============================================
@@ -394,6 +419,75 @@ function UmaStatsCard({ label, snapshot, umaIndex, staminaStats, allruns, colorC
 }
 
 // ============================================
+// GLOBALSIM EXTENSION BLOCK (Phase 4)
+// ============================================
+
+function pct(x: number): string {
+	return Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : '—';
+}
+
+/** 9-bucket placing histogram (finish positions, 9-runner field, D3). */
+function PlacingBars({ label, counts, colorClass }: { label: string; counts: number[]; colorClass: string }) {
+	const total = counts.reduce((a, b) => a + b, 0) || 1;
+	const max = Math.max(1, ...counts);
+	return (
+		<div className={`v2-gs-placing ${colorClass}`}>
+			<span className="v2-gs-placing-label">{label}</span>
+			<div className="v2-gs-placing-bars">
+				{counts.map((c, i) => (
+					<div key={i} className="v2-gs-placing-bar" title={`${i + 1}º — ${pct(c / total)}`}>
+						<div className="v2-gs-placing-fill" style={{ height: `${Math.round((c / max) * 100)}%` }} />
+						<span className="v2-gs-placing-n">{c > 0 ? c : ''}</span>
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function GlobalSimStatsBlock({ gs }: { gs: GlobalSimStats }) {
+	const fmtL = (x: number) => Number.isFinite(x) ? `${x >= 0 ? '+' : ''}${x.toFixed(2)}L` : '—';
+	const running = gs.doneSeeds < gs.sampleCount;
+	return (
+		<div className="v2-results-card v2-gs-stats">
+			<div className="v2-results-header">
+				<Flag size={16} />
+				<span>Full-field race stats</span>
+				{running && <span className="v2-gs-progress">{gs.doneSeeds.toLocaleString()} / {gs.sampleCount.toLocaleString()} pairs · {gs.threads} threads</span>}
+				{!running && gs.elapsedMs > 0 && <span className="v2-gs-progress">{(gs.elapsedMs / 1000).toFixed(1)}s · {gs.threads} threads</span>}
+			</div>
+			<div className="v2-results-stats">
+				<div className={`v2-result-stat ${gs.ci95[0] > 0 ? 'positive' : gs.ci95[1] < 0 ? 'negative' : ''}`}>
+					<span className="v2-metric-label">Win rate</span>
+					<span className="v2-metric-value">
+						Uma 2 {pct(gs.winRateUma2)} · Uma 1 {pct(gs.winRateUma1)} · Ties {pct(gs.tieRate)}
+					</span>
+				</div>
+				<div className="v2-result-stat">
+					<span className="v2-metric-label">Mean margin (95% CI)</span>
+					<span className="v2-metric-value">{Number.isFinite(gs.ci95[0]) ? `${fmtL(gs.ci95[0])} … ${fmtL(gs.ci95[1])}` : '—'}</span>
+				</div>
+				<div className="v2-result-stat">
+					<span className="v2-metric-label">HP empty / rushing</span>
+					<span className="v2-metric-value">
+						Uma 1 {pct(gs.hpEmptyRate1)} / {pct(gs.rushingRate1)} · Uma 2 {pct(gs.hpEmptyRate2)} / {pct(gs.rushingRate2)}
+					</span>
+				</div>
+			</div>
+			<PlacingBars label="Uma 1" counts={gs.placing1} colorClass="uma1" />
+			<PlacingBars label="Uma 2" counts={gs.placing2} colorClass="uma2" />
+			{(gs.seedErrors > 0 || gs.jobErrors.length > 0) && (
+				<div className="v2-gs-warn">
+					{gs.seedErrors > 0 && <span>{gs.seedErrors} seed error(s); </span>}
+					{gs.jobErrors.length > 0 && <span>{gs.jobErrors.length} chunk(s) failed twice: {gs.jobErrors.slice(0, 2).map(j => j.error).join('; ')}</span>}
+				</div>
+			)}
+			<div className="v2-gs-engine-line">{gs.engineLine} · 9-runner mob field · margin = full-field finish difference, + = Uma 2 ahead</div>
+		</div>
+	);
+}
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 
@@ -452,6 +546,9 @@ export function V2ResultsPane({ results, isRunning, progress, onRunSimulation, d
 			<div class="v2-results-histogram">
 				<Histogram results={results.results} width={500} height={80} markerValue={stats![displayRun]} />
 			</div>
+
+			{/* GlobalSim full-field stats (engine extension; absent for v1/v2) */}
+			{results.globalsim && <GlobalSimStatsBlock gs={results.globalsim} />}
 
 			{/* Run selector */}
 			<div class="v2-run-selector">

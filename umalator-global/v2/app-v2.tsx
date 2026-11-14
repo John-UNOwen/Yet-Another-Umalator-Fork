@@ -24,6 +24,7 @@ import {
   buildSimulationOptions,
   getDefaultPacer,
 } from "./simulation-utils";
+import { Grade } from "../../uma-skill-tools/RaceParameters";
 
 // Skill chart utilities
 import {
@@ -77,6 +78,17 @@ import { StaCalcResults } from "./stacalc";
 import { FeedbackDrawer } from "./feedback-drawer";
 import { SimulationSettings } from "./sim-settings";
 import { loadGlobalsimSkillIds } from "./engines/globalsim/skills";
+import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
+import { runGlobalsimCompare } from "./engines/globalsim/compare";
+import {
+  resolveThreadCount,
+  loadThreadsOption,
+  saveThreadsOption,
+  type ThreadsOption,
+  type WorkerFactory,
+} from "./engines/globalsim/pool";
+import { HorseState } from "../../components/HorseDefTypes";
+import { fromJS, Map as ImmMap } from "immutable";
 import mobPresets from "./engines/globalsim/mob-presets.json";
 import { MobileNav, MobileView } from "./mobile-nav";
 import {
@@ -274,9 +286,9 @@ function App() {
   }, [duelingRates]);
   const [laneMovement, setLaneMovement] = useState(true);
   // 'v2' = our engine, 'v1' = alpha123's vendored upstream engine (tools/sync-upstream-engine.mjs)
-  // 'globalsim' = GlobalSim mode (integration plan Phase 2b): gates skills/outfits to the
-  // active GlobalSim skill table; the race pipeline still runs the classic engine (v2)
-  // until Compare/Chart integration lands (Phases 4–5).
+  // 'globalsim' = GlobalSim engine (integration plan): compare runs the wasm
+  // full-field engine via engines/globalsim/pool.ts (Phase 4); chart still uses
+  // the classic pipeline until Phase 5.
   const [engine, setEngine] = useState<'v1' | 'v2' | 'globalsim'>('v2');
   const globalsimMode = engine === "globalsim";
   // Active GlobalSim skill table (keys of globalsim/skills.json, fetched once when
@@ -285,6 +297,9 @@ function App() {
   const [globalsimUncoveredCount, setGlobalsimUncoveredCount] = useState<number | null>(null);
   // Skills removed from imported/loaded builds while in GlobalSim mode (inline note).
   const [globalsimDropped, setGlobalsimDropped] = useState(0);
+  // GlobalSim worker-pool size option (Phase 4 §4.1): persisted by pool.ts.
+  const [globalsimThreads, setGlobalsimThreads] = useState<ThreadsOption>(() => loadThreadsOption());
+  useEffect(() => { saveThreadsOption(globalsimThreads); }, [globalsimThreads]);
   // GlobalSim field selection (integration plan Phase 3): mob preset + gate mode.
   // The same seed and preset give the same field; "Auto" draws the tested uma's
   // gate per seed, identically for both races of a compare pair.
@@ -856,6 +871,16 @@ function App() {
   ]);
 
   // Run simulation via worker
+  // GlobalSim worker-pool entry (Phase 4) — same bundler URL pattern as the
+  // classic simWorker above, so esbuild (build.mjs) and Vite both emit it.
+  const globalsimWorkerFactory: WorkerFactory = useCallback(
+    () =>
+      new Worker(new URL("./engines/globalsim/globalsim.worker.ts", import.meta.url), {
+        type: "module",
+      }),
+    [],
+  );
+
   const handleRunSimulation = useCallback(() => {
     if (autoSeed) {
       setSeed(Math.floor(Math.random() * 0xFFFFFFFF));
@@ -868,6 +893,58 @@ function App() {
       if (!course) {
         console.error("[V2] Course not found:", courseId);
         setIsRunning(false);
+        return;
+      }
+
+      // GlobalSim engine (Phase 4): BOTH sides of the compare run through the
+      // wasm worker pool (9-runner mob field, paired by seed) instead of the
+      // classic simulator.worker.ts path.
+      if (engine === "globalsim") {
+        (async () => {
+          const courseIds = await loadGlobalsimCourseIds();
+          if (!courseIds) {
+            throw new Error(
+              "GlobalSim course table unavailable (/uma-tools/globalsim/courses.json) — run `node umalator-global/build.mjs` once to generate the GlobalSim assets.",
+            );
+          }
+          // UmaState → HorseState, exactly like simulator.worker.ts's
+          // convertToHorseState (plus starCount/uniqueLv, which the GlobalSim
+          // adapter needs for the unique skill's level).
+          const toHorseState = (u: typeof uma1) => {
+            const w: any = convertUmaStateForWorker(u);
+            return new HorseState({
+              ...w,
+              starCount: (u as any).starCount,
+              uniqueLv: (u as any).uniqueLv,
+            })
+              .set("skills", fromJS(w.skills))
+              .set("forcedSkillPositions", ImmMap(w.forcedSkillPositions || {}));
+          };
+          const res = await runGlobalsimCompare({
+            uma1: toHorseState(uma1),
+            uma2: toHorseState(uma2),
+            courseId,
+            distance: (courseData as any)[courseId]?.distance ?? 2000,
+            ground,
+            weather,
+            season,
+            time,
+            grade: Grade.G1,
+            knownSkillIds: globalsimSkillIds ?? undefined,
+            courseIds,
+            mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
+            fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
+            seedBase: seed,
+            sampleCount: samples,
+            threads: resolveThreadCount(globalsimThreads),
+            workerFactory: globalsimWorkerFactory,
+            // Classic-shaped partial results — the existing pane paints them.
+            onProgress: (partial) => setResults(partial as any),
+          });
+          console.log("[GlobalSim] compare finished:", res.globalsim);
+        })()
+          .catch((e) => console.error("[GlobalSim] compare failed:", e))
+          .finally(() => setIsRunning(false));
         return;
       }
 
@@ -890,7 +967,8 @@ function App() {
             competeFight,
             duelingRates: competeFight ? duelingRates : undefined,
             laneMovement,
-            // GlobalSim mode still runs the classic engine (Phases 4–5 wire the wasm pool).
+            // The classic engine serves compare only for v1/v2 here; the
+            // 'globalsim' branch above returns before this point.
             engine: engine === 'globalsim' ? 'v2' : engine,
           }),
         },
@@ -956,6 +1034,12 @@ function App() {
     engine,
     autoSeed,
     handleRunSkillChart,
+    // GlobalSim compare path (Phase 4)
+    globalsimSkillIds,
+    globalsimFieldPreset,
+    globalsimGate,
+    globalsimThreads,
+    globalsimWorkerFactory,
   ]);
 
   // Get current snapshot based on displayRun selection
@@ -1608,6 +1692,8 @@ function App() {
               hideNotInGame={hideNotInGame}
               setHideNotInGame={setHideNotInGame}
               globalsimUncoveredCount={globalsimUncoveredCount}
+              threads={globalsimThreads}
+              setThreads={setGlobalsimThreads}
               mode={mode}
             />
 
@@ -2396,6 +2482,8 @@ function App() {
                         hideNotInGame={hideNotInGame}
                         setHideNotInGame={setHideNotInGame}
                         globalsimUncoveredCount={globalsimUncoveredCount}
+                        threads={globalsimThreads}
+                        setThreads={setGlobalsimThreads}
                         mode={mode}
                       />
                     </div>
