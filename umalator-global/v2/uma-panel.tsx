@@ -33,6 +33,7 @@ import skilldata from '../skill_data.json';
 import skillmeta from '../../skill_meta.json';
 import { skillGroups } from './skill-chart-utils';
 import notInGame from '../not-in-game.json';
+import { BASE_PATH, resolveBase } from '../../components/base-path';
 
 // ============================================
 // UNIQUE SKILL CALCULATION
@@ -197,7 +198,7 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 
 	// Random mob portrait for empty state
 	const randomMob = useMemo(() =>
-		`/uma-tools/icons/mob/trained_mob_chr_icon_${8000 + Math.floor(Math.random() * 624)}_000001_01.png`,
+		`${BASE_PATH}/icons/mob/trained_mob_chr_icon_${8000 + Math.floor(Math.random() * 624)}_000001_01.png`,
 	[]);
 
 	const handleSelect = useCallback((oid: string) => {
@@ -238,11 +239,11 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 				setTimeout(() => inputRef.current?.focus(), 0);
 			}}>
 				<img
-					src={outfitId ? (icons as any)[outfitId] : randomMob}
+					src={outfitId ? resolveBase((icons as any)[outfitId]) : randomMob}
 					alt={uma?.name[1] || 'Select character'}
 				/>
 				<div class="v2-uma-portrait-badge">
-					<img src="/uma-tools/icons/utx_ico_umamusume_00.png" alt="" />
+					<img src={`${BASE_PATH}/icons/utx_ico_umamusume_00.png`} alt="" />
 				</div>
 			</div>
 
@@ -296,7 +297,7 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 										class={`v2-uma-search-item ${i === activeIdx ? 'active' : ''}`}
 										onClick={() => handleSelect(oid)}
 									>
-										<img src={(icons as any)[oid]} alt="" loading="lazy" />
+										<img src={resolveBase((icons as any)[oid])} alt="" loading="lazy" />
 										<span class="v2-uma-search-epithet">{outfitName(u.outfits[oid])}</span>
 										<span class="v2-uma-search-name">{u.name[1]}</span>
 									</li>
@@ -324,7 +325,7 @@ interface StatInputProps {
 export function StatInput({ label, icon, value, onChange }: StatInputProps) {
 	const [draft, setDraft] = useState<string | null>(null);
 	const rank = rankForStat(value);
-	const rankIcon = `/uma-tools/icons/statusrank/ui_statusrank_${(100 + rank).toString().slice(1)}.png`;
+	const rankIcon = `${BASE_PATH}/icons/statusrank/ui_statusrank_${(100 + rank).toString().slice(1)}.png`;
 
 	return (
 		<div class="v2-stat-input">
@@ -364,11 +365,11 @@ interface StatsGridProps {
 
 export function StatsGrid({ state, onChange }: StatsGridProps) {
 	const stats = [
-		{ key: 'speed', label: 'Spd', icon: '/uma-tools/icons/status_00.png' },
-		{ key: 'stamina', label: 'Sta', icon: '/uma-tools/icons/status_01.png' },
-		{ key: 'power', label: 'Pow', icon: '/uma-tools/icons/status_02.png' },
-		{ key: 'guts', label: 'Gut', icon: '/uma-tools/icons/status_03.png' },
-		{ key: 'wisdom', label: 'Wit', icon: '/uma-tools/icons/status_04.png' },
+		{ key: 'speed', label: 'Spd', icon: `${BASE_PATH}/icons/status_00.png` },
+		{ key: 'stamina', label: 'Sta', icon: `${BASE_PATH}/icons/status_01.png` },
+		{ key: 'power', label: 'Pow', icon: `${BASE_PATH}/icons/status_02.png` },
+		{ key: 'guts', label: 'Gut', icon: `${BASE_PATH}/icons/status_03.png` },
+		{ key: 'wisdom', label: 'Wit', icon: `${BASE_PATH}/icons/status_04.png` },
 	] as const;
 
 	return (
@@ -397,7 +398,7 @@ const APTITUDE_OPTIONS = APTITUDES.map(a => {
 	const idx = 7 - APTITUDES.indexOf(a);
 	return {
 		value: a,
-		iconSrc: `/uma-tools/icons/utx_ico_statusrank_${(100 + idx).toString().slice(1)}.png`,
+		iconSrc: `${BASE_PATH}/icons/utx_ico_statusrank_${(100 + idx).toString().slice(1)}.png`,
 		label: `Rank ${a}`
 	};
 });
@@ -428,11 +429,11 @@ export function AptitudeSelect({ value, onChange, label }: AptitudeSelectProps) 
 // ============================================
 
 const MOOD_OPTIONS = [
-	{ value: 2, iconSrc: '/uma-tools/icons/global/utx_ico_motivation_m_04.png', label: 'Great' },
-	{ value: 1, iconSrc: '/uma-tools/icons/global/utx_ico_motivation_m_03.png', label: 'Good' },
-	{ value: 0, iconSrc: '/uma-tools/icons/global/utx_ico_motivation_m_02.png', label: 'Normal' },
-	{ value: -1, iconSrc: '/uma-tools/icons/global/utx_ico_motivation_m_01.png', label: 'Bad' },
-	{ value: -2, iconSrc: '/uma-tools/icons/global/utx_ico_motivation_m_00.png', label: 'Awful' },
+	{ value: 2, iconSrc: `${BASE_PATH}/icons/global/utx_ico_motivation_m_04.png`, label: 'Great' },
+	{ value: 1, iconSrc: `${BASE_PATH}/icons/global/utx_ico_motivation_m_03.png`, label: 'Good' },
+	{ value: 0, iconSrc: `${BASE_PATH}/icons/global/utx_ico_motivation_m_02.png`, label: 'Normal' },
+	{ value: -1, iconSrc: `${BASE_PATH}/icons/global/utx_ico_motivation_m_01.png`, label: 'Bad' },
+	{ value: -2, iconSrc: `${BASE_PATH}/icons/global/utx_ico_motivation_m_00.png`, label: 'Awful' },
 ];
 
 interface MoodSelectProps {

@@ -8,6 +8,7 @@
 
 import { h } from 'preact';
 import { CustomSelect, Tooltip } from './components';
+import { BASE_PATH } from '../../components/base-path';
 import { GroundCondition } from '../../uma-skill-tools/RaceParameters';
 
 // Ground condition options for CustomSelect
@@ -75,7 +76,7 @@ export function CompactConditions({
 							onClick={() => setWeather(w)}
 						>
 							<img
-								src={`/uma-tools/icons/utx_ico_weather_0${w - 1}.png`}
+								src={`${BASE_PATH}/icons/utx_ico_weather_0${w - 1}.png`}
 								alt={WEATHER_LABELS[w - 1]}
 								class="v2-condition-icon"
 							/>
@@ -92,7 +93,7 @@ export function CompactConditions({
 							onClick={() => setSeason(s)}
 						>
 							<img
-								src={`/uma-tools/icons/global/utx_txt_season_0${s - 1}.png`}
+								src={`${BASE_PATH}/icons/global/utx_txt_season_0${s - 1}.png`}
 								alt={SEASON_LABELS[s - 1]}
 								class="v2-condition-icon v2-condition-icon-season"
 							/>
@@ -109,7 +110,7 @@ export function CompactConditions({
 							onClick={() => setTime(t)}
 						>
 							<img
-								src={`/uma-tools/icons/utx_ico_timezone_0${t - 2}.png`}
+								src={`${BASE_PATH}/icons/utx_ico_timezone_0${t - 2}.png`}
 								alt={TIME_LABELS[t - 2]}
 								class="v2-condition-icon"
 							/>

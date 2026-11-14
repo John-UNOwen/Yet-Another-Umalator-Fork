@@ -22,6 +22,7 @@ import skilldata from '../skill_data.json';
 import skillmeta from '../skill_meta.json';
 import skillnames from '../skillnames.json';
 import notInGame from '../not-in-game.json';
+import { BASE_PATH } from '../../components/base-path';
 
 // ============================================
 // SKILL DATA SOURCE — abstraction over the static imports so consumers
@@ -104,7 +105,7 @@ export function getSkillName(skillId: string): string {
 // Get skill icon path from skillmeta
 export function getSkillIcon(skillId: string): string {
 	const meta = (skillmeta as Record<string, { iconId: string }>)[skillId];
-	return meta ? `/uma-tools/icons/${meta.iconId}.png` : '/uma-tools/icons/10011.png';
+	return meta ? `${BASE_PATH}/icons/${meta.iconId}.png` : `${BASE_PATH}/icons/10011.png`;
 }
 
 // Get skill rarity class for styling
@@ -440,7 +441,7 @@ export function SkillChip({
 	const nameFromSource = ds.skillnames[skillId];
 	const name = (nameFromSource && (nameFromSource[nameFromSource.length - 1] || nameFromSource[0])) || getSkillName(skillId);
 	const iconMeta = ds.skillmeta[skillId];
-	const icon = iconMeta?.iconId ? `/uma-tools/icons/${iconMeta.iconId}.png` : getSkillIcon(skillId);
+	const icon = iconMeta?.iconId ? `${BASE_PATH}/icons/${iconMeta.iconId}.png` : getSkillIcon(skillId);
 	const rarityClass = getSkillRarityClass(skillId);
 	const skill = ds.skills[skillId];
 
@@ -972,7 +973,7 @@ export function SkillPickerModal({ isOpen, onClose, onSelect, selectedSkills, hi
 										type="button"
 										class={`v2-icon-filter-btn ${activeIconTypes.has(iconType) ? 'active' : ''}`}
 										onClick={() => toggleIconType(iconType)}
-										style={{ backgroundImage: `url(/uma-tools/icons/${iconType}1.png)` }}
+										style={{ backgroundImage: `url(${BASE_PATH}/icons/${iconType}1.png)` }}
 										title={iconType}
 									/>
 								))}

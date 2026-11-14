@@ -45,6 +45,7 @@
  */
 
 import { SeedCompactRecord, FullRunData, samplePlayerTail } from './metrics';
+import { BASE_PATH } from '../../../../components/base-path';
 
 /** One live wasm preparation handle (globalsim-wasm/src/lib.rs PreparedRace). */
 export interface PreparedRaceInstance { run(seed: number): string; free(): void }
@@ -94,7 +95,7 @@ export function isDeadlyError(text: string): boolean {
 }
 
 export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
-	const geometryBase = deps.geometryBase ?? '/uma-tools/globalsim/geometry/';
+	const geometryBase = deps.geometryBase ?? `${BASE_PATH}/globalsim/geometry/`;
 	let wasm: WasmApi | null = null;
 	let wasmLoading: Promise<WasmApi> | null = null;
 	const geometryRegistered = new Set<number>();

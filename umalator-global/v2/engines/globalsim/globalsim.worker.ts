@@ -17,9 +17,10 @@
  */
 
 import { createGlobalsimWorkerCore, WasmApi } from './workerCore';
+import { BASE_PATH } from '../../../../components/base-path';
 
-const WASM_JS = '/uma-tools/globalsim/wasm/globalsim_wasm.js';
-const WASM_BYTES = '/uma-tools/globalsim/wasm/globalsim_wasm_bg.wasm';
+const WASM_JS = `${BASE_PATH}/globalsim/wasm/globalsim_wasm.js`;
+const WASM_BYTES = `${BASE_PATH}/globalsim/wasm/globalsim_wasm_bg.wasm`;
 
 async function loadWasmFromDeploy(): Promise<WasmApi> {
 	// init() is the wasm-bindgen default export; passing bytes keeps it from

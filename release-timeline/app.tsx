@@ -12,6 +12,7 @@
 import { h, render, Fragment } from 'preact';
 import { useState, useMemo } from 'preact/hooks';
 import { Search, Calendar, ListFilter, CreditCard, User } from 'lucide-react';
+import { BASE_PATH } from '../components/base-path';
 
 import {
 	Input,
@@ -171,11 +172,11 @@ function umaDisplayEpithet(u: Uma): string | null {
 }
 
 function umaIconUrl(u: Uma): string {
-	return `/uma-tools/icons/chara/trained_chr_icon_${u.charaId}_${u.cardId}_02.png`;
+	return `${BASE_PATH}/icons/chara/trained_chr_icon_${u.charaId}_${u.cardId}_02.png`;
 }
 function umaIconFallback(u: Uma): string {
 	const base = `${u.charaId}01`;
-	return `/uma-tools/icons/chara/trained_chr_icon_${u.charaId}_${base}_02.png`;
+	return `${BASE_PATH}/icons/chara/trained_chr_icon_${u.charaId}_${base}_02.png`;
 }
 
 // --- Main App --------------------------------------------------------------

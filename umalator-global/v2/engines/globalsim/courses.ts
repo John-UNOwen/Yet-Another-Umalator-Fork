@@ -8,11 +8,13 @@
  * fetch-once-cache pattern as skills.ts).
  */
 
+import { BASE_PATH } from '../../../../components/base-path';
+
 let pending: Promise<Set<string> | null> | null = null;
 
 export function loadGlobalsimCourseIds(): Promise<Set<string> | null> {
 	if (!pending) {
-		pending = fetch('/uma-tools/globalsim/courses.json')
+		pending = fetch(`${BASE_PATH}/globalsim/courses.json`)
 			.then(r => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.json();

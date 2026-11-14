@@ -22,6 +22,7 @@ import skillmeta from '../../skill_meta.json';
 import umas from '../../umas.json';
 import icons from '../../icons.json';
 import notInGame from '../not-in-game.json';
+import { BASE_PATH, resolveBase } from '../../components/base-path';
 
 interface SkillChartPaneProps {
 	data: SkillChartResult[];
@@ -92,7 +93,7 @@ function SkillNameCell(props: { id: string; showUmaIcons: boolean }) {
 		if (umaId && icons[umaId]) {
 			return (
 				<div class="v2-skill-chart-skill-name">
-					<img src={icons[umaId]} alt="" />
+					<img src={resolveBase(icons[umaId])} alt="" />
 					<span>{name}</span>
 				</div>
 			);
@@ -101,7 +102,7 @@ function SkillNameCell(props: { id: string; showUmaIcons: boolean }) {
 
 	return (
 		<div class="v2-skill-chart-skill-name">
-			<img src={`/uma-tools/icons/${skillmeta[id]?.iconId || 'skill_empty'}.png`} alt="" />
+			<img src={`${BASE_PATH}/icons/${skillmeta[id]?.iconId || 'skill_empty'}.png`} alt="" />
 			<span>{name}</span>
 		</div>
 	);

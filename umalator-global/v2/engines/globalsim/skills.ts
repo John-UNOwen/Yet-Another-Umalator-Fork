@@ -18,11 +18,13 @@
 
 interface SkillTable { ids: Set<string>; defs: Record<string, unknown> }
 
+import { BASE_PATH } from '../../../../components/base-path';
+
 let pending: Promise<SkillTable | null> | null = null;
 
 function fetchTable(): Promise<SkillTable | null> {
 	if (!pending) {
-		pending = fetch('/uma-tools/globalsim/skills.json')
+		pending = fetch(`${BASE_PATH}/globalsim/skills.json`)
 			.then(r => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.json();

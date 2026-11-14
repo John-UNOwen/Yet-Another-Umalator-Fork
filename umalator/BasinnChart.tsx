@@ -14,6 +14,7 @@ import { getParser } from '../uma-skill-tools/ConditionParser';
 import { buildBaseStats, buildSkillData, Perspective } from '../uma-skill-tools/RaceSolverBuilder';
 
 import type { HorseState } from '../components/HorseDef';
+import { BASE_PATH, resolveBase } from '../components/base-path';
 import { runComparison } from './compare';
 
 import './BasinnChart.css';
@@ -118,7 +119,7 @@ function SkillNameCell(props) {
 		if (umaId && icons[umaId]) {
 			return (
 				<div class="chartSkillName">
-					<img src={icons[umaId]} />
+					<img src={resolveBase(icons[umaId])} />
 					<span><Text id={`skillnames.${id}`} /></span>
 				</div>
 			);
@@ -127,7 +128,7 @@ function SkillNameCell(props) {
 	
 	return (
 		<div class="chartSkillName">
-			<img src={`/uma-tools/icons/${skillmeta[id].iconId}.png`} />
+			<img src={`${BASE_PATH}/icons/${skillmeta[id].iconId}.png`} />
 			<span><Text id={`skillnames.${id}`} /></span>
 		</div>
 	);

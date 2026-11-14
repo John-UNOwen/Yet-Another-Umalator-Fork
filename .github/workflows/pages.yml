@@ -1,0 +1,83 @@
+# GitHub Pages deployment for the GlobalSim fork (integration plan Phase 6).
+# Build order matters: the Rust/wasm step is the long pole, the site build and
+# the GlobalSim static assets (merged skill table, per-course geometry, wasm)
+# are independent of each other.
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build globalsim-wasm
+        working-directory: globalsim-wasm
+        run: |
+          cargo install wasm-pack --version 0.15.1 --locked
+          wasm-pack build --target web --release --out-dir pkg
+
+      - name: Assemble globalsim static assets
+        run: |
+          mkdir -p globalsim/wasm globalsim/geometry
+          cp globalsim-wasm/pkg/globalsim_wasm.js globalsim-wasm/pkg/globalsim_wasm_bg.wasm globalsim/wasm/
+          cp vendor/GlobalSim/data/course_geometry/*.json globalsim/geometry/
+          node tools/globalsim-coverage.mjs --out globalsim/skills.json   # also the CI coverage gate
+
+      - name: Build the v2 site
+        run: |
+          npm ci
+          npm run build:global
+
+      - name: License notice files
+        run: |
+          cp vendor/GlobalSim/LICENSE globalsim/LICENSE-GlobalSim 2>/dev/null || cp vendor/GlobalSim/COPYING globalsim/LICENSE-GlobalSim || true
+          ls vendor/GlobalSim | grep -i -E '^(LICENSE|COPYING|NOTICE)' || true
+
+      - name: Prepare Pages artifact
+        run: |
+          touch .nojekyll
+          # _site receives only what the site serves; no git, no master.mdb, no sources.
+          rsync -a --exclude '.git*' --exclude 'docs/master.mdb' --exclude 'node_modules' \
+            --exclude 'vendor' --exclude 'globalsim-wasm/target' --exclude 'globalsim-wasm/pkg' \
+            --exclude 'test' --exclude 'tools' --exclude 'functions' --exclude '_redirects' \
+            ./ _site/
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

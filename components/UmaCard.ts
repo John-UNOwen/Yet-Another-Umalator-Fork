@@ -6,6 +6,8 @@
  * Licensed under GPL-3.0-or-later
  */
 
+import { BASE_PATH } from './base-path';
+
 interface UmaCardData {
 	version: number;
 	horse: any; // HorseState JSON
@@ -186,10 +188,10 @@ export async function createUmaCard(outfitId: string, horseData: any): Promise<B
 	let iconPath: string;
 	if (outfitId) {
 		const uid = outfitId.slice(0, 4); // First 4 digits are uma ID
-		iconPath = `/uma-tools/icons/chara/trained_chr_icon_${uid}_${outfitId}_02.png`;
+		iconPath = `${BASE_PATH}/icons/chara/trained_chr_icon_${uid}_${outfitId}_02.png`;
 	} else {
 		// Default to Special Week outfit 1 if no outfit specified
-		iconPath = '/uma-tools/icons/chara/trained_chr_icon_1001_100101_02.png';
+		iconPath = `${BASE_PATH}/icons/chara/trained_chr_icon_1001_100101_02.png`;
 	}
 
 	try {

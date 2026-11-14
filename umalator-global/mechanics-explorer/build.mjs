@@ -53,7 +53,7 @@ const buildOptions = {
 	bundle: true,
 	minify: !debug,
 	outdir: '.',
-	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: 'false'},
+	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: 'false', 'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools')},
 	alias: {'react': 'preact/compat', 'react-dom': 'preact/compat'},
 	external: ['*.ttf'],
 	plugins: [redirectData, mockAssert]
@@ -71,6 +71,12 @@ if (options.serve) {
 		'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg'
 	};
 
+	const configuredBase = process.env.CC_BASE_PATH ?? '/uma-tools';
+	// Site-asset bases mapped to the repo root: the configured one plus the
+	// legacy '/uma-tools' (stripped too when a custom base is configured).
+	// CC_BASE_PATH='' means serve at root directly — no strip.
+	const rootPrefixes = [configuredBase, '/uma-tools'].filter(b => b);
+
 	http.createServer((req, res) => {
 		const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
 		if (urlPath.includes('..')) { res.writeHead(404); res.end('Not found'); return; }
@@ -80,8 +86,9 @@ if (options.serve) {
 		// served from this app's own directory so the app works at both `/` and
 		// `/mechanics-explorer/` (relative bundle.js/bundle.css resolve correctly either way).
 		let filePath;
-		if (urlPath.startsWith('/uma-tools/')) {
-			filePath = path.join(rootDir, urlPath.slice('/uma-tools'.length));
+		const basePrefix = rootPrefixes.find(b => urlPath === b || urlPath.startsWith(b + '/'));
+		if (basePrefix) {
+			filePath = path.join(rootDir, urlPath.slice(basePrefix.length) || '/');
 		} else {
 			let p = urlPath;
 			if (p === '/' || p === '/mechanics-explorer' || p === '/mechanics-explorer/') {
@@ -90,6 +97,11 @@ if (options.serve) {
 				p = '/' + p.slice('/mechanics-explorer/'.length);
 			}
 			filePath = path.join(dirname, p);
+			// Root mode (CC_BASE_PATH=''): root assets (/icons/…, /globalsim/…) come in
+			// app-relative; on an app-dir miss, fall back to the repo root.
+			if (!configuredBase && p !== '/index.html' && path.extname(p) && !fs.existsSync(filePath)) {
+				filePath = path.join(rootDir, p);
+			}
 		}
 		fs.readFile(filePath, (err, data) => {
 			if (err) { res.writeHead(404); res.end('Not found: ' + urlPath); return; }

@@ -51,7 +51,7 @@ await esbuild.build({
 	bundle: true,
 	minify: !debug,
 	outdir: '.',
-	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: 'false'},
+	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: 'false', 'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools')},
 	external: ['*.ttf'],
 	plugins: [redirectData, mockAssert]
 });
@@ -62,7 +62,7 @@ await esbuild.build({
 	bundle: true,
 	minify: !debug,
 	outdir: './v2',
-	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: 'false'},
+	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: 'false', 'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools')},
 	alias: {'react': 'preact/compat', 'react-dom': 'preact/compat'},
 	external: ['*.ttf'],
 	plugins: [redirectData, mockAssert]

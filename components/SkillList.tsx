@@ -1,4 +1,5 @@
 import { h, Fragment, cloneElement } from 'preact';
+import { BASE_PATH } from './base-path';
 import { useState, useContext, useMemo, useEffect, useRef, useId } from 'preact/hooks';
 import { IntlProvider, Text, Localizer } from 'preact-i18n';
 
@@ -228,7 +229,7 @@ const classnames = Object.freeze(['', 'skill-white', 'skill-gold', 'skill-unique
 export function Skill(props) {
 	return (
 		<div class={`skill ${classnames[skilldata[props.id].rarity]} ${props.selected ? 'selected' : ''}`} data-skillid={props.id}>
-			<img class="skillIcon" src={`/uma-tools/icons/${skillmeta[props.id].iconId}.png`} />
+			<img class="skillIcon" src={`${BASE_PATH}/icons/${skillmeta[props.id].iconId}.png`} />
 			<span class="skillName"><Text id={`skillnames.${props.id}`} /></span>
 			{props.lv && <SkillLevelEdit lv={props.lv} />}
 			{props.dismissable && <span class="skillDismiss">✕</span>}
@@ -420,7 +421,7 @@ export function ExpandedSkillDetails(props) {
 		<IntlProvider definition={STRINGS[lang]}>
 			<div class={`expandedSkill ${classnames[skill.rarity]}`} data-skillid={props.id}>
 				<div class="expandedSkillHeader">
-					<img class="skillIcon" src={`/uma-tools/icons/${skillmeta[props.id].iconId}.png`} />
+					<img class="skillIcon" src={`${BASE_PATH}/icons/${skillmeta[props.id].iconId}.png`} />
 					<span class="skillName"><Text id={`skillnames.${props.id}`} /></span>
 					{props.lv && <SkillLevelEdit lv={props.lv} />}
 					{props.dismissable && <span class="skillDismiss">✕</span>}
@@ -644,7 +645,7 @@ export function SkillList(props) {
 	}
 	
 	function IconFilterButton(props) {
-		return <button data-filter={props.type} class={`iconFilterButton ${active[props.group][props.type] ? 'active': ''}`} style={`background-image:url(/uma-tools/icons/${props.type}1.png)`}></button>
+		return <button data-filter={props.type} class={`iconFilterButton ${active[props.group][props.type] ? 'active': ''}`} style={`background-image:url(${BASE_PATH}/icons/${props.type}1.png)`}></button>
 	}
 
 	const items = useMemo(() => {

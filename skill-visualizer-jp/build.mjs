@@ -28,7 +28,7 @@ await esbuild.build({
 	bundle: true,
 	minify: !debug,
 	outdir: '.',
-	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'false'},
+	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'false', 'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools')},
 	external: ['*.ttf'],
 	plugins: [mockAssert]
 });

@@ -55,7 +55,7 @@ const buildOptions = {
 	minify: !debug,
 	outdir: '.',
 	write: !serve,
-	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true'},
+	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', 'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools')},
 	external: ['*.ttf'],
 	plugins: [redirectData, mockAssert]
 };

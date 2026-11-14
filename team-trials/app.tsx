@@ -12,6 +12,7 @@
 import { h, render, Fragment } from 'preact';
 import { useState, useEffect, useMemo, useCallback } from 'preact/hooks';
 import { Link, RotateCcw, Search, Check, Trash2 } from 'lucide-react';
+import { BASE_PATH } from '../components/base-path';
 
 import {
 	Modal,
@@ -110,8 +111,8 @@ function buildEntries(): UmaEntry[] {
 				epithet: outfit.epithet || '',
 				defaultStrategy: STRATEGY_ENUM_TO_KEY[outfit.strategy] || 'front',
 				rarity: outfit.rarity,
-				iconUrl: `/uma-tools/icons/chara/trained_chr_icon_${charaId}_${outfitId}_02.png`,
-				iconFallbackUrl: `/uma-tools/icons/chara/trained_chr_icon_${charaId}_${baseOutfitId}_02.png`,
+				iconUrl: `${BASE_PATH}/icons/chara/trained_chr_icon_${charaId}_${outfitId}_02.png`,
+				iconFallbackUrl: `${BASE_PATH}/icons/chara/trained_chr_icon_${charaId}_${baseOutfitId}_02.png`,
 				notInGame: notInGameOutfits.has(outfitId),
 			});
 		}

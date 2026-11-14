@@ -7,6 +7,7 @@
  */
 
 import { h } from 'preact';
+import { BASE_PATH } from './base-path';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 
 import './RacetrackCow.css';
@@ -34,9 +35,9 @@ const FRAME_INTERVAL = 150; // ms between animation frames
 
 // Sprite sheet config
 const SPRITE_CONFIG = {
-	idle: { src: '/uma-tools/icons/cow/White_Cow_Idle.png', frames: 6, width: 384, height: 256 },
-	walk: { src: '/uma-tools/icons/cow/White_Cow_Walk.png', frames: 4, width: 256, height: 256 },
-	sleep: { src: '/uma-tools/icons/cow/White_Cow_Sleeping.png', frames: 4, width: 256, height: 256 },
+	idle: { src: `${BASE_PATH}/icons/cow/White_Cow_Idle.png`, frames: 6, width: 384, height: 256 },
+	walk: { src: `${BASE_PATH}/icons/cow/White_Cow_Walk.png`, frames: 4, width: 256, height: 256 },
+	sleep: { src: `${BASE_PATH}/icons/cow/White_Cow_Sleeping.png`, frames: 4, width: 256, height: 256 },
 };
 
 // Direction to sprite row mapping
@@ -220,8 +221,8 @@ export function RacetrackCow({ trackWidth, onWalk, onStateChange, onClick, onDou
 
 	if (COW_SKIN) {
 		const skinSrc = MULTI_STATE_SKINS.has(COW_SKIN)
-			? `/uma-tools/icons/cow/${COW_SKIN}_${stateRef.current}.png`
-			: `/uma-tools/icons/cow/${COW_SKIN}.png`;
+			? `${BASE_PATH}/icons/cow/${COW_SKIN}_${stateRef.current}.png`
+			: `${BASE_PATH}/icons/cow/${COW_SKIN}.png`;
 		const wobble = stateRef.current === 'walk'
 			? `rotate(${Math.sin(renderTick * 0.12) * 6}deg)`
 			: stateRef.current === 'idle'

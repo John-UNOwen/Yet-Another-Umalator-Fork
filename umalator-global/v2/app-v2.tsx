@@ -35,6 +35,7 @@ import {
 import { RaceTrack, RegionDisplayType } from "../../components/RaceTrack";
 import { RaceSummary } from "../../components/RaceSummary";
 import { Language } from "../../components/Language";
+import { BASE_PATH } from "../../components/base-path";
 import {
   CustomSelect,
   Dropdown,
@@ -865,7 +866,7 @@ function App() {
         const courseIds = await loadGlobalsimCourseIds();
         if (!courseIds) {
           throw new Error(
-            "GlobalSim course table unavailable (/uma-tools/globalsim/courses.json) — run `node umalator-global/build.mjs` once to generate the GlobalSim assets.",
+            `GlobalSim course table unavailable (${BASE_PATH}/globalsim/courses.json) — run \`node umalator-global/build.mjs\` once to generate the GlobalSim assets.`,
           );
         }
         // UmaState → HorseState, same conversion as the GlobalSim compare path.
@@ -1006,7 +1007,7 @@ function App() {
           const courseIds = await loadGlobalsimCourseIds();
           if (!courseIds) {
             throw new Error(
-              "GlobalSim course table unavailable (/uma-tools/globalsim/courses.json) — run `node umalator-global/build.mjs` once to generate the GlobalSim assets.",
+              `GlobalSim course table unavailable (${BASE_PATH}/globalsim/courses.json) — run \`node umalator-global/build.mjs\` once to generate the GlobalSim assets.`,
             );
           }
           // UmaState → HorseState, exactly like simulator.worker.ts's
@@ -2400,7 +2401,7 @@ function App() {
               >
                 <div class="v2-skill-popover-header">
                   <img
-                    src={`/uma-tools/icons/${skillmeta[popoverSkillId]?.iconId || popoverSkillId}.png`}
+                    src={`${BASE_PATH}/icons/${skillmeta[popoverSkillId]?.iconId || popoverSkillId}.png`}
                     alt=""
                     class="v2-skill-popover-icon"
                   />

@@ -15,6 +15,7 @@ import { UmaState, defaultUmaState } from '../uma-panel';
 import skilldata from '../../skill_data.json';
 import umas from '../../umas.json';
 import icons from '../../../icons.json';
+import { resolveBase } from '../../../components/base-path';
 
 export type AptLetter = 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
 
@@ -86,8 +87,8 @@ export function getCharInfo(card_id: number): { charName: string; outfitName: st
 	// umas.json name is [jp, en]; v2 is Global so take index 1 and fall back to the raw id.
 	const charName = character?.name?.[1] ?? `Unknown (${charId})`;
 	const outfitName = character?.outfits?.[outfitId]?.epithet ?? '';
-	const iconSrc = (icons as any)[outfitId] ?? (icons as any)[charId]
-		?? '/uma-tools/icons/utx_ico_umamusume_00.png';
+	const iconSrc = resolveBase((icons as any)[outfitId] ?? (icons as any)[charId]
+		?? '/uma-tools/icons/utx_ico_umamusume_00.png');
 	return { charName, outfitName, iconSrc };
 }
 

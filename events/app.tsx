@@ -29,6 +29,7 @@ import {
 } from '../uma-skill-tools/RaceParameters';
 import courseData from '../umalator-global/course_data.json';
 import tracknames from '../umalator-global/tracknames.json';
+import { BASE_PATH } from '../components/base-path';
 
 import './events.css';
 
@@ -140,13 +141,13 @@ interface BannerData {
 
 // Support card type icons
 const SUPPORT_TYPE_ICONS: Record<number, string> = {
-  1: '/uma-tools/icons/status_00.png', // Speed
-  2: '/uma-tools/icons/status_01.png', // Stamina
-  3: '/uma-tools/icons/status_02.png', // Power
-  4: '/uma-tools/icons/status_03.png', // Guts
-  5: '/uma-tools/icons/status_04.png', // Wisdom
-  6: '/uma-tools/icons/utx_ico_friend_01.png', // Friend
-  7: '/uma-tools/icons/utx_ico_group_01.png', // Group
+  1: `${BASE_PATH}/icons/status_00.png`, // Speed
+  2: `${BASE_PATH}/icons/status_01.png`, // Stamina
+  3: `${BASE_PATH}/icons/status_02.png`, // Power
+  4: `${BASE_PATH}/icons/status_03.png`, // Guts
+  5: `${BASE_PATH}/icons/status_04.png`, // Wisdom
+  6: `${BASE_PATH}/icons/utx_ico_friend_01.png`, // Friend
+  7: `${BASE_PATH}/icons/utx_ico_group_01.png`, // Group
 };
 
 // Normalize banner data from GameTora
@@ -635,18 +636,18 @@ function getTimeName(time: Time): string {
 
 // Icon paths (matching conditions.tsx)
 function getWeatherIconSrc(weather: Weather): string {
-  return `/uma-tools/icons/utx_ico_weather_0${weather - 1}.png`;
+  return `${BASE_PATH}/icons/utx_ico_weather_0${weather - 1}.png`;
 }
 
 function getSeasonIconSrc(season: Season): string {
-  return `/uma-tools/icons/global/utx_txt_season_0${season - 1}.png`;
+  return `${BASE_PATH}/icons/global/utx_txt_season_0${season - 1}.png`;
 }
 
 function getTimeIconSrc(time: Time): string {
   // Time enum: Morning=1, Midday=2, Evening=3, Night=4
   // Icons only exist for Midday(0), Evening(1), Night(2)
   const iconIndex = time === Time.Morning ? 0 : time - 2;
-  return `/uma-tools/icons/utx_ico_timezone_0${iconIndex}.png`;
+  return `${BASE_PATH}/icons/utx_ico_timezone_0${iconIndex}.png`;
 }
 
 // Flip digit component with animation

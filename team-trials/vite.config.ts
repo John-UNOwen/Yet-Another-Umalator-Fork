@@ -27,13 +27,19 @@ function serveDevIndex(): Plugin {
 	};
 }
 
+// The asset base is CC_BASE_PATH (default '/uma-tools'; '' = served at root,
+// no strip). With a custom base the legacy '/uma-tools' prefix is stripped too.
 function serveUmaToolsAssets(): Plugin {
+	const configuredBase = process.env.CC_BASE_PATH ?? '/uma-tools';
+	const bases = [configuredBase, '/uma-tools'].filter(b => b);
 	return {
 		name: 'serve-uma-tools-assets',
 		configureServer(server) {
 			server.middlewares.use((req, res, next) => {
-				if (req.url?.startsWith('/uma-tools/')) {
-					const filePath = path.join(projectRoot, req.url.replace('/uma-tools/', ''));
+				const url = req.url ?? '';
+				const base = bases.find(b => url === b || url.startsWith(b + '/'));
+				if (base) {
+					const filePath = path.join(projectRoot, url.slice(base.length).split('?')[0] || '/');
 					if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
 						const ext = path.extname(filePath).toLowerCase();
 						const mimeTypes: Record<string, string> = {
@@ -67,6 +73,7 @@ export default defineConfig(({ mode }) => ({
 	define: {
 		CC_DEBUG: mode === 'development' ? 'true' : 'false',
 		CC_GLOBAL: 'true',
+		'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools'),
 	},
 	optimizeDeps: {
 		include: ['preact', 'preact/hooks'],

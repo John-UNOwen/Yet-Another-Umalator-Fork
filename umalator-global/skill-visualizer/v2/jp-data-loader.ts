@@ -11,6 +11,7 @@
  */
 
 import type { SkillDataSource } from '../../v2/skills';
+import { BASE_PATH } from '../../../components/base-path';
 
 // Module-level Promise cache. After the first call, all callers share one fetch.
 let cached: Promise<SkillDataSource> | null = null;
@@ -29,8 +30,8 @@ export function loadJpSkillData(): Promise<SkillDataSource> {
 
 	const p = (async (): Promise<SkillDataSource> => {
 		const [skillsResp, namesResp] = await Promise.all([
-			fetch('/uma-tools/uma-skill-tools/data/skill_data.json'),
-			fetch('/uma-tools/uma-skill-tools/data/skillnames.json'),
+			fetch(`${BASE_PATH}/uma-skill-tools/data/skill_data.json`),
+			fetch(`${BASE_PATH}/uma-skill-tools/data/skillnames.json`),
 		]);
 		if (!skillsResp.ok) throw new Error(`JP skill_data.json: HTTP ${skillsResp.status}`);
 		if (!namesResp.ok)  throw new Error(`JP skillnames.json: HTTP ${namesResp.status}`);

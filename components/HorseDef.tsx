@@ -12,6 +12,7 @@ import { tryParseImportText } from './gameExportParser';
 import { SlotDialog } from './SlotDialog';
 import { useLanguage } from './Language';
 import { COMMON_STRINGS } from '../strings/common';
+import { BASE_PATH, resolveBase } from './base-path';
 
 import { HorseParameters } from '../uma-skill-tools/HorseTypes';
 
@@ -209,7 +210,7 @@ function searchNames(query) {
 
 export function UmaSelector(props) {
 	const lang = useLanguage();
-	const randomMob = useMemo(() => `/uma-tools/icons/mob/trained_mob_chr_icon_${8000 + Math.floor(Math.random() * 624)}_000001_01.png`, []);
+	const randomMob = useMemo(() => `${BASE_PATH}/icons/mob/trained_mob_chr_icon_${8000 + Math.floor(Math.random() * 624)}_000001_01.png`, []);
 	const u = props.value && umas[props.value.slice(0,4)];
 
 	const input = useRef(null);
@@ -480,8 +481,8 @@ export function UmaSelector(props) {
 	return (
 		<div class="umaSelector">
 			<div class="umaSelectorIconsBox" onClick={focus}>
-				<img src={props.value ? icons[props.value] : randomMob} />
-				<img src="/uma-tools/icons/utx_ico_umamusume_00.png" />
+				<img src={props.value ? resolveBase(icons[props.value]) : randomMob} />
+				<img src={`${BASE_PATH}/icons/utx_ico_umamusume_00.png`} />
 			</div>
 			<div class="umaEpithet"><span>{props.value && getOutfitName(props.value, lang)}</span></div>
 			<div class="resetButtons">
@@ -555,7 +556,7 @@ export function UmaSelector(props) {
 						const uid = oid.slice(0,4);
 						return (
 							<li key={oid} data-uma-id={oid} class={`umaSuggestion ${i == activeIdx ? 'selected' : ''}`}>
-								<img src={icons[oid]} loading="lazy" /><span>{getOutfitName(oid, lang)} {umas[uid].name[1]}</span>
+								<img src={resolveBase(icons[oid])} loading="lazy" /><span>{getOutfitName(oid, lang)} {umas[uid].name[1]}</span>
 							</li>
 						);
 					})}
@@ -595,7 +596,7 @@ function rankForStat(x: number) {
 export function Stat(props) {
 	return (
 		<div class="horseParam">
-			<img src={`/uma-tools/icons/statusrank/ui_statusrank_${(100 + rankForStat(props.value)).toString().slice(1)}.png`} />
+			<img src={`${BASE_PATH}/icons/statusrank/ui_statusrank_${(100 + rankForStat(props.value)).toString().slice(1)}.png`} />
 			<input type="number" min="1" max="2000" value={props.value} tabindex={props.tabindex} onInput={(e) => props.change(+e.currentTarget.value)} />
 		</div>
 	);
@@ -604,7 +605,7 @@ export function Stat(props) {
 const APTITUDES = Object.freeze(['S','A','B','C','D','E','F','G']);
 export function AptitudeIcon(props) {
 	const idx = 7 - APTITUDES.indexOf(props.a);
-	return <img src={`/uma-tools/icons/utx_ico_statusrank_${(100 + idx).toString().slice(1)}.png`} loading="lazy" />;
+	return <img src={`${BASE_PATH}/icons/utx_ico_statusrank_${(100 + idx).toString().slice(1)}.png`} loading="lazy" />;
 }
 
 export function AptitudeSelect(props){
@@ -650,12 +651,12 @@ export function MoodSelect(props){
 	return (
 		<div class="horseMoodSelect" tabindex={props.tabindex} onClick={() => setOpen(!open)} onBlur={setOpen.bind(null, false)}>
 			<span>
-				<img src={`/uma-tools/icons/global/${moodValues.find(m => m.value === props.m)?.icon}.png`} />
+				<img src={`${BASE_PATH}/icons/global/${moodValues.find(m => m.value === props.m)?.icon}.png`} />
 			</span>
 			<ul style={open ? "display:block" : "display:none"}>
 				{moodValues.map(mood => 
 					<li key={mood.value} data-mood={mood.value} onClick={setMood}>
-						<img src={`/uma-tools/icons/global/${mood.icon}.png`} title={mood.label} />
+						<img src={`${BASE_PATH}/icons/global/${mood.icon}.png`} title={mood.label} />
 					</li>
 				)}
 			</ul>
@@ -921,11 +922,11 @@ export function HorseDef(props) {
 			<div class="horseDefHeader">{props.children}</div>
 			<UmaSelector value={umaId} select={setUma} tabindex={tabnext()} onSave={saveThisHorse} onSaveCard={saveCardThisHorse} onSaveSlot={saveSlotThisHorse} onLoad={loadThisHorse} onOpenOCR={openOCRModal} onReset={resetThisHorse} onResetToImported={importedState ? resetToImportedState : null} onResetAll={props.onResetAll} />
 			<div class="horseParams">
-				<div class="horseParamHeader"><img src="/uma-tools/icons/status_00.png" /><span>Speed</span></div>
-				<div class="horseParamHeader"><img src="/uma-tools/icons/status_01.png" /><span>Stamina</span></div>
-				<div class="horseParamHeader"><img src="/uma-tools/icons/status_02.png" /><span>Power</span></div>
-				<div class="horseParamHeader"><img src="/uma-tools/icons/status_03.png" /><span>Guts</span></div>
-				<div class="horseParamHeader"><img src="/uma-tools/icons/status_04.png" /><span>{CC_GLOBAL?'Wit':'Wisdom'}</span></div>
+				<div class="horseParamHeader"><img src={`${BASE_PATH}/icons/status_00.png`} /><span>Speed</span></div>
+				<div class="horseParamHeader"><img src={`${BASE_PATH}/icons/status_01.png`} /><span>Stamina</span></div>
+				<div class="horseParamHeader"><img src={`${BASE_PATH}/icons/status_02.png`} /><span>Power</span></div>
+				<div class="horseParamHeader"><img src={`${BASE_PATH}/icons/status_03.png`} /><span>Guts</span></div>
+				<div class="horseParamHeader"><img src={`${BASE_PATH}/icons/status_04.png`} /><span>{CC_GLOBAL?'Wit':'Wisdom'}</span></div>
 				<Stat value={state.speed} change={setter('speed')} tabindex={tabnext()} />
 				<Stat value={state.stamina} change={setter('stamina')} tabindex={tabnext()} />
 				<Stat value={state.power} change={setter('power')} tabindex={tabnext()} />

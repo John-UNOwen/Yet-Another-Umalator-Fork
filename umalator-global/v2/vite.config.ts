@@ -39,14 +39,20 @@ function redirectDataFiles(): Plugin {
   };
 }
 
-// Custom plugin to serve /uma-tools/* from project root
+// Custom plugin to serve site assets from project root.
+// The asset base is CC_BASE_PATH (default '/uma-tools'; '' = served at root,
+// no strip). With a custom base the legacy '/uma-tools' prefix is stripped too.
 function serveUmaToolsAssets(): Plugin {
+  const configuredBase = process.env.CC_BASE_PATH ?? '/uma-tools';
+  const bases = [configuredBase, '/uma-tools'].filter(b => b);
   return {
     name: 'serve-uma-tools-assets',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (req.url?.startsWith('/uma-tools/')) {
-          const filePath = path.join(projectRoot, req.url.replace('/uma-tools/', ''));
+        const url = req.url ?? '';
+        const base = bases.find(b => url === b || url.startsWith(b + '/'));
+        if (base) {
+          const filePath = path.join(projectRoot, url.slice(base.length).split('?')[0] || '/');
           if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
             // Determine content type
             const ext = path.extname(filePath).toLowerCase();
@@ -121,6 +127,7 @@ export default defineConfig(({ mode }) => {
     CC_OCR_PROXY: JSON.stringify(env.OCR_PROXY_URL || ''),
     CC_TURNSTILE_SITEKEY: JSON.stringify(env.TURNSTILE_SITEKEY || ''),
     CC_COW_SKIN: JSON.stringify(env.COW_SKIN || ''),
+    'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools'),
   },
 
   // Optimize dependencies

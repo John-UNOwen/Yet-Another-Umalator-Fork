@@ -517,7 +517,7 @@ const buildOptionsV2 = {
 	outdir: '.',
 	write: !serve,
 	format: 'esm',  // v2 uses import.meta (env vars, worker URLs) — legal only in ESM output
-	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: isDev.toString(), CC_OCR_PROXY: JSON.stringify(process.env.OCR_PROXY_URL || ''), CC_TURNSTILE_SITEKEY: JSON.stringify(process.env.TURNSTILE_SITEKEY || ''), CC_COW_SKIN: JSON.stringify(process.env.COW_SKIN || '')},
+	define: {CC_DEBUG: debug.toString(), CC_GLOBAL: 'true', CC_DEV: isDev.toString(), CC_OCR_PROXY: JSON.stringify(process.env.OCR_PROXY_URL || ''), CC_TURNSTILE_SITEKEY: JSON.stringify(process.env.TURNSTILE_SITEKEY || ''), CC_COW_SKIN: JSON.stringify(process.env.COW_SKIN || ''), 'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools')},
 	external: ['*.ttf'],
 	plugins: [redirectData, mockAssert, seedrandomPlugin],  // No redirectTable - use npm packages
 };
@@ -541,14 +541,23 @@ function runServer(ctx, port) {
 	const requestCount = new Map(ARTIFACTS.map(f => [f, 0]));
 	let buildCount = 0;
 	let output = null;
+	// Dev-server asset prefix strip: the site-asset base (default '/uma-tools',
+	// configurable via CC_BASE_PATH). Assets live at the project root here, so we
+	// strip the base off asset requests. CC_BASE_PATH='' means served at root — no strip.
+	const assetBases = ['/uma-tools', process.env.CC_BASE_PATH]
+		.filter(b => b && b.length > 0)
+		.map(b => b.replace(/^\//, '') + '/')
+		.filter((v, i, a) => a.indexOf(v) === i);
 	// client makes two requests for simulator.worker.js, avoid rebuilding on the second one
 	let workerState = 0;
 	http.createServer(async (req, res) => {
 		let url = req.url.endsWith('/') ? req.url + 'index.html' : req.url;
 		// Strip leading slash for path.join to work correctly
 		if (url.startsWith('/')) url = url.slice(1);
-		// Strip /uma-tools/ prefix if present (for local dev - assets are at root)
-		if (url.startsWith('uma-tools/')) url = url.slice('uma-tools/'.length);
+		// Strip the asset base prefix if present (for local dev - assets are at root)
+		for (const b of assetBases) {
+			if (url.startsWith(b)) { url = url.slice(b.length); break; }
+		}
 		// Strip umalator-global/ prefix for artifact matching
 		let artifactKey = url;
 		if (artifactKey.startsWith('umalator-global/')) artifactKey = artifactKey.slice('umalator-global/'.length);

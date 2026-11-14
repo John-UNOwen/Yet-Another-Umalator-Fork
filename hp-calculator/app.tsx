@@ -39,6 +39,8 @@ import {
   type HpEstimate,
 } from "./calculations";
 
+import { BASE_PATH } from "../components/base-path";
+
 import "./hp-calculator.css";
 
 // Storage keys
@@ -106,11 +108,11 @@ function loadPrefs(): Preferences {
 
 // Stat icons (using status icons from game)
 const STAT_ICONS: Record<string, string> = {
-  speed: "/uma-tools/icons/status_00.png",
-  stamina: "/uma-tools/icons/status_01.png",
-  power: "/uma-tools/icons/status_02.png",
-  guts: "/uma-tools/icons/status_03.png",
-  wisdom: "/uma-tools/icons/status_04.png",
+  speed: `${BASE_PATH}/icons/status_00.png`,
+  stamina: `${BASE_PATH}/icons/status_01.png`,
+  power: `${BASE_PATH}/icons/status_02.png`,
+  guts: `${BASE_PATH}/icons/status_03.png`,
+  wisdom: `${BASE_PATH}/icons/status_04.png`,
 };
 
 function App() {
