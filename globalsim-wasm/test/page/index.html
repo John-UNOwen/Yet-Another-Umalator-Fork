@@ -1,0 +1,74 @@
+<!doctype html>
+<!-- Phase 0 bench page: measures the WebAssembly GlobalSim in a real browser.
+     Serve the repo root (e.g. `npx http-server .`), open
+     /globalsim-wasm/test/page/ and run on Chrome, Firefox and a phone. -->
+<meta charset="utf-8">
+<title>globalsim-wasm bench (Phase 0)</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 40rem; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #999; padding: 2px 8px; }
+  #log { white-space: pre-wrap; font-family: ui-monospace, monospace; }
+  button:disabled { opacity: .5; }
+</style>
+<h1>globalsim-wasm bench</h1>
+<p>Course:
+  <select id="course">
+    <option value="10504">10504 (Nakayama 2000)</option>
+    <option value="10606">10606</option>
+    <option value="10207">10207</option>
+  </select>
+  Seeds: <input id="seeds" type="number" value="100" min="1" max="5000" style="width:5rem">
+  <button id="go">Run</button>
+</p>
+<p id="status">idle — wasm fetches on first load (~0.4 MB gzipped).</p>
+<table id="out"><tr><th>ms/race</th><th>median</th><th>prepare</th><th>bytes</th></tr><tr><td id="avg">—</td><td id="med">—</td><td id="prep">—</td><td id="size">—</td></tr></table>
+<div id="log"></div>
+<script type="module">
+import init, { register_geometry, PreparedRace } from '/globalsim-wasm/pkg/globalsim_wasm.js';
+const $ = (id) => document.getElementById(id);
+let ready = false;
+$('go').disabled = true;
+const wasmResponse = await fetch('/globalsim-wasm/pkg/globalsim_wasm_bg.wasm');
+const wasmBytes = new Uint8Array(await wasmResponse.arrayBuffer());
+await init(wasmBytes.buffer);
+$('size').textContent = `${wasmBytes.length} raw`;
+$('status').textContent = `wasm ready (${wasmBytes.length} bytes); hardwareConcurrency=${navigator.hardwareConcurrency}`;
+$('go').disabled = false;
+$('go').onclick = async () => {
+  $('go').disabled = true; $('status').textContent = 'loading profile + geometry…';
+  const courseId = Number($('course').value), seeds = Number($('seeds').value);
+  const profileLine = (await (await fetch('/vendor/GlobalSim/examples/v77-race.jsonl')).text()).split('\n')[0];
+  const request = JSON.parse(profileLine); request.courseId = courseId;
+  const geometry = await (await fetch(`/vendor/GlobalSim/data/course_geometry/${courseId}.json`)).text();
+  register_geometry(courseId, geometry);
+  $('status').textContent = 'preparing…';
+  const t0 = performance.now();
+  const race = new PreparedRace(JSON.stringify(request));
+  const prepareMs = performance.now() - t0;
+  const times = [];
+  for (let i = 0; i < seeds; i++) {
+    const s = performance.now();
+    const reply = race.run(1000000 + i);
+    const dt = performance.now() - s;
+    if (reply.startsWith('{"error"')) { $('log').textContent += `\nerror seed ${i}: ${reply.slice(0, 160)}`; break; }
+    times.push(dt);
+    if (i % 25 === 24) $('status').textContent = `running… ${i + 1}/${seeds} (${(times.reduce((a, b) => a + b) / times.length).toFixed(1)} ms/race)`;
+  }
+  race.free();
+  const sorted = [...times].sort((a, b) => a - b);
+  $('avg').textContent = (times.reduce((a, b) => a + b) / times.length).toFixed(2);
+  $('med').textContent = sorted[Math.floor(sorted.length / 2)].toFixed(2);
+  $('prep').textContent = prepareMs.toFixed(1);
+  $('status').textContent = `done — ${times.length} races; UA: ${navigator.userAgent}`;
+  $('log').textContent += `\n${JSON.stringify({ courseId, seeds: times.length, ua: navigator.userAgent, prepareMs, avg: +$('avg').textContent, median: +$('med').textContent })}`;
+  $('go').disabled = false;
+};
+// Auto-run for headless measurement: /?auto=1&seeds=100 (one course per load).
+const params = new URLSearchParams(location.search);
+if (params.get('auto')) {
+  if (params.get('course')) $('course').value = params.get('course');
+  $('seeds').value = params.get('seeds') || '100';
+  $('go').click();
+}
+</script>

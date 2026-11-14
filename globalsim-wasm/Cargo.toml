@@ -1,0 +1,27 @@
+[package]
+name = "globalsim-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Thin wasm-bindgen wrapper around the pinned GlobalSim engine; all glue lives here, GlobalSim is consumed unmodified."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+globalsim = { package = "race_engine_rs", path = "../vendor/GlobalSim", default-features = false, features = ["external-geometry"] }
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# Catch engine panics as a rejected run instead of trapping and killing the
+# worker; input validation still happens in TypeScript first.
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"
