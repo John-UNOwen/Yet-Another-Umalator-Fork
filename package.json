@@ -23,6 +23,7 @@
     "build:mechanics": "cd umalator-global/mechanics-explorer && node build.mjs",
     "test:mechanics": "npx ts-node umalator-global/mechanics-explorer/mechanics.test.ts",
     "test:roster": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/roster/roster.test.ts",
+    "test:globalsim": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/adapter.test.ts",
     "typecheck:roster": "bash tools/typecheck-roster.sh"
   },
   "author": "pecan",

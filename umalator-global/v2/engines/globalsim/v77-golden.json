@@ -1,0 +1,198 @@
+{
+	"_comment": "Golden engine replies for adapter.test.ts. Captured from vendor/GlobalSim/examples/v77-race.jsonl (raw request file) via globalsim-wasm/target/release/examples/native_ref.exe (request + vendor/GlobalSim/data/course_geometry/10504.json, seeds on stdin). The adapter-built request must reproduce the same replies byte-for-byte (sha256) and the extracted values. Regenerate only together with a GlobalSim version bump.",
+	"courseId": 10504,
+	"seeds": [
+		1000000,
+		1000001,
+		1000002,
+		1000003,
+		1000004
+	],
+	"replies": [
+		{
+			"sha256": "b76190297a0c22336bb9f72fec2e4f6235d3fa4ace962bf0adbcf4652f1e1e66",
+			"finishTimeRaw": [
+				96.59310150146484,
+				96.84684753417969,
+				96.90231323242188,
+				96.66001892089844,
+				97.00178527832031,
+				97.00364685058594,
+				97.20256805419922,
+				97.30743408203125,
+				96.74138641357422
+			],
+			"finishOrder": [
+				0,
+				3,
+				4,
+				1,
+				5,
+				6,
+				7,
+				8,
+				2
+			],
+			"hpEmptyOnRace": [
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false
+			],
+			"playerLastSpurtTime": 68.26536098867655
+		},
+		{
+			"sha256": "97c3176f6a3690f458efb68289b3e2f0eb4ad816697f98c195028fb58343dadb",
+			"finishTimeRaw": [
+				96.75313568115234,
+				96.81342315673828,
+				97.0049819946289,
+				96.91098022460938,
+				97.03943634033203,
+				96.92900085449219,
+				97.32047271728516,
+				97.37258911132812,
+				97.47168731689453
+			],
+			"finishOrder": [
+				0,
+				1,
+				4,
+				2,
+				5,
+				3,
+				6,
+				7,
+				8
+			],
+			"hpEmptyOnRace": [
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false
+			],
+			"playerLastSpurtTime": 68.39855495840311
+		},
+		{
+			"sha256": "fbbbbfd51276c46b8f1229aa107260294edc37df79618a8cddb438437a561d46",
+			"finishTimeRaw": [
+				96.57833862304688,
+				96.6410140991211,
+				97.22874450683594,
+				96.84546661376953,
+				97.24772644042969,
+				96.75389862060547,
+				97.353515625,
+				96.85865020751953,
+				96.92474365234375
+			],
+			"finishOrder": [
+				0,
+				1,
+				6,
+				3,
+				7,
+				2,
+				8,
+				4,
+				5
+			],
+			"hpEmptyOnRace": [
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false
+			],
+			"playerLastSpurtTime": 68.19876400381327
+		},
+		{
+			"sha256": "b7265a0fac2e93894301bd804038bfa4aba4095c6ca36ce259be1b63f3d0226e",
+			"finishTimeRaw": [
+				96.56925201416016,
+				96.7468032836914,
+				96.6556167602539,
+				97.12823486328125,
+				96.8213882446289,
+				96.85968017578125,
+				97.2276382446289,
+				97.35755920410156,
+				96.90835571289062
+			],
+			"finishOrder": [
+				0,
+				2,
+				1,
+				6,
+				3,
+				4,
+				7,
+				8,
+				5
+			],
+			"hpEmptyOnRace": [
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false
+			],
+			"playerLastSpurtTime": 68.13216701894999
+		},
+		{
+			"sha256": "bda71df657cedf74f0f8f544ebb2cb00ede62d9b3b6abd2cfe8bb6dfba9b3263",
+			"finishTimeRaw": [
+				96.58309936523438,
+				97.1981201171875,
+				96.71605682373047,
+				96.8359146118164,
+				96.9438705444336,
+				96.78131866455078,
+				97.30024719238281,
+				97.36724090576172,
+				97.03041076660156
+			],
+			"finishOrder": [
+				0,
+				6,
+				1,
+				3,
+				4,
+				2,
+				7,
+				8,
+				5
+			],
+			"hpEmptyOnRace": [
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false,
+				false
+			],
+			"playerLastSpurtTime": 68.13216701894999
+		}
+	]
+}
