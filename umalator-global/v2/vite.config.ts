@@ -45,35 +45,60 @@ function redirectDataFiles(): Plugin {
 function serveUmaToolsAssets(): Plugin {
   const configuredBase = process.env.CC_BASE_PATH ?? '/uma-tools';
   const bases = [configuredBase, '/uma-tools'].filter(b => b);
+  // CC_BASE_PATH='' means the site is served at root: asset requests (/icons/…,
+  // /globalsim/…) come in with no prefix to strip.
+  const rootMode = configuredBase === '';
   return {
     name: 'serve-uma-tools-assets',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
         const base = bases.find(b => url === b || url.startsWith(b + '/'));
+        // Raw request URLs keep '..' segments, and path.join would normalize them
+        // out of projectRoot — refuse them (same guard as mechanics-explorer).
+        if ((base || rootMode) && url.includes('..')) { res.statusCode = 400; res.end('Bad request'); return; }
+        // Root mode mirrors the root-fallback in mechanics-explorer/build.mjs: after an
+        // app-dir/public miss, requests resolve against the repo root. Only ones with a
+        // file extension are candidates (extensionless SPA routes keep falling through to
+        // Vite's index.html), never /index.html, and never Vite-internal paths (/@…,
+        // /node_modules/… — the repo-root node_modules/.vite cache really has such files).
+        const assetPath = url.split('?')[0];
+        let filePath: string;
         if (base) {
-          const filePath = path.join(projectRoot, url.slice(base.length).split('?')[0] || '/');
-          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-            // Determine content type
-            const ext = path.extname(filePath).toLowerCase();
-            const mimeTypes: Record<string, string> = {
-              '.png': 'image/png',
-              '.jpg': 'image/jpeg',
-              '.jpeg': 'image/jpeg',
-              '.gif': 'image/gif',
-              '.svg': 'image/svg+xml',
-              '.webp': 'image/webp',
-              '.woff': 'font/woff',
-              '.woff2': 'font/woff2',
-              '.ttf': 'font/ttf',
-              '.css': 'text/css',
-              '.js': 'application/javascript',
-              '.json': 'application/json',
-            };
-            res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
-            fs.createReadStream(filePath).pipe(res);
-            return;
-          }
+          filePath = path.join(projectRoot, url.slice(base.length).split('?')[0] || '/');
+        } else if (rootMode && path.extname(assetPath) && assetPath !== '/index.html'
+            && !assetPath.startsWith('/@') && !assetPath.startsWith('/node_modules/')
+            && !fs.existsSync(path.join(rootDir, assetPath)) && !fs.existsSync(path.join(rootDir, 'public', assetPath))) {
+          filePath = path.join(projectRoot, assetPath);
+        } else {
+          next();
+          return;
+        }
+        // Belt-and-braces: join() already normalized, so anything landing outside
+        // projectRoot here is not an asset we may serve.
+        if (filePath !== projectRoot && !filePath.startsWith(projectRoot + path.sep)) {
+          res.statusCode = 400; res.end('Bad request'); return;
+        }
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          // Determine content type
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeTypes: Record<string, string> = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.svg': 'image/svg+xml',
+            '.webp': 'image/webp',
+            '.woff': 'font/woff',
+            '.woff2': 'font/woff2',
+            '.ttf': 'font/ttf',
+            '.css': 'text/css',
+            '.js': 'application/javascript',
+            '.json': 'application/json',
+          };
+          res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+          fs.createReadStream(filePath).pipe(res);
+          return;
         }
         next();
       });

@@ -39,6 +39,9 @@ function serveUmaToolsAssets(): Plugin {
 				const url = req.url ?? '';
 				const base = bases.find(b => url === b || url.startsWith(b + '/'));
 				if (base) {
+					// Raw request URLs keep '..' segments, and path.join would normalize them
+					// out of projectRoot — refuse them (same guard as mechanics-explorer).
+					if (url.includes('..')) { res.statusCode = 400; res.end('Bad request'); return; }
 					const filePath = path.join(projectRoot, url.slice(base.length).split('?')[0] || '/');
 					if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
 						const ext = path.extname(filePath).toLowerCase();

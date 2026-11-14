@@ -82,6 +82,9 @@ function runServer(ctx, port) {
 	// client makes two requests for simulator.worker.js, avoid rebuilding on the second one
 	let workerState = 0;
 	http.createServer(async (req, res) => {
+		// Raw request URLs keep '..' segments and path.join(root, url) would
+		// normalize them out of root — refuse them (same guard as mechanics-explorer).
+		if ((req.url || '').includes('..')) { res.writeHead(400).end('Bad request'); return; }
 		const url = req.url.endsWith('/') ? req.url + 'index.html' : req.url;
 		const filename = path.basename(url);
 		if (ARTIFACTS.indexOf(filename) > -1) {

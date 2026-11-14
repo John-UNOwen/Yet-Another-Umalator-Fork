@@ -46,6 +46,13 @@ function serveFile(res, filePath) {
 const server = http.createServer((req, res) => {
 	let urlPath = req.url.split('?')[0]; // Remove query string
 
+	// Reject path traversal attempts (same guard as the other dev servers)
+	if (urlPath.includes('..')) {
+		res.writeHead(400, { 'Content-Type': 'text/plain' });
+		res.end('Bad request');
+		return;
+	}
+
 	// Route /uma-tools/ requests
 	if (urlPath === '/uma-tools' || urlPath === '/uma-tools/') {
 		serveFile(res, path.join(ROOT_DIR, 'umalator-global', 'index.html'));
