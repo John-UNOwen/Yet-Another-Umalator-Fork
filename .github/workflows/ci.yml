@@ -1,0 +1,178 @@
+name: CI
+
+# Fork CI for the GlobalSim integration (integration plan Phase 7). Tests only —
+# NO deploy (the Pages deploy lives in pages.yml, owned by the orchestrator).
+#
+# What runs here:
+#   rust        — the pinned engine's own test suite + the stdin worker binary
+#                 (vendor/GlobalSim/target/release/race_engine_rs_v2), which the
+#                 skill-table suite (test:globalsim-skills) drives.
+#   wasm-parity — globalsim-wasm build, wasm-vs-native byte parity on the v77
+#                 profile (phase0, 25 seeds), then every node suite of the
+#                 GlobalSim pipeline, the roster type gate, and both app builds.
+#
+# What does NOT run here: GlobalSim's upstream python regression suite over
+# tests/fixtures (84 official captures). It is native-side, upstream-CI
+# territory. This fork pins correctness differently: phase0.mjs pins wasm-vs-
+# native byte parity on the validated v77 profile, and the acceptance suites
+# (test:globalsim goldens, compare/chart/skilldata acceptance) run against the
+# REAL engine — the same binary/wasm the app ships.
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Engine tests (vendor/GlobalSim)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # vendor/GlobalSim is a pinned submodule
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            vendor/GlobalSim/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('vendor/GlobalSim/Cargo.lock') }}
+
+      # The engine's own (unchanged upstream) tests, on the pinned commit.
+      - name: cargo test --release
+        working-directory: vendor/GlobalSim
+        run: cargo test --release
+
+      # stdin worker for the node suites (skills.test.ts pipes it). Explicitly
+      # --no-default-features: the default mimalloc feature needs a C toolchain
+      # and has broken release builds — same flag the wrapper consumes with.
+      - name: Build stdin worker (no-default-features)
+        working-directory: vendor/GlobalSim
+        run: cargo build --release --no-default-features
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: race_engine_rs_v2
+          path: vendor/GlobalSim/target/release/race_engine_rs_v2
+
+  wasm-parity:
+    name: wasm build, parity + node suites
+    needs: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            globalsim-wasm/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('globalsim-wasm/Cargo.lock', 'vendor/GlobalSim/Cargo.lock') }}
+
+      # wasm-pack is compiled from crates.io, pinned: a different wasm-bindgen
+      # CLI vs the lib in the lockfile breaks pkg generation.
+      - name: Cache wasm-pack 0.15.1
+        id: cache-wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-0.15.1
+
+      - name: Install wasm-pack 0.15.1
+        if: steps.cache-wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.1 --locked
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      # The pkg/ the acceptance suites (compare/chart/skilldata) load in node.
+      - name: wasm-pack build
+        working-directory: globalsim-wasm
+        run: wasm-pack build --target web --release --out-dir pkg
+
+      # native_ref: the native twin the parity harness + goldens capture use.
+      - name: Build native_ref
+        working-directory: globalsim-wasm
+        run: cargo build --release --examples
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: race_engine_rs_v2
+          path: vendor/GlobalSim/target/release
+
+      - name: wasm-vs-native parity (25 seeds)
+        run: |
+          chmod +x vendor/GlobalSim/target/release/race_engine_rs_v2
+          node globalsim-wasm/test/phase0.mjs --seeds 25
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      # The active skill tables (generated, untracked) that the acceptance
+      # suites load: skills.json (adapter gate + merged injection) and
+      # skills.merged.json (skill activation suite).
+      - name: Build active skill tables
+        run: |
+          node tools/globalsim-coverage.mjs --out globalsim/skills.json
+          node tools/globalsim-coverage.mjs --out globalsim/skills.merged.json
+
+      # ── GlobalSim pipeline suites (the fork's regression net) ─────────────
+      # adapter + v77 goldens (byte-level against the pinned engine)
+      - name: adapter + goldens
+        run: npm run test:globalsim
+
+      - name: mob field
+        run: npm run test:globalsim-mobs
+
+      - name: metrics (margins, win rate)
+        run: npm run test:globalsim-metrics
+
+      - name: worker pool
+        run: npm run test:globalsim-pool
+
+      # merged-table build + skill injection acceptance (retail-init gate)
+      - name: skill table acceptance
+        run: npm run test:globalsim-skilldata
+
+      # real wasm + real engine end-to-end acceptance
+      - name: compare acceptance
+        run: npm run test:globalsim-compare
+
+      - name: chart acceptance
+        run: npm run test:globalsim-chart
+
+      # supplement entries: prepare + activate (drives the stdin worker artifact)
+      - name: skill activation
+        run: npm run test:globalsim-skills
+
+      - name: coverage report
+        run: npm run globalsim:coverage
+
+      - name: roster typecheck
+        run: npm run typecheck:roster
+
+      # ── app builds ────────────────────────────────────────────────────────
+      - name: Build v2 (vite)
+        run: npm run build:v2
+
+      - name: Build v1 + v2 (esbuild)
+        run: npm run build:global

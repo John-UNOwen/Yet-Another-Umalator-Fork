@@ -42,7 +42,9 @@ const CONFIG: AdapterConfig = { courseIds };
 
 const golden = require('./v77-golden.json');
 const geometryFile = path.join(repoRoot, 'vendor/GlobalSim/data', 'course_geometry', `${golden.courseId}.json`);
-const nativeRef = path.join(repoRoot, 'globalsim-wasm', 'target', 'release', 'examples', 'native_ref.exe');
+// Rust emits no .exe outside Windows — CI (ubuntu) builds plain binaries.
+const EXE = process.platform === 'win32' ? '.exe' : '';
+const nativeRef = path.join(repoRoot, 'globalsim-wasm', 'target', 'release', 'examples', `native_ref${EXE}`);
 
 const EXAMPLE_HORSE = {
 	speed: 1000, stamina: 1000, power: 1000, guts: 800, wisdom: 900,

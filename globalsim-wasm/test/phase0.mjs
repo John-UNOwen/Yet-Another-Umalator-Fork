@@ -24,8 +24,10 @@ const repo = root; // uma-tools repo root
 const sim = path.join(repo, 'vendor', 'GlobalSim');
 const pkgDir = path.join(root, 'globalsim-wasm', 'pkg');
 const outDir = path.join(root, 'globalsim-wasm', 'test', 'out');
-const nativeRef = path.join(root, 'globalsim-wasm', 'target', 'release', 'examples', 'native_ref.exe');
-const worker = path.join(sim, 'target', 'release', 'race_engine_rs_v2.exe');
+// Rust emits no .exe outside Windows — CI (ubuntu) builds plain binaries.
+const EXE = process.platform === 'win32' ? '.exe' : '';
+const nativeRef = path.join(root, 'globalsim-wasm', 'target', 'release', 'examples', `native_ref${EXE}`);
+const worker = path.join(sim, 'target', 'release', `race_engine_rs_v2${EXE}`);
 
 const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`);

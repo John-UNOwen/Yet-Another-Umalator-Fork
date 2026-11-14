@@ -26,7 +26,9 @@ import { spawnSync } from 'child_process';
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
 const sim = path.join(repoRoot, 'vendor', 'GlobalSim');
-const worker = path.join(sim, 'target', 'release', 'race_engine_rs_v2.exe');
+// Rust emits no .exe outside Windows — CI (ubuntu) builds plain binaries.
+const EXE = process.platform === 'win32' ? '.exe' : '';
+const worker = path.join(sim, 'target', 'release', `race_engine_rs_v2${EXE}`);
 const mergedTable = path.join(repoRoot, 'globalsim', 'skills.merged.json');
 const supplementPath = path.join(repoRoot, 'globalsim', 'skills-supplement.json');
 
