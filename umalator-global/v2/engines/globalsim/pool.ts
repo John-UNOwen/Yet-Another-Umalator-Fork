@@ -42,7 +42,9 @@
  */
 
 export const THREADS_STORAGE_KEY = 'umalator_v2_globalsim_threads';
-export const AUTO_THREADS_MAX = 8;   // §4.1: Auto caps at 8 (lower on mobile later)
+export const AUTO_THREADS_MAX = 6;   // Auto caps at 6: mid-chart the renderer peaks ~1.65 GB
+	// at 8 workers on the skill-bearing baseline field (~120 MB/worker browser-side) and
+	// users hit "Out of Memory"; 6 measured ~1.39 GB. Explicit settings go to MAX_THREADS.
 export const MAX_THREADS = 16;       // user option range 1..16
 
 export type ThreadsOption = 'auto' | number;
@@ -64,7 +66,7 @@ export function saveThreadsOption(v: ThreadsOption): void {
 	} catch { /* private mode etc. — the default is fine */ }
 }
 
-/** Auto = hardwareConcurrency − 1 (leave one core for UI), clamped to [1, 8]. */
+/** Auto = hardwareConcurrency − 1 (leave one core for UI), clamped to [1, AUTO_THREADS_MAX]. */
 export function autoThreadCount(hardwareConcurrency?: number): number {
 	const hc = hardwareConcurrency ?? (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 4) ?? 4;
 	return Math.max(1, Math.min(AUTO_THREADS_MAX, hc - 1));

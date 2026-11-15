@@ -286,10 +286,11 @@ test('hashString64: deterministic 64-bit-equivalent setup fingerprint (setupKey 
 
 // ── thread option (§4.1) ─────────────────────────────────────────────────────
 
-test('auto thread count clamps hardwareConcurrency−1 to [1, 8]', t => {
+test('auto thread count clamps hardwareConcurrency−1 to [1, AUTO_THREADS_MAX]', t => {
 	t.equal(autoThreadCount(2), 1);
 	t.equal(autoThreadCount(1), 1);
-	t.equal(autoThreadCount(9), 8);
+	t.equal(autoThreadCount(5), 4);              // hc−1 below the cap passes through
+	t.equal(autoThreadCount(8), AUTO_THREADS_MAX);
 	t.equal(autoThreadCount(64), AUTO_THREADS_MAX);
 	t.end();
 });

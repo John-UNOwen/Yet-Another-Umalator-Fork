@@ -62,7 +62,7 @@ interface SimSettingsProps {
 	setHideNotInGame: (v: boolean) => void;
 	/** Count of uma-tools skills missing from the active GlobalSim table (GlobalSim mode notice). */
 	globalsimUncoveredCount?: number | null;
-	/** GlobalSim worker count ('auto' = cores − 1, capped at 8; persisted by pool.ts). */
+	/** GlobalSim worker count ('auto' = cores − 1, capped at 6; explicit 1..16; persisted by pool.ts). */
 	threads?: 'auto' | number;
 	setThreads?: (v: 'auto' | number) => void;
 	mode?: string;
