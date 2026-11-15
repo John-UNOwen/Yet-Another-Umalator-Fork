@@ -27,7 +27,10 @@
  *
  *   → {type:'run', jobId, seeds:number[], mode:'compact'|'full'}
  *     compact: per-seed SeedCompactRecord (finish metadata + the tail sample
- *       grid from metrics.samplePlayerTail; frames dropped) — small payload.
+ *       grid; frames dropped). On newer pkg builds wasm run_compact()
+ *       computes this engine-side and never serializes frames at all; the
+ *       JS extractCompact + metrics.samplePlayerTail path stays as fallback
+ *       for older pkg — both must stay in lockstep (parity-tested).
  *     full: per-seed FullRunData (player frame arrays + skill events) for the
  *       representative runs.
  *     ← {type:'chunk', jobId, mode, ok:true, records:[...]}
@@ -50,7 +53,14 @@ import { SeedCompactRecord, FullRunData, samplePlayerTail } from './metrics';
 import { BASE_PATH } from '../../../../components/base-path';
 
 /** One live wasm preparation handle (globalsim-wasm/src/lib.rs PreparedRace). */
-export interface PreparedRaceInstance { run(seed: number): string; free(): void }
+export interface PreparedRaceInstance {
+	run(seed: number): string;
+	/** Compact-mode run (newer pkg): returns the extractCompact record JSON
+	 *  directly — frames never serialize. Absent on older pkg builds; the
+	 *  worker then falls back to run() + JS extractCompact. */
+	run_compact?(seed: number, trackSkillId: string, secondPlayerIndex: number): string;
+	free(): void;
+}
 
 /** The wasm-bindgen surface globalsim-wasm/src/lib.rs exposes. */
 export interface WasmApi {
@@ -107,7 +117,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 	let wasm: WasmApi | null = null;
 	let wasmLoading: Promise<WasmApi> | null = null;
 	const geometryRegistered = new Set<number>();
-	let prepared: { setupKey: string; race: PreparedRaceInstance; trackSkillId?: string; secondPlayerIndex?: number } | null = null;
+	let prepared: { setupKey: string; race: PreparedRaceInstance; canCompact: boolean; trackSkillId?: string; secondPlayerIndex?: number } | null = null;
 	let heldSkillData: unknown = null;
 
 	async function ensureWasm(): Promise<WasmApi> {
@@ -245,7 +255,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			// worker keeps at most one PreparedRace — memory bound).
 			if (prepared) { try { prepared.race.free(); } catch { /* already dead */ } prepared = null; }
 			const race = new w.PreparedRace(json);
-			prepared = { setupKey: m.setupKey, race, trackSkillId: m.trackSkillId, secondPlayerIndex: m.secondPlayerIndex };
+			prepared = { setupKey: m.setupKey, race, canCompact: typeof race.run_compact === 'function', trackSkillId: m.trackSkillId, secondPlayerIndex: m.secondPlayerIndex };
 			deps.postMessage({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: true });
 		} catch (e: any) {
 			const msg = String(e && e.message || e);
@@ -260,20 +270,44 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			return;
 		}
 		const records: (SeedCompactRecord | FullRunData)[] = [];
+		/** Deadly (handle-poisoning) error: report the chunk as a worker failure. */
+		const deadly = (msg: string, i: number): void => {
+			prepared = null;
+			deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: false, dead: true, error: msg, processed: i, records });
+		};
+		// wasm run_compact (newer pkg): the compact record comes back from the
+		// engine directly (~1 KB/seed instead of ~2 MB of frames parsed here).
+		// i32-range seeds only: beyond that wasm-bindgen's i32 coercion would
+		// change the seed echoed in the record, so those seeds keep the old path.
+		const useCompact = m.mode === 'compact' && prepared.canCompact;
 		for (let i = 0; i < m.seeds.length; i++) {
 			const seed = m.seeds[i];
+			if (useCompact && seed >= -2147483648 && seed <= 2147483647) {
+				let text: string;
+				try {
+					text = prepared.race.run_compact!(seed, prepared.trackSkillId ?? '', prepared.secondPlayerIndex ?? -1);
+				} catch (e: any) {
+					const msg = String(e && e.message || e);
+					if (isDeadlyError(msg)) { deadly(msg, i); return; }
+					records.push({ seed, error: msg });
+					continue;
+				}
+				let rec: any;
+				try { rec = JSON.parse(text); } catch (e: any) {
+					records.push({ seed, error: `reply parse failed: ${String(e && e.message || e)}` });
+					continue;
+				}
+				// run_compact already produced the SeedCompactRecord (its own
+				// {seed, error} shape included) — pass it through untouched.
+				records.push(rec && typeof rec === 'object' ? rec : { seed, error: 'compact reply not an object' });
+				continue;
+			}
 			let text: string;
 			try {
 				text = prepared.race.run(seed);
 			} catch (e: any) {
 				const msg = String(e && e.message || e);
-				if (isDeadlyError(msg)) {
-					// The handle is dead — report the chunk as a worker failure
-					// with how many seeds completed, and drop the preparation.
-					prepared = null;
-					deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: false, dead: true, error: msg, processed: i, records });
-					return;
-				}
+				if (isDeadlyError(msg)) { deadly(msg, i); return; }
 				// Recoverable engine error for THIS seed only — keep the chunk going.
 				records.push({ seed, error: msg });
 				continue;
