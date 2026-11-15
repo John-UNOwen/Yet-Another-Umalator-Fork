@@ -99,6 +99,13 @@ export interface PoolJob {
 	 * Travels with the prepare message, so it is part of the preparation.
 	 */
 	trackSkillId?: string;
+	/**
+	 * Optional (head-to-head compare): post-sort index of the second player in
+	 * the race; forwarded to the prepare message so records carry `opp`.
+	 * Part of the preparation identity (the caller must fold it into setupKey
+	 * or keep one setupKey per distinct value).
+	 */
+	secondPlayerIndex?: number;
 }
 
 export interface PoolOptions {
@@ -256,7 +263,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				slot.worker!.postMessage({ type: 'run', jobId: next.job.id, seeds: next.job.seeds, mode: next.job.mode });
 			} else {
 				slot.expecting = 'prepared';
-				slot.worker!.postMessage({ type: 'prepare', id: next.job.id, setupKey: next.job.setupKey, request: next.job.request, trackSkillId: next.job.trackSkillId });
+				slot.worker!.postMessage({ type: 'prepare', id: next.job.id, setupKey: next.job.setupKey, request: next.job.request, trackSkillId: next.job.trackSkillId, secondPlayerIndex: next.job.secondPlayerIndex });
 			}
 		}
 		if (running && queue.length === 0 && slots.every(s => !s.inflight)) {

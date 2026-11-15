@@ -10,6 +10,13 @@
  *   Race A = field(seed s) with UMA 1 at the seed's gate
  *   Race B = the SAME field with UMA 2 at the SAME gate (same pairing seed)
  *
+ * Head-to-head layout (input.fieldLayout === 'h2h'): both umas share ONE
+ * race against the preset's first 7 mobs, on the seed's adjacent gate pair
+ * (g, g+1) — race A with UMA 1 at g, race B mirrored with UMA 2 at g. The
+ * per-seed margin is the average of the two races' margins, so stall residue
+ * cancels and every interference (debuffs, blocking, duels) between the two
+ * builds is inside the measurement. 2 races per seed.
+ *
  * The mob field for a gate is built once per (variant, gate) pair — the
  * adapter validates it once and each worker prepares it once and streams
  * ≤chunkSize seeds per chunk (jobs are grouped by gate so a worker's
@@ -38,11 +45,11 @@
 
 import type { HorseState } from '../../../../components/HorseDefTypes';
 import { GroundCondition, Weather, Season, Time, Grade } from '../../../../uma-skill-tools/RaceParameters';
-import { buildGlobalSimRequest, AdapterConfig } from './adapter';
-import { buildMobField, deriveGate, MobPreset, MobError } from './mobs';
+import { buildGlobalSimRequest, toGlobalSimRunner, AdapterConfig } from './adapter';
+import { buildMobField, buildH2hMobField, deriveGate, deriveGatePair, FIELD_SIZE, MobPreset, MobError } from './mobs';
 import { createGlobalsimPool, PoolJob, WorkerFactory, resolveThreadCount } from './pool';
 import {
-	SeedCompactRecord, FullRunData, CompareAggregate, newAggregate, addPair,
+	SeedCompactRecord, FullRunData, CompareAggregate, newAggregate, addPair, addPairH2H,
 	summarizeAggregate, CompareSummary, representativeSeeds, buildSnapshotHalf,
 } from './metrics';
 
@@ -126,6 +133,14 @@ export interface GlobalsimCompareInput {
 	mobPreset: MobPreset;
 	/** Force every seed's tested-uma gate; omit for the seed-derived draw. */
 	fixedGate?: number;
+	/**
+	 * Compare field layout:
+	 *   'mob' (default) — each uma runs isolated against the full 8-mob field;
+	 *   'h2h'          — UMA 1 and UMA 2 share every race against 7 mobs, on
+	 *     mirrored adjacent-gate pairs (2 races per seed, averaged margin) so
+	 *     they can genuinely interfere (debuffs, blocking, duels).
+	 */
+	fieldLayout?: GlobalsimFieldLayout;
 	seedBase: number;
 	sampleCount: number;
 	threads?: number;
@@ -139,6 +154,7 @@ export interface GlobalsimCompareInput {
 /** The `globalsim` extension block (rendered by results-pane when present). */
 export interface GlobalsimStatsBlock {
 	engineLine: string;
+	fieldLayout: GlobalsimFieldLayout;
 	ci95: [number, number];
 	winRateUma1: number; winRateUma2: number; tieRate: number;
 	placing1: number[]; placing2: number[];
@@ -168,6 +184,35 @@ export interface GlobalsimCompareResults {
 
 export interface BuiltJobs { jobs: PoolJob[]; errors: string[] }
 
+export type GlobalsimFieldLayout = 'mob' | 'h2h';
+
+/**
+ * Gate pair for one seed under the head-to-head layout: the base gate from
+ * the seed (or the fixed gate) plus the adjacent gate. fixedGate semantics:
+ * with a fixed gate g, race A always starts UMA 1 at g and UMA 2 at g+1
+ * (mod 9), and race B swaps them.
+ */
+function h2hGates(seed: number, fixedGate: number | undefined): [number, number] {
+	if (fixedGate !== undefined) return [fixedGate, (fixedGate + 1) % FIELD_SIZE];
+	return deriveGatePair(seed);
+}
+
+/**
+ * Player + player + 7 mobs in canonical ascending-gateIndex order. Returns
+ * the post-sort indices of the primary and secondary player.
+ */
+export function mergeH2hField(
+	primary: any, secondary: any, mobs: any[],
+): { horses: any[]; playerIndex: number; secondPlayerIndex: number } {
+	const rows = [...mobs, primary, secondary];
+	rows.sort((a: any, b: any) => a.gateIndex - b.gateIndex);
+	return {
+		horses: rows,
+		playerIndex: rows.indexOf(primary),
+		secondPlayerIndex: rows.indexOf(secondary),
+	};
+}
+
 /**
  * Gate groups → per-variant chunk jobs (mode 'compact' for sampling, 'full'
  * for the representative runs). Exported for the pool scheduler tests. A
@@ -182,6 +227,7 @@ export function buildCompareJobs(
 	mode: 'compact' | 'full',
 ): BuiltJobs {
 	const chunkSize = input.chunkSize ?? DEFAULT_CHUNK_SIZE;
+	const layout: GlobalsimFieldLayout = input.fieldLayout ?? 'mob';
 	const groups = new Map<number, number[]>();
 	for (const s of seeds) {
 		const g = input.fixedGate ?? deriveGate(s);
@@ -192,8 +238,57 @@ export function buildCompareJobs(
 	const errors: string[] = [];
 	const config: AdapterConfig = { courseIds: input.courseIds, knownSkillIds: input.knownSkillIds, skillData: input.skillData ? null : undefined };
 	for (const variant of [0, 1] as const) {
-		const horse = variant === 0 ? input.uma1 : input.uma2;
 		for (const [gate, groupSeeds] of groups) {
+			if (layout === 'h2h') {
+				// Head-to-head race: variant 0 = UMA 1 @ g, UMA 2 @ g+1;
+				// variant 1 = the mirrored gate swap. Same seed ⇒ same pair,
+				// so the two races of a seed differ ONLY in who holds which
+				// adjacent stall.
+				const [gA, gB] = h2hGates(groupSeeds[0], input.fixedGate);
+				const primaryHorse = variant === 0 ? input.uma1 : input.uma2;
+				const secondaryHorse = variant === 0 ? input.uma2 : input.uma1;
+				const { mobs, errors: mobErrors } = buildH2hMobField(input.mobPreset, gA, gB);
+				if (mobErrors.length) {
+					errors.push(...mobErrors.map((e: MobError) => `h2h field gates ${gA}/${gB}: ${e.field} ${e.message}`));
+					continue;
+				}
+				const res = buildGlobalSimRequest({
+					courseId: input.courseId,
+					groundCondition: input.ground, weather: input.weather, season: input.season, time: input.time,
+					grade: input.grade,
+					seed: groupSeeds[0],
+					runners: [{ horse: primaryHorse, gateIndex: gA, isPlayer: true }],
+				}, config);
+				if (res.ok !== true) {
+					errors.push(`gates ${gA}/${gB} variant ${variant + 1}: ${res.errors.map(e => `${e.field}: ${e.message}`).join('; ')}`);
+					continue;
+				}
+				const secondaryRes = toGlobalSimRunner(secondaryHorse, gB, config, 'secondaryPlayer');
+				if (secondaryRes.ok !== true) {
+					errors.push(`gates ${gA}/${gB} variant ${variant + 1}: ${secondaryRes.errors.map(e => `${e.field}: ${e.message}`).join('; ')}`);
+					continue;
+				}
+				const primary = (res.value as any).horses[0];
+				const merged = mergeH2hField(primary, secondaryRes.value, mobs);
+				const request = {
+					...(res.value as any),
+					horses: merged.horses,
+					playerHorseIndex: merged.playerIndex,
+				};
+				const setupKey = `gs|${mode}|h2h|v${variant}|c${input.courseId}|g${gA}+${gB}|${hashString64(JSON.stringify({ g: input.ground, w: input.weather, s: input.season, t: input.time, gr: input.grade ?? null, h: request.horses }))}`;
+				for (let c = 0; c < groupSeeds.length; c += chunkSize) {
+					jobs.push({
+						id: `${variant}|${gate}|${c}`,
+						setupKey,
+						request,
+						seeds: groupSeeds.slice(c, c + chunkSize),
+						mode,
+						secondPlayerIndex: merged.secondPlayerIndex,
+					});
+				}
+				continue;
+			}
+			const horse = variant === 0 ? input.uma1 : input.uma2;
 			const { mobs, errors: mobErrors } = buildMobField(input.mobPreset, 0, { fixedGate: gate });
 			if (mobErrors.length) {
 				errors.push(...mobErrors.map((e: MobError) => `mob field gate ${gate}: ${e.field} ${e.message}`));
@@ -290,6 +385,7 @@ function buildResults(
 		firstUmaStats: undefined,
 		globalsim: {
 			engineLine: globalsimEngineLine(input.knownSkillIds ? input.knownSkillIds.size : undefined),
+			fieldLayout: input.fieldLayout ?? 'mob',
 			ci95: s.ci95,
 			winRateUma1: s.winRateUma1, winRateUma2: s.winRateUma2, tieRate: s.tieRate,
 			placing1: s.placing1, placing2: s.placing2,
@@ -318,6 +414,7 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 	const seeds = globalsimSeedList(input.seedBase, input.sampleCount);
 	const threads = input.threads ?? resolveThreadCount();
 	input = { ...input, threads };
+	const layout: GlobalsimFieldLayout = input.fieldLayout ?? 'mob';
 
 	// ── sampling pass (compact per-seed records) ─────────────────────────────
 	const { jobs, errors: buildErrors } = buildCompareJobs(input, seeds, 'compact');
@@ -329,7 +426,7 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 	const pending = new Map<number, { a?: SeedCompactRecord; b?: SeedCompactRecord }>();
 	let lastPaintAt = 0;
 
-	const paint = (jobErrors: Array<{ jobId: string; error: string }>, runData: { min: unknown | null; max: unknown | null; mean: unknown | null; median: unknown | null }, elapsed: number) => {
+	const paint = (jobErrors: Array<{ jobId: string; error: string }>, runData: { min: unknown | null; max: unknown | null; mean: unknown | null; median: null | unknown }, elapsed: number) => {
 		const s = summarizeAggregate(agg);
 		const partial = buildResults(margins, s, input, runData, jobErrors, elapsed, margins.length);
 		input.onProgress?.(partial);
@@ -341,6 +438,21 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 		if (!slot || !slot.a || !slot.b) return;
 		pending.delete(seed);
 		const a = slot.a, b = slot.b;
+		if (layout === 'h2h') {
+			// Race A: primary = UMA 1, opp = UMA 2. Race B (mirrored gates):
+			// primary = UMA 2, opp = UMA 1. addPairH2H reshapes per-race error
+			// counting itself.
+			const a2: SeedCompactRecord = a.opp ? { seed, ...a.opp } : { seed, error: 'race A reply missing second player' };
+			const b1: SeedCompactRecord = b.opp ? { seed, ...b.opp } : { seed, error: 'race B reply missing second player' };
+			const nBefore = agg.n;
+			addPairH2H(agg, [a, a2], [b1, b], input.distance);
+			if (agg.n > nBefore) {
+				const m = agg.margins[agg.margins.length - 1];
+				marginBySeed.set(seed, m);
+				margins.push(m);
+			}
+			return;
+		}
 		if (a.error || b.error) { addPair(agg, a, b, input.distance); return; }
 		addPair(agg, a, b, input.distance);
 		const m = agg.margins[agg.margins.length - 1];
@@ -386,7 +498,10 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 	// ── representative runs (frame-bearing, for track + velocity/HP overlay) ─
 	const reps = representativeSeeds(marginBySeed);
 	const repSeeds = [...new Set(Object.values(reps).filter(s => Number.isFinite(s)))];
-	const repJobs = buildCompareJobs(input, repSeeds, 'full').jobs;
+	const repJobsAll = buildCompareJobs(input, repSeeds, 'full').jobs;
+	// Head-to-head race A already holds BOTH players' frames — only the
+	// variant-0 (unmirrored) job is needed for the snapshot.
+	const repJobs = layout === 'h2h' ? repJobsAll.filter(j => !j.id.startsWith('1|')) : repJobsAll;
 	const fullA = new Map<number, FullRunData>();
 	const fullB = new Map<number, FullRunData>();
 	if (repJobs.length) {
@@ -410,7 +525,12 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 		} finally { repPool.dispose(); }
 	}
 	const snapshotFor = (seed: number): unknown | null => {
-		const a = fullA.get(seed), b = fullB.get(seed);
+		const a = fullA.get(seed);
+		if (layout === 'h2h') {
+			// One race, both players: UMA 1 is the primary, UMA 2 the opp.
+			return a && a.opp ? combineSnapshot(a, { seed, ...a.opp }, input.distance) : null;
+		}
+		const b = fullB.get(seed);
 		return a && b ? combineSnapshot(a, b, input.distance) : null;
 	};
 	const runData = {

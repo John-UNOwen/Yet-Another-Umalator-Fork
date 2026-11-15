@@ -820,6 +820,16 @@ body {
 .v2-globalsim-field .v2-select {
   min-width: 10rem;
 }
+/* Compare layout switch (Mob field | Head-to-head): a compact mode-toggle
+   living next to the field/gate selects instead of the header's big one. */
+.v2-field-layout-toggle {
+  height: 30px;
+  flex-shrink: 0;
+}
+.v2-field-layout-toggle button {
+  padding: 0 var(--space-sm);
+  font-size: var(--font-sm);
+}
 .v2-sim-input[type=number] {
   -moz-appearance: textfield;
 }

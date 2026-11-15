@@ -157,6 +157,9 @@ jobs:
       - name: compare acceptance
         run: npm run test:globalsim-compare
 
+      - name: head-to-head acceptance
+        run: npm run test:globalsim-h2h
+
       - name: chart acceptance
         run: npm run test:globalsim-chart
 

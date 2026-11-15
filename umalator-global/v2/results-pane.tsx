@@ -108,6 +108,8 @@ export interface CompareResults {
 /** Mirror of engines/globalsim/compare.ts GlobalsimStatsBlock (structural; type-only). */
 export interface GlobalSimStats {
 	engineLine: string;
+	/** Compare field layout that produced this run (older partials may omit it). */
+	fieldLayout?: 'mob' | 'h2h';
 	ci95: [number, number];
 	winRateUma1: number; winRateUma2: number; tieRate: number;
 	placing1: number[]; placing2: number[];
@@ -482,7 +484,11 @@ function GlobalSimStatsBlock({ gs }: { gs: GlobalSimStats }) {
 					{gs.jobErrors.length > 0 && <span>{gs.jobErrors.length} chunk(s) failed twice: {gs.jobErrors.slice(0, 2).map(j => j.error).join('; ')}</span>}
 				</div>
 			)}
-			<div className="v2-gs-engine-line">{gs.engineLine} · 9-runner mob field · margin = full-field finish difference, + = Uma 2 ahead</div>
+			<div className="v2-gs-engine-line">
+				{gs.engineLine} · {gs.fieldLayout === 'h2h'
+					? 'head-to-head: both umas in every race + 7 mobs, mirrored gate pairs, margin = averaged finish difference, + = Uma 2 ahead'
+					: '9-runner mob field · margin = full-field finish difference, + = Uma 2 ahead'}
+			</div>
 		</div>
 	);
 }

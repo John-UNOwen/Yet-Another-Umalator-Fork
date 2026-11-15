@@ -79,6 +79,12 @@ export interface SeedCompactRecord {
 	 * usable frames for the player (then only the Δt-avg method applies).
 	 */
 	tail?: number[][] | null;
+	/**
+	 * Head-to-head layout only: the OTHER player's finish metadata + tail from
+	 * the SAME race (workerCore's secondPlayerIndex extraction). Its `error`
+	 * marks a race whose second player could not be read.
+	 */
+	opp?: Omit<SeedCompactRecord, 'seed' | 'opp'>;
 }
 
 /** Player frame slice the worker returns for representative runs. */
@@ -96,6 +102,8 @@ export interface FullRunData {
 	hp?: number[];
 	/** Player skill activations (seconds); 'kakari' string events filtered out. */
 	skillEvents?: { skillId: string; t: number; duration: number }[];
+	/** Head-to-head layout only: the other player's frame arrays from the same race. */
+	opp?: Omit<FullRunData, 'seed' | 'opp'>;
 }
 
 // ── tail sampling (runs in the worker; pure) ─────────────────────────────────
@@ -282,6 +290,77 @@ export function addPair(agg: CompareAggregate, recA: SeedCompactRecord, recB: Se
 	if ((recB.rushingStartCount ?? 0) > 0) agg.rushSeeds2 += 1;
 	agg.rushStarts1 += recA.rushingStartCount ?? 0;
 	agg.rushStarts2 += recB.rushingStartCount ?? 0;
+}
+
+/**
+ * Record one head-to-head paired seed into the aggregate.
+ *
+ * A head-to-head seed is a MIRRORED pair of races (same seed, same 9-runner
+ * field, the two players on adjacent gates g/g+1, swapped in the second
+ * race). Both players run in BOTH races, so each uma contributes two
+ * placements and two HP samples per seed (the placing histograms sum to 2·n
+ * and the HP rate is per race); the rushing flag stays per seed.
+ *
+ *   raceA: [uma1 record, uma2 record]   (uma1 at the seed's base gate)
+ *   raceB: [uma1 record, uma2 record]   (gates swapped)
+ *
+ * The combined margin is the average of the two per-race frame margins — the
+ * adjacent-stall residue cancels in expectation; its noise is inside the CI,
+ * which is computed over the COMBINED margins (per-seed samples, n unchanged).
+ */
+export function addPairH2H(
+	agg: CompareAggregate,
+	raceA: [SeedCompactRecord, SeedCompactRecord],
+	raceB: [SeedCompactRecord, SeedCompactRecord],
+	distanceM: number,
+): void {
+	const recs = [...raceA, ...raceB];
+	const errs = recs.filter(r => r.error).length;
+	if (errs) { agg.seedErrors += errs; return; }
+	const mA = pairMargin(raceA[0], raceA[1], distanceM);
+	const mB = pairMargin(raceB[0], raceB[1], distanceM);
+	const marginL = (mA.marginL + mB.marginL) / 2;
+	// Identical mirrored runs cancel to ULP float noise (~1e-15 lengths).
+	// Anything below a nanometre is a tie, so mirrored builds report ties
+	// exactly like mob mode's bit-identical pairing does.
+	const tieByNoise = !Number.isFinite(marginL) ? false : Math.abs(marginL) < 1e-9;
+	const method: MarginMethod =
+		tieByNoise || (mA.method === 'tie' && mB.method === 'tie') ? 'tie'
+		: mA.method === 'frames' || mB.method === 'frames' ? 'frames'
+		: mA.method === 'delta-speed' || mB.method === 'delta-speed' ? 'delta-speed'
+		: 'delta-avg';
+	const margin = method === 'tie' ? 0 : marginL;
+	agg.n += 1;
+	agg.margins.push(margin);
+	agg.marginSum += margin;
+	agg.marginSumSq += margin * margin;
+	if (margin < agg.minMargin) agg.minMargin = margin;
+	if (margin > agg.maxMargin) agg.maxMargin = margin;
+	if (method === 'tie') agg.ties += 1;
+	else if (margin > 0) agg.win2 += 1;
+	else agg.win1 += 1;
+	agg.methodCounts[method] += 1;
+	for (const race of [raceA, raceB]) {
+		for (let side = 0; side < 2; side++) {
+			const r = race[side];
+			const placing = side ? agg.placing2 : agg.placing1;
+			const o = r.finishOrder as number;
+			if (o >= 0 && o < 9) placing[o] += 1;
+			if (r.hpEmptyOnRace != null) {
+				agg.hpEmptyN += 1;
+				if (r.hpEmptyOnRace === true) { if (side) agg.hpEmpty2 += 1; else agg.hpEmpty1 += 1; }
+			}
+		}
+	}
+	// Rushing stays SEED-level (like mob mode): "this uma rushed in either
+	// mirrored race"; the per-race start counts are summed for the totals.
+	for (let side = 0; side < 2; side++) {
+		const rushA = raceA[side].rushingStartCount ?? 0;
+		const rushB = raceB[side].rushingStartCount ?? 0;
+		if (rushA > 0 || rushB > 0) { if (side) agg.rushSeeds2 += 1; else agg.rushSeeds1 += 1; }
+		if (side) agg.rushStarts2 += rushA + rushB;
+		else agg.rushStarts1 += rushA + rushB;
+	}
 }
 
 /** Merge two aggregates (commutative — the merge of streamed partials is order-independent). */

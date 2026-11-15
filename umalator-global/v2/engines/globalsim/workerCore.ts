@@ -19,6 +19,8 @@
  *     9 runners; the seed field is a placeholder — PreparedRace.run overrides
  *     it per seed). trackSkillId (Phase 5 chart): count the player's
  *     activations of that one skill in each compact record.
+ *     secondPlayerIndex (head-to-head compare): also extract that runner's
+ *     finish data (+ frames in full mode) into the record's `opp` field.
  *     ← {type:'prepared', id, setupKey, ok, error?, dead?}
  *     dead:true means the wasm handle/instance may be poisoned (engine panic)
  *     and the pool should recreate the worker.
@@ -78,6 +80,12 @@ export interface PrepareMsg {
 	 * the engine reply; counting a single id keeps the compact payload small).
 	 */
 	trackSkillId?: string;
+	/**
+	 * Optional (head-to-head layout): post-sort index of the SECOND player in
+	 * the same race. The compact/full records then carry that runner's finish
+	 * data (and frames, in full mode) under `opp`.
+	 */
+	secondPlayerIndex?: number;
 }
 /**
  * One-time engine skillData injection (sent by the pool right after worker
@@ -99,7 +107,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 	let wasm: WasmApi | null = null;
 	let wasmLoading: Promise<WasmApi> | null = null;
 	const geometryRegistered = new Set<number>();
-	let prepared: { setupKey: string; race: PreparedRaceInstance; trackSkillId?: string } | null = null;
+	let prepared: { setupKey: string; race: PreparedRaceInstance; trackSkillId?: string; secondPlayerIndex?: number } | null = null;
 	let heldSkillData: unknown = null;
 
 	async function ensureWasm(): Promise<WasmApi> {
@@ -118,7 +126,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 		geometryRegistered.add(courseId);
 	}
 
-	function extractCompact(reply: any, seed: number, trackSkillId?: string): SeedCompactRecord {
+	function extractCompact(reply: any, seed: number, trackSkillId?: string, secondPlayerIndex?: number): SeedCompactRecord {
 		const pi = reply.playerHorseIndex as number;
 		const res = reply.results && reply.results[pi];
 		if (!res || typeof res.finishTimeRaw !== 'number') {
@@ -137,6 +145,26 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			startDelayTime: res.startDelayTime ?? 0,
 			tail: tail && tail.length ? tail : null,
 		};
+		// Head-to-head layout: the other player's finish metadata + own tail
+		// from the SAME race (pairMargin needs the loser's tail whichever
+		// player loses). A missing second player errors only this seed.
+		if (secondPlayerIndex != null) {
+			const res2 = reply.results && reply.results[secondPlayerIndex];
+			if (!res2 || typeof res2.finishTimeRaw !== 'number') {
+				return { seed, error: 'reply has no second player finishTimeRaw' };
+			}
+			rec.opp = {
+				finishTimeRaw: res2.finishTimeRaw,
+				finishOrder: res2.finishOrder,
+				hpEmptyOnRace: res2.hpEmptyOnRace ?? null,
+				rushingStartCount: res2.rushingStartCount ?? 0,
+				rushingPenaltyCount: res2.rushingPenaltyCount ?? 0,
+				lastSpurtStartDistance: res2.lastSpurtStartDistance ?? null,
+				startDelayTime: res2.startDelayTime ?? 0,
+				tail: frames ? samplePlayerTail(frames, secondPlayerIndex, res2.finishTimeRaw) : null,
+			};
+			if (!rec.opp.tail?.length) rec.opp.tail = null;
+		}
 		// Phase 5 chart: the worker-side activation count of the ONE tracked
 		// skill (player runner only). Numeric + string skillIds both match —
 		// write_json emits numeric ids, tests may feed strings.
@@ -151,31 +179,53 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 	}
 
 	/** Player frames truncated at the first frame whose t ≥ finishTimeRaw (classic arrays end at the finish). */
-	function extractFull(reply: any, seed: number): FullRunData {
+	function extractFull(reply: any, seed: number, secondPlayerIndex?: number): FullRunData {
 		const pi = reply.playerHorseIndex as number;
 		const res = reply.results && reply.results[pi];
 		if (!res || typeof res.finishTimeRaw !== 'number') {
 			return { seed, error: 'reply has no player finishTimeRaw' };
 		}
 		const frames = Array.isArray(reply.frames) ? reply.frames : [];
-		const t: number[] = [], pos: number[] = [], speed: number[] = [], hp: number[] = [];
-		for (let i = 0; i < frames.length; i++) {
-			const h = frames[i].horses && frames[i].horses[pi];
-			if (!h) break;
-			t.push(frames[i].t); pos.push(h.pos); speed.push(h.speed); hp.push(h.hp);
-			if (frames[i].t >= res.finishTimeRaw) break;
-		}
+		const half = (idx: number, finish: number) => {
+			const t: number[] = [], pos: number[] = [], speed: number[] = [], hp: number[] = [];
+			for (let i = 0; i < frames.length; i++) {
+				const h = frames[i].horses && frames[i].horses[idx];
+				if (!h) break;
+				t.push(frames[i].t); pos.push(h.pos); speed.push(h.speed); hp.push(h.hp);
+				if (frames[i].t >= finish) break;
+			}
+			return { t, pos, speed, hp };
+		};
+		const own = half(pi, res.finishTimeRaw);
 		const skillEvents = (Array.isArray(reply.skillEvents) ? reply.skillEvents : [])
 			.filter((e: any) => e.horseIndex === pi && typeof e.skillId === 'number')
 			.map((e: any) => ({ skillId: String(e.skillId), t: e.t, duration: e.duration }));
-		return {
+		const rec: FullRunData = {
 			seed,
 			finishTimeRaw: res.finishTimeRaw,
 			finishOrder: res.finishOrder,
 			hpEmptyOnRace: res.hpEmptyOnRace ?? null,
 			startDelayTime: res.startDelayTime ?? 0,
-			t, pos, speed, hp, skillEvents,
+			...own,
+			skillEvents,
 		};
+		if (secondPlayerIndex != null) {
+			const res2 = reply.results && reply.results[secondPlayerIndex];
+			if (!res2 || typeof res2.finishTimeRaw !== 'number') {
+				return { seed, error: 'reply has no second player finishTimeRaw' };
+			}
+			rec.opp = {
+				finishTimeRaw: res2.finishTimeRaw,
+				finishOrder: res2.finishOrder,
+				hpEmptyOnRace: res2.hpEmptyOnRace ?? null,
+				startDelayTime: res2.startDelayTime ?? 0,
+				...half(secondPlayerIndex, res2.finishTimeRaw),
+				skillEvents: (Array.isArray(reply.skillEvents) ? reply.skillEvents : [])
+					.filter((e: any) => e.horseIndex === secondPlayerIndex && typeof e.skillId === 'number')
+					.map((e: any) => ({ skillId: String(e.skillId), t: e.t, duration: e.duration })),
+			};
+		}
+		return rec;
 	}
 
 	async function handlePrepare(m: PrepareMsg): Promise<void> {
@@ -195,7 +245,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			// worker keeps at most one PreparedRace — memory bound).
 			if (prepared) { try { prepared.race.free(); } catch { /* already dead */ } prepared = null; }
 			const race = new w.PreparedRace(json);
-			prepared = { setupKey: m.setupKey, race, trackSkillId: m.trackSkillId };
+			prepared = { setupKey: m.setupKey, race, trackSkillId: m.trackSkillId, secondPlayerIndex: m.secondPlayerIndex };
 			deps.postMessage({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: true });
 		} catch (e: any) {
 			const msg = String(e && e.message || e);
@@ -243,7 +293,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 				records.push({ seed, error: `reply parse failed: ${String(e && e.message || e)}` });
 				continue;
 			}
-			records.push(m.mode === 'full' ? extractFull(reply, seed) : extractCompact(reply, seed, prepared.trackSkillId));
+			records.push(m.mode === 'full' ? extractFull(reply, seed, prepared.secondPlayerIndex) : extractCompact(reply, seed, prepared.trackSkillId, prepared.secondPlayerIndex));
 		}
 		deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: true, records });
 	}

@@ -40,6 +40,10 @@ interface CompactConditionsProps {
 		gate: number | 'auto';
 		setGate: (v: number | 'auto') => void;
 		presets: { value: string; label: string }[];
+		/** Compare field layout (head-to-head opt-in); shown only in Compare mode. */
+		layout?: 'mob' | 'h2h';
+		setLayout?: (v: 'mob' | 'h2h') => void;
+		showLayout?: boolean;
 	};
 }
 
@@ -132,6 +136,27 @@ export function CompactConditions({
 						options={GATE_OPTIONS}
 						className="v2-field-gate-select"
 					/>
+					{globalsimField.showLayout && globalsimField.layout && globalsimField.setLayout && (
+						<div
+							class="v2-mode-toggle v2-field-layout-toggle"
+							title="Mob field: each build races alone against 8 mobs, so margins isolate the builds. Head-to-head: both umas share one race against 7 mobs (mirrored gate pairs, both races averaged), so debuffs, blocking and duels between your builds count — at 2 races per seed."
+						>
+							<button
+								type="button"
+								class={globalsimField.layout === 'mob' ? 'active' : ''}
+								onClick={() => globalsimField.setLayout('mob')}
+							>
+								Mob field
+							</button>
+							<button
+								type="button"
+								class={globalsimField.layout === 'h2h' ? 'active' : ''}
+								onClick={() => globalsimField.setLayout('h2h')}
+							>
+								Head-to-head
+							</button>
+						</div>
+					)}
 				</div>
 			)}
 		</div>

@@ -370,6 +370,10 @@ function App() {
   // gate per seed, identically for both races of a compare pair.
   const [globalsimFieldPreset, setGlobalsimFieldPreset] = useState("default");
   const [globalsimGate, setGlobalsimGate] = useState<number | "auto">("auto");
+  // Compare field layout: 'mob' isolates each build against 8 mobs; 'h2h'
+  // races both umas together against 7 mobs (mirrored gate pairs). Compare
+  // only — the skill chart always uses the mob layout.
+  const [globalsimLayout, setGlobalsimLayout] = useState<"mob" | "h2h">("mob");
   const globalsimFieldConfig = globalsimMode
     ? {
         preset: globalsimFieldPreset,
@@ -377,6 +381,9 @@ function App() {
         gate: globalsimGate,
         setGate: setGlobalsimGate,
         presets: Object.entries(mobPresets).map(([value, p]: [string, any]) => ({ value, label: `Field: ${p.name}` })),
+        layout: globalsimLayout,
+        setLayout: setGlobalsimLayout,
+        showLayout: mode === "compare",
       }
     : undefined;
   useEffect(() => {
@@ -1108,6 +1115,7 @@ function App() {
     samples,
     globalsimFieldPreset,
     globalsimGate,
+    globalsimLayout,
     globalsimThreads,
     globalsimWorkerFactory,
   ]);
@@ -1181,6 +1189,7 @@ function App() {
             courseIds,
             mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
             fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
+            fieldLayout: globalsimLayout,
             seedBase: seed,
             sampleCount: samples,
             threads: resolveThreadCount(globalsimThreads),
@@ -1295,6 +1304,7 @@ function App() {
     globalsimTableFailed,
     globalsimFieldPreset,
     globalsimGate,
+    globalsimLayout,
     globalsimThreads,
     globalsimWorkerFactory,
   ]);
