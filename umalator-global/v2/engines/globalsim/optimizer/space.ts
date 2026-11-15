@@ -82,7 +82,7 @@ export function buildSpace(input: SpaceInput): BuildSpace {
 	const exclude = new Set(input.exclude ?? []);
 	const ownedIds = new Set([...ownedByGroup.values()]);
 
-	const fixedIds = [...new Set([...(input.fixedIds ?? []), ...ownedIds])].sort();
+	let fixedIds = [...new Set([...(input.fixedIds ?? []), ...ownedIds])].sort();
 	const forcedCosts: number[] = [];
 	const options: OptOption[] = [];
 	const seen = new Set<string>([...ownedIds, ...fixedIds]);
@@ -115,6 +115,58 @@ export function buildSpace(input: SpaceInput): BuildSpace {
 		if (!seen.has(locked) && !ownedIds.has(locked)) {
 			return { ownedByGroup, fixedIds, forcedCost: 0, options: [], byId: new Map(), groups: new Map(), budget: input.budget, warnings, error: `"must include" skill ${locked} is not purchasable` };
 		}
+	}
+
+	// Locks are HARD: a locked option must be in EVERY simulated build, so it
+	// joins fixedIds (simIds ⇒ identity ⇒ engine, evaluator.ts applies them to
+	// the horse) while its cost is reserved once in forcedCost. The whole group
+	// is locked with it: a sibling tier would REPLACE the locked skill in the
+	// simulated list (withSkillSwappedIn semantics), contradicting "always in",
+	// and two locks in one group contradict each other.
+	const lockedByGroup = new Map<string, OptOption>();
+	const setLock = (gid: string, o: OptOption): string | undefined => {
+		const clash = lockedByGroup.get(gid);
+		if (clash) return `locked skills ${clash.id} and ${o.id} conflict: both are in skill group ${gid}`;
+		lockedByGroup.set(gid, o);
+		return undefined;
+	};
+	for (const o of options) {
+		if (!o.forced) continue;
+		const err = setLock(o.groupId, o);
+		if (err) return { ownedByGroup, fixedIds, forcedCost: 0, options: [], byId: new Map(), groups: new Map(), budget: input.budget, warnings, error: err };
+	}
+	// Locks on ALREADY-LEARNED skills are HARD too, but the id never reaches
+	// lockedByGroup via options (the purchasable loop skips learned ids as `seen`,
+	// line 92), so its lock would otherwise be accepted with no effect and its
+	// purchasable sibling upgrade would stay selectable — and selecting that upgrade
+	// deletes the owned id from the simulated list (simIds line 178), violating
+	// "include ⇒ always in". Registering the learned id as its group's lock drops
+	// the sibling; the id is already in fixedIds, free (cost 0, not in forcedCost).
+	const groupOfOwned = new Map([...ownedByGroup].map(([gid, oid]) => [oid, gid]));
+	for (const locked of include) {
+		const gid = groupOfOwned.get(locked);
+		if (!gid) continue; // not a learned id → handled above as a forced option (or not a lock at all)
+		const err = setLock(gid, { id: locked, groupId: gid, cost: 0, tierIndex: -1, forced: true });
+		if (err) return { ownedByGroup, fixedIds, forcedCost: 0, options: [], byId: new Map(), groups: new Map(), budget: input.budget, warnings, error: err };
+	}
+	if (lockedByGroup.size) {
+		for (let i = options.length - 1; i >= 0; i--) {
+			const o = options[i];
+			if (!o.forced && lockedByGroup.has(o.groupId)) {
+				warnings.push(`skill ${o.id}: dropped — the locked skill ${lockedByGroup.get(o.groupId)!.id} owns its group`);
+				options.splice(i, 1);
+			}
+		}
+		// The learned id under a locked upgrade is replaced (the lock is a
+		// permanent selection of that group — withSkillSwappedIn parity), so it
+		// leaves fixedIds and the locked id takes its place.
+		const fixed = new Set(fixedIds);
+		for (const o of lockedByGroup.values()) {
+			const owned = ownedByGroup.get(o.groupId);
+			if (owned) fixed.delete(owned);
+			fixed.add(o.id);
+		}
+		fixedIds = [...fixed].sort();
 	}
 
 	const forcedCost = forcedCosts.reduce((a, b) => a + b, 0);

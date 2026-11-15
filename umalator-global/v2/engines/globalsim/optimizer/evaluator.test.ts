@@ -21,7 +21,7 @@ import { HorseState, SkillSet } from '../../../../../components/HorseDefTypes';
 import { GroundCondition, Season, Time, Weather } from '../../../../../uma-skill-tools/RaceParameters';
 import { parseMobPresets } from '../mobs';
 import { createGlobalsimWorkerCore, WasmApi } from '../workerCore';
-import { WorkerFactory } from '../pool';
+import { WorkerFactory, WorkerLike } from '../pool';
 import { calculateSkillCost, isPurpleSkill, skillGroups } from '../../../skill-chart-utils';
 import { createEvaluator, calibrateNoise, seedValueOf, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
@@ -204,5 +204,44 @@ test('noise calibration runs on the live engine (§7.3)', async t => {
 	t.ok(noise.baseP1 >= 0 && noise.baseP1 <= 1, `base P(1st) = ${noise.baseP1.toFixed(3)}`);
 	t.ok(noise.resolvedDeltaL > 0 && Number.isFinite(noise.resolvedDeltaL), 'resolved δ reported');
 	ev.dispose();
+	t.end();
+});
+
+// ── locks reach the engine (regression: forced skills charged SP but never simulated) ──
+
+test('locked (include) skills are simulated for EVERY build, empty selection included', async t => {
+	const lock = candidates[2];
+	// Spy on every message the pool sends to workerCore: the 'prepare' carries
+	// the serialized race request — the exact skill list the engine receives.
+	const spyMsgs: any[] = [];
+	const spyFactory: WorkerFactory = () => {
+		const w = factory();
+		return {
+			postMessage: (m: any) => { spyMsgs.push(m); w.postMessage(m); },
+			addEventListener: w.addEventListener.bind(w) as WorkerLike['addEventListener'],
+			terminate: () => w.terminate(),
+		};
+	};
+	const lockSpace = buildSpace({
+		purchasable: candidates, ownedByGroup: new Map(), fixedIds: [], hints: new Map(), budget: 4000, include: [lock],
+	});
+	t.equal(lockSpace.error, undefined, 'space built with the lock');
+	t.equal(lockSpace.forcedCost, lockSpace.byId.get(lock)!.cost, 'lock cost reserved once');
+	const lockBase = { id: simIdentity(lockSpace, []), selection: [] as string[] };
+	t.ok(lockBase.id.split(',').includes(lock), 'locked id is part of the base build identity');
+	const evLock = createEvaluator({
+		workerFactory: spyFactory, threads: 1, space: lockSpace, baseHorse: horse, scenarios, baseSeed: BASE_SEED, skillData: mergedTable,
+	});
+	await evLock.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: lockBase, positions: [0, 1] }]);
+	const prepares = spyMsgs.filter(m => m.type === 'prepare');
+	t.ok(prepares.length > 0, 'engine received prepare messages');
+	const playerSkills = (m: any): string[] => {
+		const req = m.request;
+		const h = req.horses[req.playerHorseIndex ?? 0];
+		return (h.skills as Array<{ skillId: string }>).map(e => e.skillId);
+	};
+	t.ok(prepares.every(m => playerSkills(m).includes(lock)),
+		'the locked skill reaches the engine horse on every preparation — even with an EMPTY selection');
+	evLock.dispose();
 	t.end();
 });

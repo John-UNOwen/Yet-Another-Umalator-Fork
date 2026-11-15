@@ -12,7 +12,7 @@ import {
 	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA, SURROGATE_MIN_FIT, SURROGATE_MIN_R2,
 	SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
-import { BuildRefLite, calibrateNoise, PairedDiff, SearchEvaluator } from './evaluator';
+import { BuildRefLite, calibrateNoise, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
 import { affordable, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
@@ -281,7 +281,10 @@ async function runSingleScenario(
 	emit('knapsack');
 	const knapGroups = (): KnapGroup[] => [...space.groups.entries()].map(([groupId, opts]) => ({
 		groupId,
-		options: opts.filter(o => !o.forced).map(o => ({ id: o.id, cost: o.cost, value: v0.get(o.id)?.mean ?? 0 })),
+		// Forced options stay in the item list: mckpSolve looks the forcedId up
+		// among the group's items, pre-commits it, shrinks the capacity, and
+		// skips the group (its selFromKnap strips the forced picks back out).
+		options: opts.map(o => ({ id: o.id, cost: o.cost, value: v0.get(o.id)?.mean ?? 0 })),
 		forcedId: opts.find(o => o.forced)?.id,
 	}));
 	dbg('starts');
@@ -584,6 +587,13 @@ export async function runOptimizer(
 	ctrl: SearchController,
 	onProgress: (p: OptimizerProgress) => void,
 ): Promise<OptimizerResult> {
+	// gainVsCurrent is a PAIRED objective: its value is the ℓ difference against
+	// input.current. Without the reference every objective value is a diff
+	// against nothing (NaN), so no build is ever measurable — fail before
+	// burning a search budget, not with an opaque "no measurable builds" at G.
+	if (input.objective === 'gainVsCurrent' && !input.current) {
+		throw new Error('optimizer: objective "gainVsCurrent" requires input.current (the reference build to measure gain against)');
+	}
 	const sidxs = input.scenarioIdxs && input.scenarioIdxs.length ? [...new Set(input.scenarioIdxs)] : [input.scenarioIdx];
 	if (sidxs.length <= 1) {
 		return runSingleScenario(ev, { ...input, scenarioIdx: sidxs[0] ?? 0, scenarioIdxs: undefined }, ctrl, onProgress);
@@ -633,7 +643,16 @@ async function verifyAcross(
 		const p = ev.paired(NS_VERIFY, si, best, b, pick);
 		return p ? isTie(p.ci95) : true; // a scenario with no common seed cannot prove a difference
 	});
-	let n = gSeeds;
+	// Secondary columns (P(1st)/P(top-3)/mean ℓ) pool every scenario's fresh
+	// verification slots into ONE real BuildStats — verification seeds only
+	// (P3), identical across scenarios, so the pooled means equal the means of
+	// the per-scenario stats. Null leads stay excluded per metric (§7.1).
+	const pooledStats = (b: BuildRefLite) =>
+		statsOf(ranIdxs.flatMap(si => ev.slots(NS_VERIFY, si, b.id)));
+	// Stop path: mirror runSingleScenario's truncated Stage G — verify on one
+	// short round (min(1000, gSeedsCap)) instead of burning a full gSeedsMin
+	// across every scenario after the user pressed Stop (anytime, P5).
+	let n = ctrl.stopped() ? Math.min(1000, cfg.gSeedsCap) : gSeeds;
 	let rows: ScoredBuild[];
 	let best: ScoredBuild;
 	for (;;) {
@@ -648,6 +667,7 @@ async function verifyAcross(
 			return {
 				build: b, sp, leftover: space.budget - sp, skillCount: b.selection.length,
 				obj: { mean: agg, sem, n: nn }, perScenario, provisional: false,
+				stats: pooledStats(b),
 				tiedWithBest: b.id !== ranked[0].b.id && allTieVs(ranked[0].b, b),
 			};
 		});

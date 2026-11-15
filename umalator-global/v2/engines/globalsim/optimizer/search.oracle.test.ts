@@ -451,7 +451,7 @@ test('scenario set + maximin beats mean on the worst-case objective (§6.3–6.4
 	// moves between them. maximin must trade a little mean for a better floor.
 	const cfg: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, fMaxRounds: 3, batchCap: 1200, gSeedsMin: 1200, gSeedsCap: 1200 };
 	const worstTrueMu = (inst: ReturnType<typeof genInstance>, id: string) => Math.min(inst.mu(id, 0), inst.mu(id, 1));
-	let maximinSum = 0, meanSum = 0, wins = 0, N = 0, feasible = true, perTwo = true;
+	let maximinSum = 0, meanSum = 0, wins = 0, N = 0, feasible = true, perTwo = true, statsOk = true;
 	for (let i = 0; i < 6; i++) {
 		const inst = genInstance(90210 + i * 173, 20, 26);
 		const run = async (aggregation: 'mean' | 'maximin') => {
@@ -462,6 +462,13 @@ test('scenario set + maximin beats mean on the worst-case objective (§6.3–6.4
 			ev.dispose();
 			if (res.best.leftover < 0) feasible = false;
 			if (!res.best.perScenario || res.best.perScenario.length !== 2) perTwo = false;
+			// Every reported row carries real verification stats — the pane's
+			// P(1st) / P(top-3) / mean ℓ columns read row.stats and must never
+			// fall back to em-dashes on a measured row.
+			for (const row of res.shortlist) {
+				const s = row.stats;
+				if (!s || !Number.isFinite(s.win.mean) || !Number.isFinite(s.top3.mean) || !Number.isFinite(s.lead.mean)) statsOk = false;
+			}
 			return worstTrueMu(inst, res.best.build.id);
 		};
 		const mMean = await run('mean');
@@ -472,6 +479,7 @@ test('scenario set + maximin beats mean on the worst-case objective (§6.3–6.4
 	}
 	t.ok(feasible, 'multi-scenario recommendation is never over budget');
 	t.ok(perTwo, 'the recommendation reports a per-scenario value for every scenario');
+	t.ok(statsOk, 'every multi-scenario row carries real verification stats (P(1st)/P(top-3)/mean ℓ)');
 	t.ok(maximinSum >= meanSum - 0.5, `maximin does not lose on average worst-case μ (${maximinSum.toFixed(2)} vs ${meanSum.toFixed(2)})`);
 	t.ok(wins >= 3, `maximin reaches a better-or-equal floor on most instances (wins=${wins}/${N})`);
 	t.end();

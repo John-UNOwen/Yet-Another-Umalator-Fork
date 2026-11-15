@@ -30,7 +30,7 @@ import { ci95, leadMarginL, SeedCompactRecord } from '../metrics';
 import { createGlobalsimPool, GlobalsimPool, PoolJob, resolveThreadCount, WorkerFactory } from '../pool';
 import { CACHE_CAP_BYTES, EffortConfig, VERIFY_SALT } from './config';
 import { EvalCache, NS_SEARCH, NS_VERIFY } from './cache';
-import { BuildSpace } from './space';
+import { BuildSpace, forcedOptions } from './space';
 import {
 	BuildStats, MeanSem, NoiseInfo, ObjectiveKind, ScenarioSpec, SeedSlot, SeedValue,
 } from './types';
@@ -199,6 +199,9 @@ export function objectiveOf(st: BuildStats, obj: ObjectiveKind, gain: PairedDiff
 
 export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	const cache = new EvalCache(o.cacheCapBytes ?? CACHE_CAP_BYTES);
+	// "Must include" locks (space.ts): implicit in every identity, never in a
+	// selection — the horse must carry them regardless of what is searched.
+	const lockedIds = forcedOptions(o.space).map((f) => f.id);
 	const horses = new Map<string, HorseState>();   // identity → prepared horse
 	const lists = new Map<string, number[]>();       // `${ns}|${si}` → seed list
 	const indexes = new Map<string, Map<number, number>>();
@@ -235,9 +238,17 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 
 	/** withSkillSwappedIn parity in bulk: for each selected option, drop every
 	 *  skill of its group, then set groupId → option id. Uniques/other groups
-	 *  ride along untouched (fixed skills are never bought). */
+	 *  ride along untouched (fixed skills are never bought). "Must include"
+	 *  locks are never in `selection` (they are implicit in fixedIds/identity),
+	 *  so they are applied first — every simulated build carries them. */
 	function applySelection(selection: readonly string[]): HorseState {
 		let sk = o.baseHorse.get('skills') as unknown as ImmMap<string, string>;
+		for (const id of lockedIds) {
+			const gid = metaGroup(id);
+			if (!gid) continue;
+			sk = sk.filter((existing: string) => metaGroup(existing) !== gid) as ImmMap<string, string>;
+			sk = sk.set(gid, id);
+		}
 		for (const id of selection) {
 			const gid = metaGroup(id);
 			if (!gid) continue;

@@ -2412,6 +2412,7 @@ function App() {
                       (mobPresets as any)[globalsimFieldPreset] ??
                       (mobPresets as any)["default"]
                     }
+                    fixedGate={globalsimGate === "auto" ? undefined : globalsimGate}
                     ownedByGroup={hasSkills}
                     hints={skillHints}
                     seed={seed}

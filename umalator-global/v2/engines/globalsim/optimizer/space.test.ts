@@ -109,6 +109,60 @@ test('locks: include reserves budget and forces presence; exclude removes; infea
 	return t.end();
 });
 
+test('locks: locked skills are SIMULATED (fixedIds), lock their whole group', t => {
+	const { gid, low, high } = pickChain();
+
+	// Locking the lower tier: it must be in EVERY simulated build, and the
+	// sibling tier (which would replace it in the group) is not offered.
+	const lockLow = buildSpace({
+		purchasable: [low, high], ownedByGroup: new Map(), fixedIds: [], hints: new Map(), budget: 10000, include: [low],
+	});
+	t.equal(lockLow.error, undefined, 'space built');
+	t.ok(lockLow.fixedIds.includes(low), 'locked skill is in fixedIds (always simulated)');
+	t.ok(simIds(lockLow, []).includes(low), 'locked skill is in the simulated list of the EMPTY selection');
+	t.notOk(lockLow.byId.get(high), 'sibling tier of a locked group is dropped from the search');
+	t.equal(lockLow.forcedCost, lockLow.byId.get(low)!.cost, 'lock cost still reserved exactly once');
+
+	// Locking the upgrade over a learned skill: the lock REPLACES the learned
+	// id in the simulated list (withSkillSwappedIn parity), never both.
+	const owned = new Map([[gid, low]]);
+	const lockUpgrade = buildSpace({
+		purchasable: [low, high], ownedByGroup: owned, fixedIds: [low], hints: new Map(), budget: 10000, include: [high],
+	});
+	t.equal(lockUpgrade.error, undefined, 'upgrade lock accepted');
+	t.ok(lockUpgrade.fixedIds.includes(high), 'locked upgrade is fixed (always simulated)');
+	t.notOk(lockUpgrade.fixedIds.includes(low), 'learned id replaced by the lock leaves fixedIds');
+	const simList = simIds(lockUpgrade, []);
+	t.ok(simList.includes(high) && !simList.includes(low), 'simulated list carries the lock, not the replaced tier');
+
+	// Two locks in one group contradict each other.
+	const clash = buildSpace({
+		purchasable: [low, high], ownedByGroup: new Map(), fixedIds: [], hints: new Map(), budget: 10000, include: [low, high],
+	});
+	t.ok(clash.error, `conflicting locks error out (${clash.error})`);
+
+	// Locking an ALREADY-LEARNED skill (not an option — the purchasable loop skips
+	// learned ids): its lock is HARD too. The purchasable sibling upgrade, which
+	// would REPLACE the locked id in the simulated list (simIds upgrade-replace),
+	// must be dropped so the locked skill is present in EVERY build.
+	const lockLearned = buildSpace({
+		purchasable: [low, high], ownedByGroup: owned, fixedIds: [low], hints: new Map(), budget: 10000, include: [low],
+	});
+	t.equal(lockLearned.error, undefined, 'learned-skill lock accepted');
+	t.notOk(lockLearned.byId.get(high), 'purchasable upgrade of a locked learned group is dropped');
+	t.ok(lockLearned.fixedIds.includes(low), 'locked learned skill stays fixed (always simulated)');
+	t.equal(lockLearned.forcedCost, 0, 'a learned lock costs nothing (skill already owned)');
+	t.ok(simIds(lockLearned, []).includes(low), 'locked learned skill in the empty-selection build');
+	t.ok(simIds(lockLearned, [high]).includes(low), 'locked learned skill survives even when the upgrade id is passed');
+
+	// A learned lock and locking that group's upgrade contradict each other.
+	const learnedVsUpgrade = buildSpace({
+		purchasable: [low, high], ownedByGroup: owned, fixedIds: [low], hints: new Map(), budget: 10000, include: [low, high],
+	});
+	t.ok(learnedVsUpgrade.error, `learned lock vs its upgrade lock conflicts (${learnedVsUpgrade.error})`);
+	return t.end();
+});
+
 test('identity / cost / feasibility invariants', t => {
 	const { a, b } = pickTwoGroups();
 	const space = buildSpace({ purchasable: [a, b], ownedByGroup: new Map(), fixedIds: [], hints: new Map(), budget: 10000 });

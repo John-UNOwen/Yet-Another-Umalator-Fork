@@ -13,8 +13,8 @@
 import { h } from 'preact';
 import { useState, useRef, useEffect, useMemo } from 'preact/hooks';
 
-import { buildSpace, BuildSpace } from './engines/globalsim/optimizer/space';
-import { createEvaluator, Evaluator } from './engines/globalsim/optimizer/evaluator';
+import { buildSpace, BuildSpace, simIdentity } from './engines/globalsim/optimizer/space';
+import { BuildRefLite, createEvaluator, Evaluator } from './engines/globalsim/optimizer/evaluator';
 import { createController, runOptimizer, SearchController } from './engines/globalsim/optimizer/search';
 import { bookKey, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
 import { effortConfig } from './engines/globalsim/optimizer/config';
@@ -50,6 +50,10 @@ export interface OptimizerPaneProps {
 	/** Current UI race-condition values (same numeric enums the app holds). */
 	conditions: { ground: number; weather: number; season: number; time: number };
 	mobPreset: MobPreset;
+	/** Fixed gate field index (app-v2 globalsimGate, "auto" → undefined): the
+	 *  optimizer must race on the SAME gate the main sim / compare uses, not
+	 *  always the per-seed auto-paired gate. */
+	fixedGate?: number;
 	/** groupId → learned skill id (app-v2 hasSkills). */
 	ownedByGroup: Map<string, string>;
 	/** skillHints (skill id → hint level). */
@@ -81,6 +85,22 @@ const fmtMeanCi = (m: MeanSem | undefined, d = 2): string => {
 	const half = Number.isFinite(hi) ? (hi - lo) / 2 : NaN;
 	return `${fmtN(m.mean, d)} ± ${fmtN(half, d)}`;
 };
+
+/** Decimal places the objective value is shown with — a pure function of the
+ *  objective (rates get 4, lengths/placings 2). Snapshotted per run so the
+ *  finished table keeps the digits that match the run, not live state. */
+const objDigitsOf = (o: ObjectiveKind): number => (o === 'p1' || o === 'pTop3' ? 4 : 2);
+
+/** A finished run plus the objective/aggregation that produced it. Stored as
+ *  ONE value so the finished table can never re-label a stored result with the
+ *  live Objective/Aggregate dropdowns (the result numbers are frozen; the
+ *  labels must be frozen with them — see the results render below). */
+interface RunSnapshot {
+	result: OptimizerResult;
+	objective: ObjectiveKind;
+	aggregation: AggregationKind;
+	objDigits: number;
+}
 
 const OBJECTIVES: { id: ObjectiveKind; label: string }[] = [
 	{ id: 'p1', label: 'Win rate' },
@@ -127,7 +147,7 @@ const thStyle = { textAlign: 'left' as const, padding: '4px 8px', fontSize: 12, 
 const tdStyle = { padding: '4px 8px', fontSize: 13, verticalAlign: 'top' as const };
 
 export function OptimizerPane(props: OptimizerPaneProps) {
-	const { workerFactory, uma, candidates, skillData, course, courseId, conditions, mobPreset, ownedByGroup, hints } = props;
+	const { workerFactory, uma, candidates, skillData, course, courseId, conditions, mobPreset, fixedGate, ownedByGroup, hints } = props;
 
 	// ── UI state ──────────────────────────────────────────────────────────────
 	const [chosen, setChosen] = useState<Set<string>>(() => new Set(candidates));
@@ -142,7 +162,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [useBook, setUseBook] = useState(true);
 	const [running, setRunning] = useState(false);
 	const [progress, setProgress] = useState<OptimizerProgress | null>(null);
-	const [result, setResult] = useState<OptimizerResult | null>(null);
+	/** Finished run + the objective/aggregation/digits that shaped it (one value
+	 *  so the results table can't drift from live dropdowns after the run). */
+	const [runResult, setRunResult] = useState<RunSnapshot | null>(null);
 	const [warnings, setWarnings] = useState<string[]>([]);
 	const [message, setMessage] = useState<string | null>(null); // errors + hints share one line
 
@@ -151,10 +173,25 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const ctrlRef = useRef<SearchController | null>(null);
 	const runningRef = useRef(false);
 	const lastUiRef = useRef(0); // progress-throttle timestamp
+	// False once unmounted. app-v2 renders this pane only on the Optimizer tab, so
+	// switching tabs unmounts it while a run is still in flight; every post-await
+	// setState below is gated on this so nothing touches a dead component.
+	const mountedRef = useRef(true);
 
-	// Release the worker pool on unmount (the cache is internal, nothing to keep).
+	// The pane is conditionally mounted, so this cleanup can fire MID-RUN. Mark
+	// unmounted, then hard-stop the in-flight work:
+	//  - dispose() only RESOLVES the running pool batch (pool.ts running?.resolve()),
+	//    which does NOT stop the search — the orphaned runOptimizer would keep going
+	//    and ensurePool() would respawn a pool nothing later releases.
+	//  - ctrl.stop() winds the pipeline down; abort() REJECTS the running batch so
+	//    the current ensure() throws and the run unwinds immediately.
+	// The pool THIS run created is released in run()'s finally (on the local ev),
+	// which — unlike evRef.current here — always reaches it even after the ref is
+	// nulled (that nulling is exactly the window the leak used to slip through).
 	useEffect(() => () => {
-		evRef.current?.dispose();
+		mountedRef.current = false;
+		ctrlRef.current?.stop();
+		evRef.current?.abort();
 		evRef.current = null;
 	}, []);
 
@@ -194,7 +231,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		runningRef.current = true;
 		setRunning(true);
 		setMessage(null);
-		setResult(null);
+		setRunResult(null);
 		setProgress(null);
 		setWarnings([]);
 		// A previous run's pool must not linger (spec: dispose before each new run).
@@ -235,6 +272,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 
 		const ctrl = createController();
 		ctrlRef.current = ctrl;
+		// Hoisted so the finally disposes THIS run's pool (below), not evRef.current
+		// — an unmount nulls evRef.current, so disposing through the ref would
+		// strand whatever pool the (possibly orphaned) run still ends up creating.
+		let ev: Evaluator | null = null;
 		try {
 			const courseIds = await loadGlobalsimCourseIds();
 			if (!courseIds) {
@@ -254,6 +295,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				skillData: skillData as Record<string, unknown>,
 				courseIds,
 				mobPreset,
+				// The user's fixed gate (undefined = auto-paired per seed) — the
+				// same wiring the compare/chart runs use in app-v2. Scenarios
+				// spread this object, so every ground variant keeps the gate.
+				fixedGate,
 			};
 			// §6.3 scenario set: scenario 0 is the current setup; the robustness
 			// variants re-run the SAME mob field on different footing.
@@ -271,7 +316,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				};
 			});
 			const scenarioIdxs = scenarios.map((_, i) => i);
-			const ev = createEvaluator({
+			ev = createEvaluator({
 				workerFactory, space, baseHorse, scenarios, baseSeed: seedUse, skillData,
 			});
 			evRef.current = ev;
@@ -285,11 +330,28 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			});
 			const bookStarts = useBook ? selectStarts(space, bk) : [];
 
+			// gainVsCurrent measures the paired ℓ gain against the user's ACTUAL
+			// build, so that objective needs the reference build in the SearchInput —
+			// without it every objective value is a diff against nothing (NaN) and
+			// nothing is measurable. The user's build = learned skills + locked
+			// picks (+ uniques), and ALL of those are implicit in space.fixedIds —
+			// learned ids ride on baseHorse, locked ids join fixedIds and the
+			// simulated horse too — so the reference build IS the base build.
+			// An empty selection keeps its identity and SP accounting exact (a
+			// locked id in `selection` would double-charge forcedCost in costOf).
+			let current: BuildRefLite | undefined;
+			if (objective === 'gainVsCurrent') {
+				current = { id: simIdentity(space, []), selection: [] };
+			}
+
 			const res = await runOptimizer(
 				ev,
-				{ space, scenarioIdx: 0, scenarioIdxs, objective, aggregation, bookStarts, effort: effortConfig(preset) },
+				{ space, scenarioIdx: 0, scenarioIdxs, objective, aggregation, bookStarts, current, effort: effortConfig(preset) },
 				ctrl,
 				(p) => {
+					// A mid-run unmount can still emit an event before the abort
+					// rejection unwinds the run — never setState on a dead component.
+					if (!mountedRef.current) return;
 					// Stage events fire often; cap state updates at ~10/s (the
 					// terminal 'done' event always passes through).
 					const now = Date.now();
@@ -299,9 +361,18 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					}
 				},
 			);
+			// A mid-run unmount aborts/rejects the run, so this is reached only when
+			// the search actually completed while mounted. If the pane unmounted in
+			// the tiny window between resolve and here, skip every post-await update
+			// (and the book write) — the finally still releases the pool.
+			if (!mountedRef.current) return;
 			// Contract kept visible in the console next to the table (§13 debugging).
 			console.log('[optimizer]', res);
-			setResult(res);
+			// Freeze the objective/aggregation/digits with the result: they are the
+			// closure values this run actually searched under (same as the input at
+			// runOptimizer above), so the finished table can never be relabelled by
+			// later changes to the live dropdowns.
+			setRunResult({ result: res, objective, aggregation, objDigits: objDigitsOf(objective) });
 			setProgress(null);
 			if (useBook) {
 				saveBook(bk, res.shortlist.slice(0, 5).map(r => ({
@@ -309,13 +380,18 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				})));
 			}
 		} catch (e) {
-			setMessage(e instanceof Error ? e.message : String(e));
+			// A mid-run unmount routes the abort rejection here — never setState
+			// once the component is gone; the finally still releases the pool.
+			if (mountedRef.current) setMessage(e instanceof Error ? e.message : String(e));
 		} finally {
-			evRef.current?.dispose();
-			evRef.current = null;
+			// Dispose the evaluator this run owns (its possibly-respawned pool) even
+			// if the pane unmounted mid-run — the leak was releasing through the
+			// (nulled) evRef.current instead. dispose() is idempotent on a dead pool.
+			ev?.dispose();
+			if (evRef.current === ev) evRef.current = null;
 			ctrlRef.current = null;
 			runningRef.current = false;
-			setRunning(false);
+			if (mountedRef.current) setRunning(false);
 		}
 	};
 
@@ -338,7 +414,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		);
 	}
 
-	const objDigits = objective === 'p1' || objective === 'pTop3' ? 4 : 2;
+	const objDigits = objDigitsOf(objective); // live, for the provisional readout during a run
 
 	return (
 		<div class="v2-optimizer-pane" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -469,11 +545,11 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				</div>
 			)}
 
-			{/* ── Results ── */}
-			{result && (
+			{/* ── Results ── (rendered from the frozen snapshot, never live state) */}
+			{runResult && (
 				<OptimizerResults
-					result={result} objective={objective} objDigits={objDigits}
-					aggregation={aggregation}
+					result={runResult.result} objective={runResult.objective} objDigits={runResult.objDigits}
+					aggregation={runResult.aggregation}
 					hints={hints} ownedByGroup={ownedByGroup}
 					onOpenInCompare={props.onOpenInCompare}
 				/>
