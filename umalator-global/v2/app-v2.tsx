@@ -81,7 +81,7 @@ import { SimulationSettings } from "./sim-settings";
 import { loadGlobalsimSkillTable } from "./engines/globalsim/skills";
 import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
 import { runGlobalsimCompare } from "./engines/globalsim/compare";
-import { runGlobalsimSkillChart, CHART_MAX_SEEDS } from "./engines/globalsim/chart";
+import { runGlobalsimSkillChart } from "./engines/globalsim/chart";
 import {
   resolveThreadCount,
   loadThreadsOption,
@@ -469,8 +469,13 @@ function App() {
   const [selectedSkillForChart, setSelectedSkillForChart] = useState("");
   const [chartRunType, setChartRunType] = useState("medianrun");
 
-  // Simulation worker (for compare mode)
-  const worker = useMemo(() => {
+  // Simulation worker (for compare/hpcalc mode). Launched LAZILY: the classic
+  // engine worker carries the whole simulator bundle (~50 MB of parsed skill
+  // data); with GlobalSim as the default engine, spawning it on mount charged
+  // every page that cost. ensureClassicWorker() creates it on first classic use.
+  const classicWorkerRef = useRef<Worker | null>(null);
+  const ensureClassicWorker = useCallback(() => {
+    if (classicWorkerRef.current) return classicWorkerRef.current;
     const w = new Worker(new URL("./simulator.worker.ts", import.meta.url), {
       type: "module",
     });
@@ -495,11 +500,17 @@ function App() {
       console.error("[V2] Worker error:", e);
       setIsRunning(false);
     });
+    classicWorkerRef.current = w;
     return w;
   }, []);
 
-  // Chart mode worker pool (4 workers for parallel skill testing)
-  const chartWorkers = useMemo(() => {
+  // Chart mode worker pool (4 workers for parallel skill testing). Created
+  // lazily on the first CLASSIC-engine chart run (GlobalSim's chart has its
+  // own pool; charging every page 4 idle classic workers is how an 8-worker
+  // globalsim chart ended the renderer on memory-tight browsers).
+  const chartWorkersRef = useRef<Array<Worker & { workerId?: number }>>([]);
+  const ensureChartWorkers = useCallback(() => {
+    if (chartWorkersRef.current.length > 0) return chartWorkersRef.current;
     const workers: Array<Worker & { workerId?: number }> = [];
     for (let i = 0; i < 4; i++) {
       const w = new Worker(new URL("./simulator.worker.ts", import.meta.url), {
@@ -553,6 +564,7 @@ function App() {
       });
       workers.push(w);
     }
+    chartWorkersRef.current = workers;
     return workers;
   }, []);
 
@@ -1027,9 +1039,11 @@ function App() {
           mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
           fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
           seedBase: seed || Math.floor(Math.random() * 0xFFFFFFFF),
-          // Cap the chart's per-skill seeds: `samples` is the shared compare
-          // field (up to 10000); chart.ts also clamps this independently.
-          sampleCount: Math.min(samples, CHART_MAX_SEEDS),
+          // The chart ignores the Samples field, exactly like the classic
+          // engine (fixed 25+175, or 50 in fast mode). Samples belongs to
+          // compare; letting it inflate the chart made a full GlobalSim run
+          // ~2.5x longer than the classic equivalent for no screening benefit
+          // (the round-1 filter decides what matters; compare is the deep dive).
           fastMode: chartFastMode,
           threads: resolveThreadCount(globalsimThreads),
           workerFactory: globalsimWorkerFactory,
@@ -1080,7 +1094,7 @@ function App() {
       // Send tasks to all 4 workers
       skillBatches.forEach((batch, i) => {
         if (batch.length > 0) {
-          chartWorkers[i].postMessage({
+          ensureChartWorkers()[i].postMessage({
             msg: "chart",
             data: {
               skills: batch,
@@ -1105,7 +1119,7 @@ function App() {
     time,
     uma1,
     seed,
-    chartWorkers,
+    ensureChartWorkers,
     chartFastMode,
     globalsimSkillIds,
     globalsimSkillTable,
@@ -1209,7 +1223,7 @@ function App() {
       }
 
       // Send simulation request to worker
-      worker.postMessage({
+      ensureClassicWorker().postMessage({
         msg: "compare",
         data: {
           nsamples: samples,
@@ -1244,7 +1258,7 @@ function App() {
         return;
       }
 
-      worker.postMessage({
+      ensureClassicWorker().postMessage({
         msg: "hpcalc",
         data: {
           nsamples: samples,
@@ -1286,7 +1300,7 @@ function App() {
     time,
     uma1,
     uma2,
-    worker,
+    ensureClassicWorker,
     seed,
     syncRng,
     skillWisdomCheck,
