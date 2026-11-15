@@ -37,7 +37,17 @@ const repoRoot = path.resolve(__dirname, '../../../../');
 const pkgDir = path.join(repoRoot, 'globalsim-wasm', 'pkg');
 const geomDir = path.join(repoRoot, 'vendor', 'GlobalSim', 'data', 'course_geometry');
 const courseIds: string[] = Object.keys(require(path.join(repoRoot, 'vendor/GlobalSim/data/course_data.json')));
-const mobPreset = parseMobPresets(require('./mob-presets.json')).presets['default'];
+// This suite tests TABLE injection mechanics, not the field: it needs the
+// engine's own fallback table to know every skill in the request, so mobs
+// stay bare here (the shipped "default" carries baseline builds whose modern
+// skills the engine fallback cannot know). compare/h2h cover the real field.
+const mobPreset = parseMobPresets({
+	bare: {
+		name: 'bare', comment: 'test fixture',
+		runners: (['Nige', 'Nige', 'Senkou', 'Senkou', 'Sasi', 'Sasi', 'Oikomi', 'Oikomi'] as const).map((strategy) =>
+			({ speed: 1200, stamina: 1000, power: 1000, guts: 800, wisdom: 1000, strategy, distanceAptitude: 'A', surfaceAptitude: 'A', strategyAptitude: 'A', mood: 0, skills: [] })),
+	},
+}).presets['bare'];
 const mergedTable: Record<string, unknown> = require(path.join(repoRoot, 'globalsim/skills.json'));
 const mergedIds = new Set(Object.keys(mergedTable));
 

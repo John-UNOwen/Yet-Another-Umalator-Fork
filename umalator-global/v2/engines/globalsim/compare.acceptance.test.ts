@@ -46,7 +46,8 @@ const courseIds: string[] = Object.keys(require(path.join(repoRoot, 'vendor/Glob
 const mobPreset = parseMobPresets(require('./mob-presets.json')).presets['default'];
 // The active Phase 2 coverage table (the same file the app's /uma-tools/
 // globalsim/skills.json is generated from) — the adapter's skill gate.
-const knownSkillIds = new Set<string>(Object.keys(require(path.join(repoRoot, 'globalsim/skills.json'))));
+const mergedTable = require(path.join(repoRoot, 'globalsim/skills.json'));
+const knownSkillIds = new Set<string>(Object.keys(mergedTable));
 
 const COURSE = '10504';          // Nakayama turf mile
 const DISTANCE = 2000;           // course_data.json distance for 10504
@@ -107,6 +108,9 @@ function compareInput(uma1: HorseState, uma2: HorseState, over: Partial<Globalsi
 		courseId: COURSE, distance: DISTANCE,
 		ground: GroundCondition.Good, weather: Weather.Sunny, season: Season.Spring, time: Time.Midday,
 		knownSkillIds, courseIds, mobPreset,
+		// Mobs now carry modern skills: without the merged table the worker
+		// falls back to the engine's bundled v70 table and prepare fails.
+		skillData: mergedTable,
 		seedBase: BASE_SEED, sampleCount: N,
 		threads: 2,                 // node bridge is single-threaded anyway; keep wasm instances low
 		workerFactory: bridgeFactory(),

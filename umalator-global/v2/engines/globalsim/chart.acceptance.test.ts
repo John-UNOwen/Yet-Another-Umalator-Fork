@@ -49,8 +49,19 @@ const repoRoot = path.resolve(__dirname, '../../../../');
 const pkgDir = path.join(repoRoot, 'globalsim-wasm', 'pkg');
 const geomDir = path.join(repoRoot, 'vendor', 'GlobalSim', 'data', 'course_geometry');
 const courseIds: string[] = Object.keys(require(path.join(repoRoot, 'vendor/GlobalSim/data/course_data.json')));
-const mobPreset = parseMobPresets(require('./mob-presets.json')).presets['default'];
-const knownSkillIds = new Set<string>(Object.keys(require(path.join(repoRoot, 'globalsim/skills.json'))));
+// Chart MECHANICS suite: round-1 filter margins and round counts are tuned
+// against a bare field, so the shipped "default" (baseline builds, much
+// stronger) would flip deterministic expectations. Keep a local bare copy;
+// compare/h2h cover the real field.
+const mobPreset = parseMobPresets({
+	bare: {
+		name: 'bare', comment: 'test fixture',
+		runners: (['Nige', 'Nige', 'Senkou', 'Senkou', 'Sasi', 'Sasi', 'Oikomi', 'Oikomi'] as const).map((strategy) =>
+			({ speed: 1200, stamina: 1000, power: 1000, guts: 800, wisdom: 1000, strategy, distanceAptitude: 'A', surfaceAptitude: 'A', strategyAptitude: 'A', mood: 0, skills: [] })),
+	},
+}).presets['bare'];
+const mergedTable = require(path.join(repoRoot, 'globalsim/skills.json'));
+const knownSkillIds = new Set<string>(Object.keys(mergedTable));
 
 const COURSE = '10504';          // Nakayama turf mile (turf ⇒ dirt-gated skills never fire)
 const DISTANCE = 2000;
@@ -107,6 +118,9 @@ function chartInput(over: Partial<GlobalsimSkillChartInput> = {}): GlobalsimSkil
 		courseId: COURSE, distance: DISTANCE,
 		ground: GroundCondition.Good, weather: Weather.Sunny, season: Season.Spring, time: Time.Midday,
 		knownSkillIds, courseIds, mobPreset,
+		// Mobs now carry modern skills: without the merged table the worker
+		// falls back to the engine's bundled v70 table and prepare fails.
+		skillData: mergedTable,
 		seedBase: BASE_SEED,
 		threads: 2,                 // node bridge is single-threaded anyway; keep wasm instances low
 		workerFactory: bridgeFactory(),

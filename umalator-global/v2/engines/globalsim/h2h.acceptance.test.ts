@@ -38,7 +38,8 @@ const pkgDir = path.join(repoRoot, 'globalsim-wasm', 'pkg');
 const geomDir = path.join(repoRoot, 'vendor', 'GlobalSim', 'data', 'course_geometry');
 const courseIds: string[] = Object.keys(require(path.join(repoRoot, 'vendor/GlobalSim/data/course_data.json')));
 const mobPreset = parseMobPresets(require('./mob-presets.json')).presets['default'];
-const knownSkillIds = new Set<string>(Object.keys(require(path.join(repoRoot, 'globalsim/skills.json'))));
+const mergedTable = require(path.join(repoRoot, 'globalsim/skills.json'));
+const knownSkillIds = new Set<string>(Object.keys(mergedTable));
 
 const COURSE = '10504';
 const DISTANCE = 2000;
@@ -89,6 +90,9 @@ function compareInput(uma1: HorseState, uma2: HorseState, over: Partial<Globalsi
 		courseId: COURSE, distance: DISTANCE,
 		ground: GroundCondition.Good, weather: Weather.Sunny, season: Season.Spring, time: Time.Midday,
 		knownSkillIds, courseIds, mobPreset,
+		// Mobs now carry modern skills: without the merged table the worker
+		// falls back to the engine's bundled v70 table and prepare fails.
+		skillData: mergedTable,
 		fieldLayout: 'h2h',
 		seedBase: BASE_SEED, sampleCount: 40,
 		threads: 2,
