@@ -20,7 +20,7 @@ import path from 'path';
 
 import {
 	createGlobalsimPool, PoolJob, WorkerLike,
-	autoThreadCount, resolveThreadCount, loadThreadsOption, saveThreadsOption,
+	autoThreadCount, resolveThreadCount, serverAwareThreadCount, loadThreadsOption, saveThreadsOption,
 	THREADS_STORAGE_KEY, MAX_THREADS, AUTO_THREADS_MAX,
 } from './pool';
 import { buildCompareJobs, globalsimSeedList, hashString64, GlobalsimCompareInput, DEFAULT_CHUNK_SIZE } from './compare';
@@ -292,6 +292,16 @@ test('auto thread count clamps hardwareConcurrency−1 to [1, AUTO_THREADS_MAX]'
 	t.equal(autoThreadCount(5), 4);              // hc−1 below the cap passes through
 	t.equal(autoThreadCount(8), AUTO_THREADS_MAX);
 	t.equal(autoThreadCount(64), AUTO_THREADS_MAX);
+	t.equal(autoThreadCount(64, MAX_THREADS), MAX_THREADS, 'server-backed auto may reach MAX_THREADS');
+	t.end();
+});
+
+test('serverAwareThreadCount: auto scales with a sim server, explicit untouched', t => {
+	t.equal(serverAwareThreadCount('auto', false), autoThreadCount());
+	t.equal(serverAwareThreadCount('auto', true), Math.min(MAX_THREADS, autoThreadCount(undefined, MAX_THREADS)));
+	t.ok(serverAwareThreadCount('auto', true) >= serverAwareThreadCount('auto', false));
+	t.equal(serverAwareThreadCount(12, false), 12);
+	t.equal(serverAwareThreadCount(12, true), 12);
 	t.end();
 });
 

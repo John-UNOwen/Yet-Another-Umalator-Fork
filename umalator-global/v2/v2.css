@@ -839,6 +839,32 @@ body {
   gap: 4px;
 }
 
+.v2-sim-server-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.v2-sim-server-url {
+  flex: 1 1 180px;
+  min-width: 140px;
+}
+
+.v2-sim-server-token {
+  flex: 0 0 90px;
+}
+
+.v2-sim-server-check {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.v2-sim-server-status {
+  display: block;
+  margin-top: 4px;
+}
+
 .v2-sim-seed-input {
   width: 100px;
 }

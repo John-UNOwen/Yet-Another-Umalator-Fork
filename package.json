@@ -30,6 +30,8 @@
     "test:globalsim-h2h": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/h2h.acceptance.test.ts",
     "test:globalsim-chart": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/chart.acceptance.test.ts",
     "test:globalsim-skilldata": "node tools/globalsim-coverage.mjs --out globalsim/skills.json && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/skilldata.acceptance.test.ts",
+    "test:globalsim-simserver": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/sim-server.acceptance.test.ts",
+    "sim-server": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" umalator-global/v2/engines/globalsim/sim-server.ts",
     "globalsim:coverage": "node tools/globalsim-coverage.mjs",
     "globalsim:coverage:write": "node tools/globalsim-coverage.mjs --write",
     "globalsim:coverage:merged": "node tools/globalsim-coverage.mjs --out globalsim/skills.merged.json",

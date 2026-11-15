@@ -65,6 +65,17 @@ interface SimSettingsProps {
 	/** GlobalSim worker count ('auto' = cores − 1, capped at 6; explicit 1..16; persisted by pool.ts). */
 	threads?: 'auto' | number;
 	setThreads?: (v: 'auto' | number) => void;
+	/** Local sim server (CPU offload) — only rendered in GlobalSim mode. */
+	simServer?: {
+		url: string;
+		setUrl: (v: string) => void;
+		token: string;
+		setToken: (v: string) => void;
+		online: boolean;
+		cores?: number;
+		tokenNeeded: boolean;
+		check: () => void;
+	};
 	mode?: string;
 }
 
@@ -96,6 +107,7 @@ export function SimulationSettings({
 	globalsimUncoveredCount,
 	threads,
 	setThreads,
+	simServer,
 	mode,
 }: SimSettingsProps) {
 	// Dueling rates popover
@@ -401,7 +413,7 @@ export function SimulationSettings({
 				</Tooltip>
 
 				{engine === 'globalsim' && setThreads && (
-					<Tooltip content="Web Workers running the GlobalSim wasm engine (Auto = CPU cores − 1, up to 8)" position="bottom">
+					<Tooltip content="Sim workers (Auto = CPU cores − 1, up to 6 in the browser tab; up to all cores with the local sim server)" position="bottom">
 						<label class="v2-setting">
 							<span class="v2-setting-label">Sim threads</span>
 							<select
@@ -416,6 +428,41 @@ export function SimulationSettings({
 							</select>
 						</label>
 					</Tooltip>
+				)}
+
+				{engine === 'globalsim' && simServer && (
+					<div class="v2-sim-server-row">
+						<label class="v2-setting v2-sim-server-url">
+							<span class="v2-setting-label">Sim server</span>
+							<input
+								type="text"
+								class="v2-sim-input"
+								value={simServer.url}
+								placeholder="http://127.0.0.1:8765"
+								onInput={(e) => simServer.setUrl(e.currentTarget.value)}
+							/>
+						</label>
+						<label class="v2-setting v2-sim-server-token">
+							<span class="v2-setting-label">Token</span>
+							<input
+								type="password"
+								class="v2-sim-input"
+								value={simServer.token}
+								placeholder="—"
+								onInput={(e) => simServer.setToken(e.currentTarget.value)}
+							/>
+						</label>
+						<button class="v2-button v2-sim-server-check" onClick={simServer.check}>Check</button>
+					</div>
+				)}
+				{engine === 'globalsim' && simServer && (
+					<span class="v2-globalsim-notice v2-sim-server-status">
+						{simServer.online
+							? `Sim server connected — ${simServer.cores ?? 'all'} cores. Workers run outside the browser tab; Auto now uses every core with no tab-memory cost.`
+							: simServer.tokenNeeded
+								? 'Sim server needs its token — enter it above and press Check.'
+								: 'Sim server not running. Double-click sim-server.bat to run sims on all your cores without browser-tab memory limits (restart it, then Check or reload).'}
+					</span>
 				)}
 
 				{engine === 'globalsim' && (

@@ -66,14 +66,26 @@ export function saveThreadsOption(v: ThreadsOption): void {
 	} catch { /* private mode etc. — the default is fine */ }
 }
 
-/** Auto = hardwareConcurrency − 1 (leave one core for UI), clamped to [1, AUTO_THREADS_MAX]. */
-export function autoThreadCount(hardwareConcurrency?: number): number {
+/** Auto = hardwareConcurrency − 1 (leave one core for UI), clamped to [1, max]. */
+export function autoThreadCount(hardwareConcurrency?: number, max: number = AUTO_THREADS_MAX): number {
 	const hc = hardwareConcurrency ?? (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 4) ?? 4;
-	return Math.max(1, Math.min(AUTO_THREADS_MAX, hc - 1));
+	return Math.max(1, Math.min(max, hc - 1));
 }
 
 export function resolveThreadCount(opt: ThreadsOption = loadThreadsOption()): number {
 	return opt === 'auto' ? autoThreadCount() : Math.max(1, Math.min(MAX_THREADS, Math.round(opt)));
+}
+
+/**
+ * Auto with a local sim server behind the workers: the browser-memory reason
+ * for AUTO_THREADS_MAX is gone (each worker is one JSON-pipe connection), so
+ * Auto may use every core (up to MAX_THREADS; the server forks one child per
+ * worker and the machine's own RAM is the only limit).
+ */
+export function serverAwareThreadCount(opt: ThreadsOption, serverBacked: boolean): number {
+	return opt === 'auto'
+		? (serverBacked ? autoThreadCount(undefined, MAX_THREADS) : autoThreadCount())
+		: resolveThreadCount(opt);
 }
 
 // ── worker seam ──────────────────────────────────────────────────────────────

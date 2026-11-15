@@ -84,11 +84,19 @@ import { runGlobalsimCompare } from "./engines/globalsim/compare";
 import { runGlobalsimSkillChart } from "./engines/globalsim/chart";
 import {
   resolveThreadCount,
+  serverAwareThreadCount,
   loadThreadsOption,
   saveThreadsOption,
   type ThreadsOption,
   type WorkerFactory,
 } from "./engines/globalsim/pool";
+import {
+  SimWorker,
+  pingSimServer,
+  loadSimServerUrl,
+  loadSimServerToken,
+  saveSimServerSettings,
+} from "./engines/globalsim/simLink";
 import { HorseState } from "../../components/HorseDefTypes";
 import { fromJS, Map as ImmMap } from "immutable";
 import mobPresets from "./engines/globalsim/mob-presets.json";
@@ -365,6 +373,23 @@ function App() {
   // GlobalSim worker-pool size option (Phase 4 §4.1): persisted by pool.ts.
   const [globalsimThreads, setGlobalsimThreads] = useState<ThreadsOption>(() => loadThreadsOption());
   useEffect(() => { saveThreadsOption(globalsimThreads); }, [globalsimThreads]);
+
+  // Local sim server (opt-in CPU offload, sim-server.ts): probed at startup,
+  // re-checkable from Simulation settings. Online → workers become JSON pipes
+  // to the local server (Auto = every core, no browser tab memory).
+  const [simServerUrl, setSimServerUrl] = useState<string>(() => loadSimServerUrl());
+  const [simServerToken, setSimServerToken] = useState<string>(() => loadSimServerToken());
+  const [simServerOnline, setSimServerOnline] = useState(false);
+  const [simServerCores, setSimServerCores] = useState<number | undefined>(undefined);
+  const [simServerTokenNeeded, setSimServerTokenNeeded] = useState(false);
+  const checkSimServer = useCallback(async () => {
+    const r = await pingSimServer(simServerUrl, simServerToken);
+    setSimServerOnline(r.ok);
+    setSimServerCores(r.cores);
+    setSimServerTokenNeeded(!r.ok && !!r.tokenRequired);
+    saveSimServerSettings(simServerUrl, simServerToken);
+  }, [simServerUrl, simServerToken]);
+  useEffect(() => { void checkSimServer(); }, []);
   // GlobalSim field selection (integration plan Phase 3): mob preset + gate mode.
   // The same seed and preset give the same field; "Auto" draws the tested uma's
   // gate per seed, identically for both races of a compare pair.
@@ -928,10 +953,12 @@ function App() {
   // handleRunSimulation depend on it.
   const globalsimWorkerFactory: WorkerFactory = useCallback(
     () =>
-      new Worker(new URL("./engines/globalsim/globalsim.worker.ts", import.meta.url), {
-        type: "module",
-      }),
-    [],
+      simServerOnline
+        ? new SimWorker(simServerUrl, simServerToken)
+        : new Worker(new URL("./engines/globalsim/globalsim.worker.ts", import.meta.url), {
+            type: "module",
+          }),
+    [simServerOnline, simServerUrl, simServerToken],
   );
 
   // Run skill chart via 4 workers
@@ -1045,7 +1072,7 @@ function App() {
           // ~2.5x longer than the classic equivalent for no screening benefit
           // (the round-1 filter decides what matters; compare is the deep dive).
           fastMode: chartFastMode,
-          threads: resolveThreadCount(globalsimThreads),
+          threads: serverAwareThreadCount(globalsimThreads, simServerOnline),
           workerFactory: globalsimWorkerFactory,
           // Streaming rows → the existing chart table (fills progressively).
           onProgress: (rows) =>
@@ -1131,6 +1158,7 @@ function App() {
     globalsimGate,
     globalsimLayout,
     globalsimThreads,
+    simServerOnline,
     globalsimWorkerFactory,
   ]);
 
@@ -1206,7 +1234,7 @@ function App() {
             fieldLayout: globalsimLayout,
             seedBase: seed,
             sampleCount: samples,
-            threads: resolveThreadCount(globalsimThreads),
+            threads: serverAwareThreadCount(globalsimThreads, simServerOnline),
             workerFactory: globalsimWorkerFactory,
             // Classic-shaped partial results — the existing pane paints them.
             onProgress: (partial) => setResults(partial as any),
@@ -1320,6 +1348,7 @@ function App() {
     globalsimGate,
     globalsimLayout,
     globalsimThreads,
+    simServerOnline,
     globalsimWorkerFactory,
   ]);
 
@@ -1979,6 +2008,12 @@ function App() {
               globalsimUncoveredCount={globalsimUncoveredCount}
               threads={globalsimThreads}
               setThreads={setGlobalsimThreads}
+              simServer={{
+                url: simServerUrl, setUrl: setSimServerUrl,
+                token: simServerToken, setToken: setSimServerToken,
+                online: simServerOnline, cores: simServerCores, tokenNeeded: simServerTokenNeeded,
+                check: () => { void checkSimServer(); },
+              }}
               mode={mode}
             />
 
