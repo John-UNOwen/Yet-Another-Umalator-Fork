@@ -80,6 +80,14 @@ export interface SeedCompactRecord {
 	 */
 	tail?: number[][] | null;
 	/**
+	 * Skill-optimizer lead-margin proxy (SKILL-OPTIMIZER-PLAN §6.1): the best
+	 * (minimum) finishTimeRaw among the OTHER field runners in this race. The
+	 * optimizer's screening objective ℓ (a continuous proxy for finish order
+	 * that keeps working against a strong field, where a "win" is rare) derives
+	 * from it; compare/chart ignore it. Absent on old pkg / errored seeds.
+	 */
+	bestRivalFinishTimeRaw?: number;
+	/**
 	 * Head-to-head layout only: the OTHER player's finish metadata + tail from
 	 * the SAME race (workerCore's secondPlayerIndex extraction). Its `error`
 	 * marks a race whose second player could not be read.
@@ -388,6 +396,38 @@ export function ci95(mean: number, stdDev: number, n: number): [number, number] 
 	if (n <= 0) return [NaN, NaN];
 	const half = 1.96 * stdDev / Math.sqrt(n);
 	return [mean - half, mean + half];
+}
+
+/**
+ * Skill-optimizer lead margin ℓ in LENGTHS (SKILL-OPTIMIZER-PLAN §6.1) — a
+ * CONTINUOUS proxy for finish order against a 9-strong field:
+ *
+ *     ℓ = (bestRivalT − ownT) × player finishing speed / LENGTH_M
+ *
+ * The Δt→m conversion is metrics.ts's own rule (pairMargin's delta form); the
+ * speed is the player's tail speed AT the finish (tail[0], dtBefore = 0), or
+ * the mean race speed (distance / ownT) when the record has no tail.
+ * ℓ > 0 ⇔ the player finished 1st; magnitude scales the gap instead of
+ * saturating at 0/1 the way raw win-rate does at strong fields. Only the
+ * ORDERING it induces is load-bearing (P1: it never reports a result —
+ * verification uses the selected objective on fresh seeds). Returns null when
+ * the record predates the field or errored; callers treat null as "seed
+ * unusable", never as 0.
+ */
+export function leadMarginL(rec: SeedCompactRecord, distanceM: number): number | null {
+	const own = rec.finishTimeRaw;
+	const rival = rec.bestRivalFinishTimeRaw;
+	if (typeof own !== 'number' || typeof rival !== 'number'
+		|| !Number.isFinite(own) || !Number.isFinite(rival)
+		|| !(distanceM > 0) || !(own > 0)) {
+		return null;
+	}
+	const deltaT = rival - own; // > 0 ⇒ the player beat the best rival
+	if (Math.abs(deltaT) < 1e-9) return 0;
+	const speed = rec.tail && rec.tail.length > 0 && Number.isFinite(rec.tail[0][2])
+		? rec.tail[0][2]
+		: distanceM / own;
+	return deltaT * speed / LENGTH_M;
 }
 
 export interface CompareSummary {

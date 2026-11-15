@@ -155,6 +155,18 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			startDelayTime: res.startDelayTime ?? 0,
 			tail: tail && tail.length ? tail : null,
 		};
+		// Lead-margin proxy field (metrics.leadMarginL; optimizer screening):
+		// rival = every field runner except the player. Key presence must match
+		// wasm run_compact exactly (compact-parity pins the two paths).
+		if (Array.isArray(reply.results)) {
+			let bestRival: number | undefined;
+			for (let i = 0; i < reply.results.length; i++) {
+				if (i === pi) continue;
+				const t = reply.results[i] && reply.results[i].finishTimeRaw;
+				if (typeof t === 'number' && Number.isFinite(t) && (bestRival === undefined || t < bestRival)) bestRival = t;
+			}
+			if (bestRival !== undefined) rec.bestRivalFinishTimeRaw = bestRival;
+		}
 		// Head-to-head layout: the other player's finish metadata + own tail
 		// from the SAME race (pairMargin needs the loser's tail whichever
 		// player loses). A missing second player errors only this seed.

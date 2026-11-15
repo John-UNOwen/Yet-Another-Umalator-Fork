@@ -27,7 +27,7 @@ import { HorseState, SkillSet } from '../../../../components/HorseDefTypes';
 import { GroundCondition, Weather, Season, Time } from '../../../../uma-skill-tools/RaceParameters';
 import { parseMobPresets } from './mobs';
 import { createGlobalsimWorkerCore, WasmApi } from './workerCore';
-import { SeedCompactRecord } from './metrics';
+import { SeedCompactRecord, leadMarginL } from './metrics';
 import { buildCompareJobs, GlobalsimCompareInput } from './compare';
 
 const repoRoot = path.resolve(__dirname, '../../../../');
@@ -124,6 +124,16 @@ test('mob layout: wasm run_compact records deepStrictEqual JS extractCompact', a
 	t.equal(viaWasm.length, seeds.length, 'one record per seed');
 	t.ok(viaWasm.every(r => typeof (r as any).finishTimeRaw === 'number'), 'records carry finish metadata');
 	t.ok(viaWasm.some(r => Array.isArray(r.tail) && r.tail.length === 41), 'tail grid (41 samples) sampled in both paths');
+	// Lead-margin proxy field: must be PRESENT (both paths) and usable, not
+	// silently skipped — otherwise the optimizer screens on all-null ℓ.
+	const leadable = viaWasm.filter(r => !r.error);
+	t.ok(leadable.length > 0 && leadable.every(r =>
+		typeof r.bestRivalFinishTimeRaw === 'number' && Number.isFinite(r.bestRivalFinishTimeRaw)),
+	'bestRivalFinishTimeRaw present and finite on every ok record');
+	t.ok(leadable.every(r => {
+		const l = leadMarginL(r, 2000);
+		return l !== null && Number.isFinite(l) && Math.sign(l) === (typeof r.finishOrder === 'number' && r.finishOrder === 1 ? 1 : -1);
+	}), 'leadMarginL finite and sign-consistent with finishOrder===1');
 	t.end();
 });
 

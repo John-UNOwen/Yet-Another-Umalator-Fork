@@ -259,6 +259,22 @@ fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, se
     let tail = sample_tail(packet, frame_count, horse_count, meta_len, pi, finish);
     out.insert("tail".into(), if tail.is_empty() { serde_json::Value::Null } else { serde_json::json!(tail) });
 
+    // Lead-margin proxy field (metrics.leadMarginL; optimizer screening) —
+    // rival = every field runner except the player. Key presence and value
+    // selection mirror the JS extractCompact loop exactly (compact-parity).
+    if let Some(results) = v.get("results").and_then(|x| x.as_array()) {
+        let mut best_rival: Option<f64> = None;
+        for (i, r) in results.iter().enumerate() {
+            if i == pi { continue; }
+            if let Some(t) = r.get("finishTimeRaw").and_then(|x| x.as_f64()) {
+                if t.is_finite() && best_rival.map_or(true, |b| t < b) { best_rival = Some(t); }
+            }
+        }
+        if let Some(t) = best_rival {
+            out.insert("bestRivalFinishTimeRaw".into(), serde_json::json!(t));
+        }
+    }
+
     if second_player_index >= 0 {
         let si = second_player_index as usize;
         let mut opp = match finish_block(&v, si, true) {
