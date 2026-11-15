@@ -65,9 +65,9 @@ interface Instance {
 	ranked: { ids: string[]; mu: number }[];
 }
 
-function genInstance(seed: number): Instance {
+function genInstance(seed: number, nMin = 8, nMax = 17): Instance {
 	const rng = mulberry(seed);
-	const nOpts = 8 + Math.floor(rng() * 9); // 8..16 options
+	const nOpts = nMin + Math.floor(rng() * (nMax - nMin)); // options
 	const options: OptOption[] = [];
 	const groupOf = new Map<string, string>();
 	const groupCount: string[] = [];
@@ -132,21 +132,25 @@ function genInstance(seed: number): Instance {
 		return m;
 	};
 
-	// exact enumeration of every feasible (group-exclusive) build
+	// exact enumeration of every feasible (group-exclusive) build — small
+	// instances only (the product over groups explodes at 30+ options; the
+	// medium-instance test uses the random+hillclimb baseline instead).
 	const ranked: { ids: string[]; mu: number }[] = [];
-	const groupList = [...groups.values()];
-	const walk = (gi: number, sel: string[], cost: number) => {
-		if (gi === groupList.length) { ranked.push({ ids: [...sel], mu: mu(simIdentity(space, sel)) }); return; }
-		walk(gi + 1, sel, cost); // pick none
-		for (const o of groupList[gi]) {
-			if (cost + o.cost > budget) continue;
-			sel.push(o.id);
-			walk(gi + 1, sel, cost + o.cost);
-			sel.pop();
-		}
-	};
-	walk(0, [], 0);
-	ranked.sort((a, b) => b.mu - a.mu || (a.ids.join() < b.ids.join() ? -1 : 1));
+	if (nOpts <= 18) {
+		const groupList = [...groups.values()];
+		const walk = (gi: number, sel: string[], cost: number) => {
+			if (gi === groupList.length) { ranked.push({ ids: [...sel], mu: mu(simIdentity(space, sel)) }); return; }
+			walk(gi + 1, sel, cost); // pick none
+			for (const o of groupList[gi]) {
+				if (cost + o.cost > budget) continue;
+				sel.push(o.id);
+				walk(gi + 1, sel, cost + o.cost);
+				sel.pop();
+			}
+		};
+		walk(0, [], 0);
+		ranked.sort((a, b) => b.mu - a.mu || (a.ids.join() < b.ids.join() ? -1 : 1));
+	}
 	return { space, mu, ranked };
 }
 
@@ -220,7 +224,7 @@ class OracleEval implements SearchEvaluator {
 		const gain = obj === 'gainVsCurrent' && vs ? this.paired(ns, _si, build, vs, v => v.lead) : null;
 		return objectiveOf(st, obj, gain);
 	}
-	dispose(): void { /* nothing external */ }
+	dispose(): void { this.table.clear(); } // free seed slots between instances
 }
 
 // ── the harness ─────────────────────────────────────────────────────────────
@@ -228,7 +232,7 @@ class OracleEval implements SearchEvaluator {
 const TEST_CFG: EffortConfig = {
 	preset: 'standard',
 	// Standard-scale knobs (plan §11); verification trimmed for test runtime.
-	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, beam: 0,
+	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, fMaxRounds: 3, beam: 0,
 	gSeedsMin: 2000, gSeedsCap: 6000, batchCap: 5000, surrogate: false, timeBudgetMs: Infinity,
 	screenRound1Seeds: 25, screenRound2Seeds: 175, screenFilterMaxL: 0.1, screenFilterSpreadL: 0.1,
 	noiseSeeds: 120, noiseVariants: 3,
@@ -321,5 +325,67 @@ test('meanLead objective also finds the true latent best (ties allowed)', async 
 	const recMu = inst.mu(res.best.build.id);
 	// Under CRN Gaussian noise the paired ℓ CI resolves ~0.15 L at these seed counts.
 	t.ok(recMu >= truthMu - 0.2, `rec μ ${recMu.toFixed(2)} ≥ true ${truthMu.toFixed(2)} − 0.2`);
+	t.end();
+});
+
+// §13.1 second clause: on 30–40-option instances (no longer enumerable in test
+// time) the optimizer must reach within δ_min of a strong external baseline —
+// random restarts + exhaustive add/drop/swap hill climbing on the exact μ
+// model. This is the Stage F (local search) stress test.
+test('medium instances (30–40 options): within δ_min of random+hillclimb baseline (§13.1)', async t => {
+	const costOf = (space: BuildSpace, sel: string[]) => sel.reduce((a, id) => a + (space.byId.get(id)?.cost ?? 0), 0);
+	const onePerGroup = (space: BuildSpace, sel: string[]) => {
+		const g = new Set<string>();
+		for (const id of sel) {
+			const gid = space.byId.get(id)!.groupId;
+			if (g.has(gid)) return false;
+			g.add(gid);
+		}
+		return true;
+	};
+	/** Exact-μ hill climb over add/drop/swap moves from a starting selection. */
+	const hillclimb = (inst: Instance, start: string[]): number => {
+		let cur = [...start];
+		let curMu = inst.mu(simIdentity(inst.space, cur));
+		for (;;) {
+			let best = cur, bestMu = curMu;
+			for (const o of inst.space.options) {
+				if (o.forced) continue;
+				const has = cur.includes(o.id);
+				const base = has ? cur.filter(x => x !== o.id) : cur; // drop, or add with eviction
+				const trial = has ? base : base.filter(x => inst.space.byId.get(x)?.groupId !== o.groupId).concat(o.id);
+				if (costOf(inst.space, trial) > inst.space.budget || !onePerGroup(inst.space, trial)) continue;
+				const m = inst.mu(simIdentity(inst.space, trial));
+				if (m > bestMu + 1e-12) { best = trial; bestMu = m; }
+			}
+			if (bestMu <= curMu + 1e-12) return curMu;
+			cur = best; curMu = bestMu;
+		}
+	};
+	const MED_CFG: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, fMaxRounds: 3, batchCap: 1200, gSeedsMin: 700, gSeedsCap: 1600 };
+	let misses = 0;
+	for (let i = 0; i < 5; i++) {
+		const inst = genInstance(555000 + i * 131, 30, 41); // 30..40 options
+		// External baseline: random greedy restarts → hill climb, best kept.
+		const rng = mulberry(9001 + i);
+		let baseline = -Infinity;
+		for (let r = 0; r < 400; r++) {
+			const order = inst.space.options.filter(o => !o.forced).sort(() => rng() - 0.5);
+			const sel: string[] = [];
+			for (const o of order) {
+				if (rng() < 0.5) continue;
+				const trial = sel.filter(x => inst.space.byId.get(x)?.groupId !== o.groupId).concat(o.id);
+				if (costOf(inst.space, trial) <= inst.space.budget) sel.length = 0, sel.push(...trial);
+			}
+			baseline = Math.max(baseline, hillclimb(inst, sel));
+		}
+		const ev = new OracleEval(inst);
+		const res = await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'meanLead', aggregation: 'mean', effort: MED_CFG }, createController(), () => undefined);
+		const recMu = inst.mu(res.best.build.id);
+		if (recMu < baseline - MED_CFG.deltaMinL - 0.15) { misses++; console.log(`  MED MISS #${i}: rec μ ${recMu.toFixed(2)} < baseline ${baseline.toFixed(2)} (Δ ${(baseline - recMu).toFixed(2)})`); }
+		t.ok(res.best.leftover >= 0, `instance ${i}: never over budget`);
+		ev.dispose();
+	}
+	t.ok(misses === 0, `all medium instances within δ_min + verify margin of the baseline (misses=${misses}/5)`);
 	t.end();
 });

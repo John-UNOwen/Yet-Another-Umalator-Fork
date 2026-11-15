@@ -30,6 +30,8 @@ export interface EffortConfig {
 	restarts: number;
 	/** Stage D re-pick rounds. */
 	dMaxIters: number;
+	/** Stage F local-search rounds per restart (0 = Stage F off, as in Quick). */
+	fMaxRounds: number;
 	/** Stage F beam width (0 = plain hill climb). */
 	beam: number;
 	/** Stage G verification seeds: minimum per scenario, then hard cap. */
@@ -65,21 +67,21 @@ const SCREEN_COMMON = {
 
 export const QUICK: EffortConfig = {
 	preset: 'quick',
-	deltaMinL: 0.05, restarts: 1, dMaxIters: 1, beam: 0,
+	deltaMinL: 0.05, restarts: 1, dMaxIters: 1, fMaxRounds: 0, beam: 0,
 	gSeedsMin: 1000, gSeedsCap: 2000, batchCap: 2000, surrogate: false,
 	timeBudgetMs: 60_000, ...SCREEN_COMMON,
 };
 
 export const STANDARD: EffortConfig = {
 	preset: 'standard',
-	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, beam: 0,
+	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, fMaxRounds: 3, beam: 0,
 	gSeedsMin: 3000, gSeedsCap: 10000, batchCap: 5000, surrogate: true,
 	timeBudgetMs: 5 * 60_000, ...SCREEN_COMMON,
 };
 
 export const THOROUGH: EffortConfig = {
 	preset: 'thorough',
-	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, beam: 6,
+	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, fMaxRounds: 4, beam: 6,
 	gSeedsMin: 5000, gSeedsCap: 20000, batchCap: 10000, surrogate: true,
 	timeBudgetMs: 20 * 60_000, ...SCREEN_COMMON,
 };
@@ -87,7 +89,7 @@ export const THOROUGH: EffortConfig = {
 /** Thorough sizes, no deadline, verification grows to the cap. */
 export const UNTIL_STOPPED: EffortConfig = {
 	preset: 'untilStopped',
-	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, beam: 6,
+	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, fMaxRounds: 4, beam: 6,
 	gSeedsMin: 5000, gSeedsCap: 20000, batchCap: 10000, surrogate: true,
 	timeBudgetMs: Infinity, ...SCREEN_COMMON,
 };

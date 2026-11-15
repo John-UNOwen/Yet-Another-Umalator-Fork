@@ -261,14 +261,58 @@ export async function runOptimizer(
 	}
 	emit('knapsack', `${startBuilds.length} restart points`, provisional(startBuilds[startBuilds.length - 1]));
 
-	// ── Stage D: in-context re-measure, then re-pick (per restart) ────────────
+	// ── Stage D+F: in-context search per restart (plan §8: restarts run D–F
+	//    from each start while the budget remains; global best across them) ──
 	startBuilds.forEach((b, i) => dbg('start', i, b.id || '(base)'));
+	const histAdopted = new Set<string>(); // §8F history heuristic: skills that already paid off
 	for (let s = 0; s < startBuilds.length; s++) {
 		if (ctrl.stopped()) break;
+		if (Date.now() - t0 > cfg.timeBudgetMs) { dbg('time budget hit at restart', s); break; }
 		let X = startBuilds[s];
 		const value = new Map<string, number>();   // in-context option values (ℓ deltas)
 		const valueN = new Map<string, number>();  // …and the seed count each was measured at
+		// In-context value for knapsack/move estimates: a measurement at n seeds
+		// is shrunk toward the out-of-context v⁰ (pseudo-count 25) — deep-ladder
+		// survivors are trusted, 50-seed strays are damped.
+		const ctxVal = (id: string): number => {
+			const m = value.get(id);
+			if (m == null) return v0.get(id)?.mean ?? 0;
+			const p = v0.get(id);
+			if (!p) return m;
+			const n = valueN.get(id) ?? 0;
+			return (n * m + 25 * p.mean) / (n + 25);
+		};
+		/** Fold bandit outcomes into the value maps (D and F share the semantics). */
+		const applyMeasured = (
+			outcomes: { build: BuildRefLite; diff: PairedDiff }[],
+			dropOf: Map<string, string>,
+			addedOf: Map<string, { opt: string; replaced?: string; pairWith?: string }>,
+		) => {
+			for (const out of outcomes) {
+				const drop = dropOf.get(out.build.id);
+				if (drop != null) { value.set(drop, -out.diff.mean); valueN.set(drop, out.diff.n); } // ℓ(X) − ℓ(X−i)
+			}
+			// Singles first, then pairs (a direct single measurement always
+			// beats the pair's half-split floor estimate — two passes, no race).
+			for (const out of outcomes) {
+				const add = addedOf.get(out.build.id);
+				if (!add || add.pairWith) continue;
+				// Δ of X−i+j vs X is v_j − v_i; put v_i back when it was measured
+				// (or fall back to the out-of-context v⁰) so the knapsack gets v_j.
+				const back = add.replaced ? (value.get(add.replaced) ?? v0.get(add.replaced)?.mean ?? 0) : 0;
+				value.set(add.opt, out.diff.mean + back); valueN.set(add.opt, out.diff.n);
+			}
+			for (const out of outcomes) {
+				const add = addedOf.get(out.build.id);
+				if (!add || !add.pairWith) continue;
+				// Pair add Δ splits half/half as a floor estimate — never
+				// overwrite a direct single-option measurement.
+				if (!value.has(add.opt)) { value.set(add.opt, out.diff.mean / 2); valueN.set(add.opt, out.diff.n); }
+				if (!value.has(add.pairWith)) { value.set(add.pairWith, out.diff.mean / 2); valueN.set(add.pairWith, out.diff.n); }
+			}
+		};
 		for (let it = 0; it < cfg.dMaxIters; it++) {
+			if (Date.now() - t0 > cfg.timeBudgetMs) break;
 			emit('incontext', `restart ${s + 1}/${startBuilds.length} round ${it + 1}/${cfg.dMaxIters}`, provisional(X));
 			// Neighbourhood: drop each owned pick, add each uncovered option
 			// (over-budget adds evaluated too — the number feeds the re-solve).
@@ -319,40 +363,9 @@ export async function runOptimizer(
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
 				candidates: cands.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
 			})).measured; // eliminated candidates' numbers feed the re-solve too (§8D)
-			for (const out of outcomes) {
-				const drop = dropOf.get(out.build.id);
-				if (drop != null) { value.set(drop, -out.diff.mean); valueN.set(drop, out.diff.n); } // ℓ(X) − ℓ(X−i)
-			}
-			// Singles first, then pairs (a direct single measurement always
-			// beats the pair's half-split floor estimate — two passes, no race).
-			for (const out of outcomes) {
-				const add = addedOf.get(out.build.id);
-				if (!add || add.pairWith) continue;
-				// Δ of X−i+j vs X is v_j − v_i; put v_i back when it was measured
-				// (or fall back to the out-of-context v⁰) so the knapsack gets v_j.
-				const back = add.replaced ? (value.get(add.replaced) ?? v0.get(add.replaced)?.mean ?? 0) : 0;
-				value.set(add.opt, out.diff.mean + back); valueN.set(add.opt, out.diff.n);
-			}
-			for (const out of outcomes) {
-				const add = addedOf.get(out.build.id);
-				if (!add || !add.pairWith) continue;
-				// Pair add Δ splits half/half as a floor estimate — never
-				// overwrite a direct single-option measurement.
-				if (!value.has(add.opt)) { value.set(add.opt, out.diff.mean / 2); valueN.set(add.opt, out.diff.n); }
-				if (!value.has(add.pairWith)) { value.set(add.pairWith, out.diff.mean / 2); valueN.set(add.pairWith, out.diff.n); }
-			}
+			applyMeasured(outcomes, dropOf, addedOf);
 			for (const out of outcomes) dbg('  meas', out.survived ? '+' : '-', out.build.id || '(base)', 'Δ', out.diff.mean.toFixed(3), 'n', out.diff.n);
-			// Re-solve the knapsack with in-context values. A measurement at n
-			// seeds is shrunk toward the out-of-context v⁰ (pseudo-count 25) —
-			// deep-ladder survivors are trusted, 50-seed strays are damped.
-			const ctxVal = (id: string): number => {
-				const m = value.get(id);
-				if (m == null) return v0.get(id)?.mean ?? 0;
-				const p = v0.get(id);
-				if (!p) return m;
-				const n = valueN.get(id) ?? 0;
-				return (n * m + 25 * p.mean) / (n + 25);
-			};
+			// Re-solve the knapsack with in-context values.
 			const groups: KnapGroup[] = knapGroups().map(g => ({
 				...g,
 				options: g.options.map(o => ({ ...o, value: ctxVal(o.id) })),
@@ -387,8 +400,43 @@ export async function runOptimizer(
 				}
 			}
 			if (adoptedNow) {
+				for (const id of X.selection) if (!histAdopted.has(id)) histAdopted.add(id);
 				emit('incontext', `adopted`, provisional(X));
 			} else break;
+		}
+
+		// ── Stage F: local search over richer moves (§8F) ─────────────────────
+		// Order: estimated Σv_added − Σv_removed (+history bonus), surrogate UCB
+		// replaces this in Stage E. Prune: estimated Δ ≤ δ_min. Evaluate
+		// survivors against X with bandit allocation; adopt the best
+		// significant improvement; repeat until nothing passes or rounds run out.
+		for (let fr = 0; fr < cfg.fMaxRounds; fr++) {
+			if (ctrl.stopped() || Date.now() - t0 > cfg.timeBudgetMs) break;
+			const moves = fMoves(space, X, ctxVal, cfg.deltaMinL, histAdopted);
+			if (!moves.length) break;
+			const batch = moves.slice(0, F_BATCH_MAX);
+			emit('local', `restart ${s + 1}/${startBuilds.length} local ${fr + 1}/${cfg.fMaxRounds} (${batch.length}/${moves.length} moves)`, provisional(X));
+			const dropOf = new Map<string, string>();
+			const addedOf = new Map<string, { opt: string; replaced?: string; pairWith?: string }>();
+			for (const mv of batch) {
+				if (mv.adds.length === 0 && mv.drops.length === 1) dropOf.set(mv.b.id, mv.drops[0]);
+				else if (mv.adds.length === 1) addedOf.set(mv.b.id, mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
+				else if (mv.adds.length === 2) addedOf.set(mv.b.id, { opt: mv.adds[0], pairWith: mv.adds[1] });
+			}
+			const outcomes = (await banditVsIncumbent(ev, {
+				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
+				candidates: batch.map(m => m.b).sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
+			})).measured;
+			applyMeasured(outcomes, dropOf, addedOf);
+			for (const out of outcomes) dbg('  F', out.build.id || '(base)', 'Δ', out.diff.mean.toFixed(3), 'surv', out.survived ? 1 : 0);
+			// Adopt only a significant improvement (lower CI bound > 0).
+			const sure = outcomes.filter(o => o.survived && o.diff.n >= 2 && o.diff.ci95[0] > 0)
+				.sort((a, b) => b.diff.mean - a.diff.mean);
+			if (!sure.length) break; // no candidate's CI upper beat X ⇒ local optimum (§8F stop)
+			X = sure[0].build;
+			remember(X);
+			for (const id of X.selection) histAdopted.add(id);
+			emit('local', `local adopted`, provisional(X));
 		}
 		remember(X);
 	}
@@ -415,4 +463,81 @@ function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, Bui
 /** Tie flag vs the recommendation itself (post tie-break reorder). */
 function evPairedBest(ev: SearchEvaluator, si: number, best: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null): PairedDiff | null {
 	return ev.paired(NS_VERIFY, si, best, b, pick);
+}
+
+/** Bandit batch width for Stage F local search (kept modest so each move
+ *  gets a meaningful rung before the batch cap; the plan caps by value). */
+const F_BATCH_MAX = 14;
+/** Hard ceiling on generated moves before batching (keeps the O(K·F) sweep
+ *  bounded; the top-F_BATCH_MAX by estimate are what get evaluated). */
+const F_MOVE_CAP = 60;
+
+interface FMove { b: BuildRefLite; est: number; drops: string[]; adds: string[]; }
+
+/** Apply a move (drop ids then add ids) to a selection, honouring group
+ *  exclusivity: adding j first evicts any current pick of j's group. Forced
+ *  skills are implicit (never in `selection`), so locks are untouched. */
+function applyMove(space: BuildSpace, sel: readonly string[], drops: readonly string[], adds: readonly string[]): string[] {
+	const dropSet = new Set(drops);
+	let out = sel.filter(s => !dropSet.has(s));
+	for (const j of adds) {
+		const gj = space.byId.get(j)?.groupId;
+		if (gj == null) continue;
+		out = out.filter(s => space.byId.get(s)?.groupId !== gj);
+		if (!out.includes(j)) out.push(j);
+	}
+	return out.sort();
+}
+
+/** Enumerate the feasible Stage-F neighbourhood of X (§8F), ordered best
+ *  estimate first. Estimates use in-context ctxVal with a small history
+ *  bonus on skills that improved earlier builds. Pruning (est ≤ δ_min) and
+ *  feasibility (over budget) drop moves before any race is run. */
+function fMoves(
+	space: BuildSpace,
+	X: BuildRefLite,
+	ctxVal: (id: string) => number,
+	deltaMinL: number,
+	hist: ReadonlySet<string>,
+): FMove[] {
+	const Xsel = X.selection;
+	const seen = new Set<string>([X.id]);
+	const free = space.options.filter(o => !o.forced && !Xsel.includes(o.id));
+	const owned = Xsel.filter(id => !space.byId.get(id)?.forced);
+	const pos = [...free].filter(o => ctxVal(o.id) > 0).sort((a, b) => ctxVal(b.id) - ctxVal(a.id));
+	const raw: { drops: string[]; adds: string[] }[] = [];
+	// 1. single adds
+	for (const j of free) raw.push({ drops: [], adds: [j.id] });
+	// 2. single drops
+	for (const i of owned) raw.push({ drops: [i], adds: [] });
+	// 3. replaces: 1-for-1 (cross-group swap; same-group = tier move)
+	for (const i of owned) for (const j of free) raw.push({ drops: [i], adds: [j.id] });
+	// 4. pair adds among the strongest positive options
+	for (let a = 0; a < pos.length && a < 3; a++) for (let c = a + 1; c < pos.length && c < 4; c++) if (pos[a].groupId !== pos[c].groupId) raw.push({ drops: [], adds: [pos[a].id, pos[c].id] });
+	// 5. pair removes within the build
+	for (let a = 0; a < owned.length; a++) for (let c = a + 1; c < owned.length; c++) raw.push({ drops: [owned[a], owned[c]], adds: [] });
+	// 6. uneven: drop one, add two strong (1-for-2)
+	for (const i of owned) {
+		const g2 = pos.filter(o => o.groupId !== space.byId.get(i)?.groupId).slice(0, 3);
+		for (let a = 0; a < g2.length; a++) for (let c = a + 1; c < g2.length; c++) if (g2[a].groupId !== g2[c].groupId) raw.push({ drops: [i], adds: [g2[a].id, g2[c].id] });
+	}
+
+	const out: FMove[] = [];
+	for (const mv of raw) {
+		const sel = applyMove(space, Xsel, mv.drops, mv.adds);
+		const b: BuildRefLite = { id: simIdentity(space, sel), selection: sel };
+		if (seen.has(b.id)) continue;
+		if (!affordable(space, sel)) continue;               // §13.3: never over budget
+		seen.add(b.id);
+		const added = sel.filter(s => !Xsel.includes(s));
+		const removed = Xsel.filter(s => !sel.includes(s));
+		let est = 0;
+		for (const id of added) est += ctxVal(id) + (hist.has(id) ? deltaMinL : 0); // history heuristic (§8F)
+		for (const id of removed) est -= ctxVal(id);
+		if (est <= deltaMinL) continue;                       // optimistic prune (§8F)
+		out.push({ b, est, drops: removed, adds: added });
+	}
+	return out
+		.sort((a, b) => b.est - a.est || (a.b.id < b.b.id ? -1 : 1))
+		.slice(0, F_MOVE_CAP);
 }

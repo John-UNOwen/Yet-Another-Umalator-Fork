@@ -16,14 +16,18 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
 - `cache.ts` — transposition table, position-indexed seed slots, LRU + pins
 - `evaluator.ts` — the only engine path: seed lists (search ∩ verify = ∅),
   missing-seed scheduling through `pool.ts`, SeedValue folding, paired stats
-- `bandit.ts` — successive-halving seed allocation vs the incumbent (§9):
-  every candidate's last Δ (eliminated included) is returned for the Stage D
-  re-solve; LUCB plugs in behind the same result shape (Phase 3)
+- `bandit.ts` — LUCB seed allocation vs the incumbent (§9): exponential
+  chunk growth (×1.5) with a top-UCB rival and an alive-count cap; a candidate
+  is retired once its best lower bound still trails every rival's worst upper
+  bound. Every measured Δ (survivors *and* eliminations) is returned for the
+  Stage D/F knapsack re-solve
 - `surrogate.ts` — ridge+pair-feature model for move ordering (§8 E) — Phase 4, not yet present
-- `search.ts` — Stages B–D + G orchestration (anytime): chart-parity screening,
+- `search.ts` — Stages B–D, F + G orchestration (anytime): chart-parity screening,
   MCKP restarts, in-context drop/add/replace/pair moves with bandit allocation
-  and knapsack re-solve (ℓ is the search currency, §6.1), fresh-seed Stage G
-  verification with honest ties
+  and knapsack re-solve (ℓ is the search currency, §6.1), a Stage-F local
+  search over richer 1-1/1-2/2-1/pair moves (history heuristic, budget-feasible
+  neighbourhood, adopt-only-significant), fresh-seed Stage G verification with
+  honest ties
 - `book.ts` — opening book (localStorage `umalator_v2_optimizer_book`) — Phase 5, not yet present
 
 Outside this directory only three things changed: `workerCore.ts` compact
@@ -60,9 +64,16 @@ fresh numbers).
   live-engine evaluator integration (40 seeds; seconds) + the synthetic
   oracle (`search.oracle.test.ts`: 100 small instances fully enumerated,
   recommendation must be the optimum, within δ_min, or a statistical tie —
-  gate ≥95%; Gaussian noise calibrated to the σ table above, CRN shared field
-  noise + per-build term).
-- `npm run test:optimizer:slow` — Phase-3 real-engine exhaustive check (planned, not yet wired): 3
-  setups × ~12 options fully enumerated (minutes, node).
+  gate ≥95%; plus 5 medium 30–40-option instances checked within δ_min of a
+  random-restart + exhaustive hill-climb baseline, the Stage-F stress;
+  Gaussian noise calibrated to the σ table above — a shared field term that
+  cancels in pairing + a per-build term that survives it, CRN per position).
+- `npm run test:optimizer:slow` — real-engine exhaustive check: 3 setups ×
+  ~12 purchasable options, every affordable build enumerated on the SAME
+  held-out verify seeds; the recommendation must BE the exhaustive best or tie
+  it (paired ℓ CI straddles 0). Objective is meanLead (P(1st) is degenerate
+  for a skill-less base vs the strong default field). Cold-start bound: default
+  1 setup / 9 options / 400 seeds (~4 min, worker_threads); `SLOW_FULL=1` runs
+  the full §13.2 sizing.
 - `npm run test:globalsim-compact` — the record the optimizer reads is
   bit-identical between the wasm and JS extraction paths.

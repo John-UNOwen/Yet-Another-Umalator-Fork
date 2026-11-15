@@ -1,26 +1,27 @@
 /**
  * Seed allocation for a batch of candidates vs one incumbent (SKILL-OPTIMIZER-PLAN
- * §9). First implementation = successive halving behind the plan's interface
- * ("25 → 75 → 200 → … is acceptable … behind the same interface"):
+ * §9, LUCB form):
  *
- *  - every candidate starts at the first ladder rung (50 seeds, or whatever the
+ *  - every candidate starts at the first rung (50 seeds, or whatever the
  *    transposition cache already holds — ensure() skips cached positions for
  *    free, so cached builds start with more);
- *  - each round grows ALL survivors to the next rung (same seed positions for
- *    everyone — comparisons stay paired, P2);
- *  - a survivor whose optimistic Δ vs the incumbent (mean + β·SE, β shrinking
- *    with the seed total — conservative early, §9) is ≤ 0 is dropped; from the
- *    second round on, survivors are additionally halved by Δ;
- *  - end when one survivor's lower bound beats 0 and every rival's upper bound
- *    (resolved winner), when all are dropped, or at the batch seed cap.
+ *  - each round the next chunk goes to the candidate with the highest UCB on
+ *    Δ vs the incumbent, plus its closest rival (the next-highest UCB —
+ *    LUCB-style; the rival is what keeps the resolution honest);
+ *  - candidates are dropped when their optimistic Δ (mean + β·SE, β shrinking
+ *    with the seed total — conservative early, §9) can no longer reach 0 or
+ *    the current best Δ; if more than MAX_ALIVE survive, the weakest UCBs are
+ *    dropped too (cost bound);
+ *  - end when one candidate's lower bound beats 0 and every rival's upper
+ *    bound (resolved winner), when all are dropped, or at the batch seed cap.
  *
- * Eliminated candidates keep their last measured Δ in `measured` — it is a
- * valid paired estimate at that seed count, and the knapsack re-solve needs
- * every number (§8D). LUCB (§9's UCB-targeted chunk picking) plugs in here
- * later behind the same result shape.
+ * Every candidate's last measured Δ — eliminated included — is returned in
+ * `measured`: it is a valid paired estimate at its seed count, and the
+ * knapsack re-solve needs every number (§8D). Chunk growth is exponential
+ * (×1.5), so a batch converges in O(log cap) rounds regardless of alive size.
  */
 
-import { BANDIT_LADDER, EffortConfig } from './config';
+import { BANDIT_CHUNK_SIZE, EffortConfig } from './config';
 import { BuildRefLite, PairedDiff, SearchEvaluator } from './evaluator';
 import { SeedValue } from './types';
 
@@ -33,7 +34,7 @@ export interface BanditOpts {
 	/** Metric for Δ vs the incumbent (searchPick=ℓ, or objPick(obj) in Stage G). */
 	pick: (v: SeedValue) => number | null;
 	cfg: EffortConfig;
-	/** First rung (default: first ladder entry). */
+	/** First rung (default: 50). */
 	startSeeds?: number;
 	/** Observability: called after each round. */
 	onRound?: (survivors: number, seedsUsed: number) => void;
@@ -63,61 +64,89 @@ interface Row {
 }
 
 const Z = 1.96;
+/** Cost bound: never carry more than this many live candidates in a batch. */
+const MAX_ALIVE = 14;
 
 /** §9's shrinking β: conservative (≈2.8) at 50 seeds, Z at ≥300. */
 const beta = (n: number) => Z * Math.sqrt(Math.min(2, 300 / Math.max(1, n)));
 
 /** Run one bandit batch. */
 export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Promise<BanditResult> {
-	const cands = o.candidates.filter(c => c.id !== o.incumbent.id);
+	const seen = new Set<string>([o.incumbent.id]);
+	const cands = o.candidates.filter(c => !seen.has(c.id) && (seen.add(c.id), true));
 	if (!cands.length) return { survivors: [], measured: [] };
-	const ladder = BANDIT_LADDER.filter(r => r <= o.cfg.batchCap);
-	const start = o.startSeeds ?? (ladder[0] ?? o.cfg.batchCap);
-	const rungs = ladder.filter(r => r >= start);
-	if (!rungs.length || rungs[rungs.length - 1] < o.cfg.batchCap) rungs.push(o.cfg.batchCap);
+	const cap = o.cfg.batchCap;
+	const start = Math.min(cap, o.startSeeds ?? BANDIT_CHUNK_SIZE * 5);
 
 	const best = new Map<string, Row>(); // id → last measurement (every candidate)
-	for (const c of cands) best.set(c.id, { build: c, mean: NaN, sem: NaN, n: 0, survived: false });
+	for (const c of cands) best.set(c.id, { build: c, mean: NaN, sem: NaN, n: 0, survived: true });
 
-	let survivors = cands;
-	let rows: Row[] = [];
-	let lastN = 0;
-	for (let ri = 0; ri < rungs.length; ri++) {
-		const r = Math.min(rungs[ri], o.cfg.batchCap);
-		if (r <= lastN) continue;
-		const positions = Array.from({ length: r }, (_, i) => i);
+	// Round 0: everyone gets the start rung (ensure() skips cached positions).
+	{
+		const positions = Array.from({ length: start }, (_, i) => i);
 		await ev.ensure([
-			...survivors.map(c => ({ ns: o.ns, scenarioIdx: o.scenarioIdx, build: c, positions })),
+			...cands.map(c => ({ ns: o.ns, scenarioIdx: o.scenarioIdx, build: c, positions })),
 			{ ns: o.ns, scenarioIdx: o.scenarioIdx, build: o.incumbent, positions },
 		]);
-		const b = beta(r);
-		const scored: Row[] = [];
-		for (const c of survivors) {
+	}
+	let alive = cands;
+	let lastN = start;
+	for (;;) {
+		const rows: Row[] = [];
+		for (const c of alive) {
 			const d = ev.paired(o.ns, o.scenarioIdx, c, o.incumbent, o.pick);
-			if (!d) continue;
-			const row: Row = { build: c, mean: d.mean, sem: d.sem, n: d.n, survived: true };
-			best.set(c.id, row);
-			scored.push(row);
+			if (!d) { best.get(c.id)!.survived = false; continue; }
+			const row = best.get(c.id)!;
+			Object.assign(row, { build: c, mean: d.mean, sem: d.sem, n: d.n, survived: true });
+			rows.push(row);
 		}
-		lastN = r;
-		// Drop anything whose optimistic Δ is still ≤ 0 (§9), then halve.
-		const alive = scored.filter(s => s.mean + b * (s.sem || 0) > 0);
-		const keep = ri === 0 ? alive.length : Math.max(2, Math.ceil(scored.length / 2));
-		for (const s of scored) if (!alive.includes(s)) s.survived = false;
-		rows = alive.sort((x, y) => y.mean - x.mean).slice(0, keep);
-		o.onRound?.(rows.length, r);
+		// Drop: optimistic Δ can't reach 0, nor the current best Δ (LUCB cut
+		// on the leader's lower bound), nor (cost bound) stay in the top UCBs.
+		const up = (r: Row) => r.mean + beta(r.n) * (r.sem || 0);
+		const leader = rows.length ? rows.reduce((a, b) => (b.mean > a.mean ? b : a)) : null;
+		const lcb = leader ? leader.mean - beta(leader.n) * (leader.sem || 0) : 0;
+		const ranked = [...rows].sort((a, b) => up(b) - up(a) || (a.build.id < b.build.id ? -1 : 1));
+		const kept: Row[] = [];
+		for (const r of ranked) {
+			const viable = up(r) > 0 && (r === leader || up(r) >= lcb) && kept.length < MAX_ALIVE;
+			if (viable) kept.push(r);
+			else r.survived = false;
+		}
 		// Resolved: the best survivor's lower bound beats 0 AND every rival's
-		// upper bound (same β — one consistent bar per round).
-		if (rows.length >= 1 && rows[0].n >= 2) {
-			const lo = rows[0].mean - b * rows[0].sem;
-			const restWorst = rows.length === 1 ? -Infinity : Math.max(...rows.slice(1).map(s => s.mean + b * (s.sem || 0)));
+		// upper bound.
+		if (kept.length) {
+			const top = kept.reduce((a, b) => (b.mean > a.mean ? b : a));
+			const lo = top.mean - beta(top.n) * (top.sem || 0);
+			const restWorst = kept.length === 1 ? -Infinity : Math.max(...kept.filter(r => r !== top).map(up));
 			if (lo > 0 && lo >= restWorst - 1e-12) {
-				for (const rw of rows.slice(1)) rw.survived = false; // resolved: only the winner stands
-				return done(best);
+				for (const r of kept) if (r !== top) r.survived = false;
+				break;
 			}
 		}
-		if (!rows.length) return done(best);
-		survivors = rows.map(rw => rw.build);
+		if (!kept.length) break;
+		// LUCB allocation: the top-UCB candidate grows by an exponential
+		// chunk, and so does its closest rival when different.
+		const grow = (r: Row) => Math.min(cap, Math.max(r.n + BANDIT_CHUNK_SIZE, Math.ceil(r.n * 1.5)));
+		const chosen: Row[] = [];
+		for (const r of kept) {
+			if (r.n < cap) chosen.push(r);
+			if (chosen.length >= 2) break;
+		}
+		if (!chosen.length) { alive = kept.map(r => r.build); break; } // everyone capped
+		if (chosen.length === 1) {
+			const rival = kept.find(r => r !== chosen[0] && r.n < cap);
+			if (rival) chosen.push(rival);
+		}
+		const reqs = [];
+		for (const r of chosen) {
+			const newN = grow(r);
+			lastN = Math.max(lastN, newN);
+			reqs.push({ ns: o.ns, scenarioIdx: o.scenarioIdx, build: r.build, positions: Array.from({ length: newN }, (_, i) => i) });
+		}
+		reqs.push({ ns: o.ns, scenarioIdx: o.scenarioIdx, build: o.incumbent, positions: Array.from({ length: lastN }, (_, i) => i) });
+		await ev.ensure(reqs);
+		o.onRound?.(kept.length, lastN);
+		alive = kept.map(r => r.build);
 	}
 	return done(best);
 }
