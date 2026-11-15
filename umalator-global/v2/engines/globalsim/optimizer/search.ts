@@ -8,11 +8,15 @@
  */
 
 import { banditVsIncumbent } from './bandit';
-import { EffortConfig } from './config';
+import {
+	EffortConfig, KAPPA, PRUNE_KAPPA, SURROGATE_MIN_FIT, SURROGATE_MIN_R2,
+	SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
+} from './config';
 import { BuildRefLite, calibrateNoise, PairedDiff, SearchEvaluator } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
 import { affordable, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
+import { fitSurrogate, SurrogateModel, SurrogateSample } from './surrogate';
 import {
 	AggregationKind, MeanSem, NoiseInfo, ObjectiveKind, OptimizerProgress,
 	OptimizerResult, ScoredBuild, SeedValue,
@@ -261,6 +265,42 @@ export async function runOptimizer(
 	}
 	emit('knapsack', `${startBuilds.length} restart points`, provisional(startBuilds[startBuilds.length - 1]));
 
+	// ── Stage E: surrogate model state (§8 E) ─────────────────────────────────
+	// Every cached build with a decent search-ℓ estimate becomes a training
+	// row (mean = ℓ, weight = inverse variance of that mean = n/var). One global
+	// model across restarts (all builds share the cache); refit as the set
+	// grows. Below the R² gate the surrogate stops driving Stage F ordering and
+	// the pipeline falls back to in-context ctxVal (§8 E, plan risk row).
+	const surrTrain = new Map<string, SurrogateSample>();
+	let surrogate: SurrogateModel | null = null;
+	let surrSinceFit = 0;
+	const surrHarvest = (b: BuildRefLite) => {
+		if (!cfg.surrogate || surrTrain.has(b.id)) return;
+		const s = ev.stats(NS_SEARCH, si, b)?.lead;
+		if (!s || s.n < 20 || !Number.isFinite(s.mean) || !Number.isFinite(s.sem)) return;
+		surrTrain.set(b.id, { selection: b.selection, mean: s.mean, weight: 1 / (s.sem * s.sem + 1e-6) });
+		surrSinceFit++;
+	};
+	const surrModel = (): SurrogateModel | null => (surrogate && surrogate.r2 >= SURROGATE_MIN_R2) ? surrogate : null;
+	const surrRefit = () => {
+		if (!cfg.surrogate || surrTrain.size < SURROGATE_MIN_FIT) return;
+		if (surrSinceFit < SURROGATE_REFIT_EVERY && surrogate) return;
+		const m = fitSurrogate([...surrTrain.values()], { minPairCooccur: SURROGATE_PAIR_MIN_COOC, pairCap: SURROGATE_PAIR_CAP });
+		if (m.ok) { surrogate = m; surrSinceFit = 0; dbg('surrogate fit', 'n', m.n, 'R2', m.r2.toFixed(3), 'terms', m.terms); }
+	};
+	// A live surrogate + the incumbent's actual ℓ lets Stage F order moves by
+	// acquisition (gain + κ·SE) and prune on the optimistic bound (§8F α/β).
+	const surrScore = (E: BuildRefLite) => {
+		const m = surrModel();
+		return m ? { model: m, xL: ev.stats(NS_SEARCH, si, E)?.lead.mean ?? m.predict(E.selection).mean } : undefined;
+	};
+	// Seed the first fit from everything already measured (screening adds carry
+	// real out-of-context ℓ), then keep feeding it as D/F measure more.
+	surrHarvest(base);
+	adds.forEach(b => surrHarvest(b));
+	for (const b of startBuilds) surrHarvest(b);
+	surrRefit();
+
 	// ── Stage D+F: in-context search per restart (plan §8: restarts run D–F
 	//    from each start while the budget remains; global best across them) ──
 	startBuilds.forEach((b, i) => dbg('start', i, b.id || '(base)'));
@@ -358,12 +398,34 @@ export async function runOptimizer(
 				for (let a = 0; a < pos.length && a < 3; a++) for (let c = a + 1; c < pos.length; c++) addPair(pos[a], pos[c]);
 				if (it === 0) for (const a of pos.slice(0, 2)) for (const c of free) if (a.id !== c.id) addPair(a, c);
 			}
-			dbg('D s', s, 'it', it, 'X', X.id || '(base)', 'cands', cands.length);
+			// Surrogate-guided candidate pruning (§8 E, applied to the biggest
+			// move consumer, Stage D): once the model clears the R² gate, drop a
+			// neighbour whose OPTIMISTIC predicted gain (prediction + κ·SE) can't
+			// beat X by δ_min — α/β with error bars. Unpruned candidates stay; if
+			// every one is pruned X is already locally optimal. This only decides
+			// what to simulate (P1); the knapsack re-solve still runs on measured
+			// + v⁰ values, and a wrong prune is re-tried next round via v0.
+			const dSm = surrModel();
+			let toMeasure = cands;
+			if (dSm) {
+				const px = dSm.predict(X.selection);
+				toMeasure = cands.filter(b => {
+					if (b.id === X.id) return false;
+					if (!dSm.covers(b.selection)) return true; // unjudged move: never prune
+					const p = dSm.predict(b.selection);
+					const se = Math.sqrt(p.se * p.se + px.se * px.se);
+					return (p.mean - px.mean) + PRUNE_KAPPA * se > cfg.deltaMinL;
+				});
+				if (!toMeasure.length) { dbg('D pruned all cands, locally optimal'); break; }
+			}
+			dbg('D s', s, 'it', it, 'X', X.id || '(base)', 'cands', cands.length, dSm ? '→' + toMeasure.length : '');
 			const outcomes = (await banditVsIncumbent(ev, {
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
-				candidates: cands.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
+				candidates: toMeasure.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
 			})).measured; // eliminated candidates' numbers feed the re-solve too (§8D)
 			applyMeasured(outcomes, dropOf, addedOf);
+			for (const out of outcomes) surrHarvest(out.build);
+			surrHarvest(X); surrRefit();
 			for (const out of outcomes) dbg('  meas', out.survived ? '+' : '-', out.build.id || '(base)', 'Δ', out.diff.mean.toFixed(3), 'n', out.diff.n);
 			// Re-solve the knapsack with in-context values.
 			const groups: KnapGroup[] = knapGroups().map(g => ({
@@ -372,6 +434,7 @@ export async function runOptimizer(
 			}));
 			const sol = mckpSolve(groups, space.budget);
 			const Y = sol ? remember(refOf(selFromKnap(sol.selection.values()))) : X;
+			surrHarvest(Y); surrRefit();
 			if (Y.id === X.id) { dbg('  Y==X, stop'); break; } // the build stopped changing
 			dbg('  re-solve Y', Y.id || '(base)');
 			// Adopt only on a significant improvement (lower CI bound > 0, §8D).
@@ -405,38 +468,61 @@ export async function runOptimizer(
 			} else break;
 		}
 
-		// ── Stage F: local search over richer moves (§8F) ─────────────────────
-		// Order: estimated Σv_added − Σv_removed (+history bonus), surrogate UCB
-		// replaces this in Stage E. Prune: estimated Δ ≤ δ_min. Evaluate
-		// survivors against X with bandit allocation; adopt the best
-		// significant improvement; repeat until nothing passes or rounds run out.
+		// ── Stage F: local search over richer moves (§8F), beam-capable ────────
+		// Frontier = [X] for a plain hill climb (beam ≤ 1), else the top-`beam`
+		// elite pool (plan §8F beam variant for large / Thorough inputs; all
+		// elites share the cache). Order: surrogate acquisition (§8 E) when the
+		// model clears the R² gate, else Σv_added − Σv_removed. Prune on the
+		// optimistic bound. Adopt each elite's best significant improvement.
+		const beamW = Math.max(1, cfg.beam);
+		let frontier: BuildRefLite[] = [X];
+		let prevBest = X.id;
 		for (let fr = 0; fr < cfg.fMaxRounds; fr++) {
 			if (ctrl.stopped() || Date.now() - t0 > cfg.timeBudgetMs) break;
-			const moves = fMoves(space, X, ctxVal, cfg.deltaMinL, histAdopted);
-			if (!moves.length) break;
-			const batch = moves.slice(0, F_BATCH_MAX);
-			emit('local', `restart ${s + 1}/${startBuilds.length} local ${fr + 1}/${cfg.fMaxRounds} (${batch.length}/${moves.length} moves)`, provisional(X));
-			const dropOf = new Map<string, string>();
-			const addedOf = new Map<string, { opt: string; replaced?: string; pairWith?: string }>();
-			for (const mv of batch) {
-				if (mv.adds.length === 0 && mv.drops.length === 1) dropOf.set(mv.b.id, mv.drops[0]);
-				else if (mv.adds.length === 1) addedOf.set(mv.b.id, mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
-				else if (mv.adds.length === 2) addedOf.set(mv.b.id, { opt: mv.adds[0], pairWith: mv.adds[1] });
+			const pool = new Map<string, BuildRefLite>();
+			let anyAdopt = false;
+			for (const E of frontier) {
+				const moves = fMoves(space, E, ctxVal, cfg.deltaMinL, histAdopted, surrScore(E));
+				if (!moves.length) { pool.set(E.id, E); continue; }
+				const batch = moves.slice(0, F_BATCH_MAX);
+				emit('local', `restart ${s + 1}/${startBuilds.length} local ${fr + 1}/${cfg.fMaxRounds}${beamW > 1 ? ` (beam ${frontier.length})` : ''} · ${batch.length}/${moves.length} moves`, provisional(E));
+				const dropOf = new Map<string, string>();
+				const addedOf = new Map<string, { opt: string; replaced?: string; pairWith?: string }>();
+				for (const mv of batch) {
+					if (mv.adds.length === 0 && mv.drops.length === 1) dropOf.set(mv.b.id, mv.drops[0]);
+					else if (mv.adds.length === 1) addedOf.set(mv.b.id, mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
+					else if (mv.adds.length === 2) addedOf.set(mv.b.id, { opt: mv.adds[0], pairWith: mv.adds[1] });
+				}
+				const outcomes = (await banditVsIncumbent(ev, {
+					ns: NS_SEARCH, scenarioIdx: si, incumbent: E,
+					candidates: batch.map(m => m.b).sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
+				})).measured;
+				applyMeasured(outcomes, dropOf, addedOf);
+				for (const out of outcomes) surrHarvest(out.build);
+				surrHarvest(E); surrRefit();
+				for (const out of outcomes) dbg('  F', out.build.id || '(base)', 'Δ', out.diff.mean.toFixed(3), 'surv', out.survived ? 1 : 0);
+				// Adopt only a significant improvement (lower CI bound > 0).
+				const sure = outcomes.filter(o => o.survived && o.diff.n >= 2 && o.diff.ci95[0] > 0)
+					.sort((a, b) => b.diff.mean - a.diff.mean);
+				if (sure.length) {
+					const nb = sure[0].build;
+					remember(nb);
+					pool.set(nb.id, nb); pool.set(E.id, E); // expand: child + parent stay in the pool
+					for (const id of nb.selection) histAdopted.add(id);
+					anyAdopt = true;
+				} else pool.set(E.id, E); // elite is a local optimum: keep it (beam explores siblings)
 			}
-			const outcomes = (await banditVsIncumbent(ev, {
-				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
-				candidates: batch.map(m => m.b).sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
-			})).measured;
-			applyMeasured(outcomes, dropOf, addedOf);
-			for (const out of outcomes) dbg('  F', out.build.id || '(base)', 'Δ', out.diff.mean.toFixed(3), 'surv', out.survived ? 1 : 0);
-			// Adopt only a significant improvement (lower CI bound > 0).
-			const sure = outcomes.filter(o => o.survived && o.diff.n >= 2 && o.diff.ci95[0] > 0)
-				.sort((a, b) => b.diff.mean - a.diff.mean);
-			if (!sure.length) break; // no candidate's CI upper beat X ⇒ local optimum (§8F stop)
-			X = sure[0].build;
+			const ranked = [...pool.values()]
+				.filter(b => affordable(space, b.selection))
+				.map(b => ({ b, l: ev.stats(NS_SEARCH, si, b)?.lead.mean ?? -Infinity }))
+				.sort((a, z) => z.l - a.l || (a.b.id < z.b.id ? -1 : 1))
+				.map(x => x.b);
+			if (!ranked.length) break;
+			frontier = ranked.slice(0, beamW);
+			X = frontier[0];
 			remember(X);
-			for (const id of X.selection) histAdopted.add(id);
-			emit('local', `local adopted`, provisional(X));
+			if (X.id !== prevBest) { emit('local', `local adopted`, provisional(X)); prevBest = X.id; }
+			else if (!anyAdopt) break; // nothing moved and no elite improved ⇒ converged (§8F stop)
 		}
 		remember(X);
 	}
@@ -490,15 +576,18 @@ function applyMove(space: BuildSpace, sel: readonly string[], drops: readonly st
 }
 
 /** Enumerate the feasible Stage-F neighbourhood of X (§8F), ordered best
- *  estimate first. Estimates use in-context ctxVal with a small history
- *  bonus on skills that improved earlier builds. Pruning (est ≤ δ_min) and
- *  feasibility (over budget) drop moves before any race is run. */
+ *  first. With a live surrogate (§8 E) the estimate is the acquisition score
+ *  `predicted gain + κ·SE` and moves are pruned when their optimistic bound
+ *  `prediction + κ_prune·SE` can't beat X's actual ℓ by δ_min — α/β with error
+ *  bars. Without one, fall back to Σ ctxVal_added − Σ ctxVal_removed (§8D)
+ *  pruned at δ_min. A history heuristic nudges skills that paid off earlier. */
 function fMoves(
 	space: BuildSpace,
 	X: BuildRefLite,
 	ctxVal: (id: string) => number,
 	deltaMinL: number,
 	hist: ReadonlySet<string>,
+	surr?: { model: SurrogateModel; xL: number },
 ): FMove[] {
 	const Xsel = X.selection;
 	const seen = new Set<string>([X.id]);
@@ -521,7 +610,13 @@ function fMoves(
 		const g2 = pos.filter(o => o.groupId !== space.byId.get(i)?.groupId).slice(0, 3);
 		for (let a = 0; a < g2.length; a++) for (let c = a + 1; c < g2.length; c++) if (g2[a].groupId !== g2[c].groupId) raw.push({ drops: [i], adds: [g2[a].id, g2[c].id] });
 	}
+	// 7. surrogate synergy pair adds (§8 E) — reach pairs the v⁰>0 flag misses.
+	if (surr) for (const syn of surr.model.synergyPairs(12, deltaMinL)) {
+		const A = space.byId.get(syn.a), C = space.byId.get(syn.b);
+		if (A && C && !A.forced && !C.forced && A.groupId !== C.groupId) raw.push({ drops: [], adds: [A.id, C.id] });
+	}
 
+	const predX = surr ? surr.model.predict(Xsel) : null;
 	const out: FMove[] = [];
 	for (const mv of raw) {
 		const sel = applyMove(space, Xsel, mv.drops, mv.adds);
@@ -531,10 +626,19 @@ function fMoves(
 		seen.add(b.id);
 		const added = sel.filter(s => !Xsel.includes(s));
 		const removed = Xsel.filter(s => !sel.includes(s));
-		let est = 0;
-		for (const id of added) est += ctxVal(id) + (hist.has(id) ? deltaMinL : 0); // history heuristic (§8F)
-		for (const id of removed) est -= ctxVal(id);
-		if (est <= deltaMinL) continue;                       // optimistic prune (§8F)
+		let est: number;
+		if (surr && predX) {
+			const pred = surr.model.predict(sel);
+			const se = Math.sqrt(pred.se * pred.se + predX.se * predX.se);
+			if (surr.model.covers(sel) && pred.mean + PRUNE_KAPPA * se < surr.xL + deltaMinL) continue; // α/β with error bars (§8F)
+			est = (pred.mean - predX.mean) + KAPPA * se;                      // acquisition ordering (§8 E)
+			for (const id of added) if (hist.has(id)) est += deltaMinL;        // history tiebreak (§8F)
+		} else {
+			est = 0;
+			for (const id of added) est += ctxVal(id) + (hist.has(id) ? deltaMinL : 0); // history heuristic (§8F)
+			for (const id of removed) est -= ctxVal(id);
+			if (est <= deltaMinL) continue;                                    // optimistic prune (§8F)
+		}
 		out.push({ b, est, drops: removed, adds: added });
 	}
 	return out

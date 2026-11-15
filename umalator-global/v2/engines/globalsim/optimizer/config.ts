@@ -126,6 +126,10 @@ export const CACHE_CAP_BYTES = 100 * 1024 * 1024;
 export const CACHE_PIN_TOP = 50;
 /** Stage E: refit the surrogate every N new evaluated builds. */
 export const SURROGATE_REFIT_EVERY = 20;
+/** Stage E: ridge penalty on the option/pair coefficients (intercept unpenalized). */
+export const SURROGATE_LAMBDA = 0.5;
+/** Stage E: minimum labeled builds before the surrogate can drive ordering. */
+export const SURROGATE_MIN_FIT = 12;
 /** Stage E: min co-occurrences in cache before a pair term is considered. */
 export const SURROGATE_PAIR_MIN_COOC = 8;
 /** Stage E: pair-term cap (~300, plan). */

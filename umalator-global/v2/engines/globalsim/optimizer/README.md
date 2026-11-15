@@ -21,13 +21,18 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
   is retired once its best lower bound still trails every rival's worst upper
   bound. Every measured Δ (survivors *and* eliminations) is returned for the
   Stage D/F knapsack re-solve
-- `surrogate.ts` — ridge+pair-feature model for move ordering (§8 E) — Phase 4, not yet present
-- `search.ts` — Stages B–D, F + G orchestration (anytime): chart-parity screening,
+- `surrogate.ts` — Bayesian ridge on cached build ℓ: per-option indicators +
+  pair-interaction terms (co-occurring ≥ m builds, capped by |coef|), closed-form
+  posterior, weighted 5-fold holdout R², synergy flags (§8 E). Drives Stage D/F
+  move ordering (acquisition gain + κ·SE) and α/β-with-error-bars pruning
+  below the R²=0.3 gate it falls back to in-context values; it only ever
+  decides what to simulate (P1) and never prunes an option it hasn't learned
+- `search.ts` — Stages B–F + G orchestration (anytime): chart-parity screening,
   MCKP restarts, in-context drop/add/replace/pair moves with bandit allocation
   and knapsack re-solve (ℓ is the search currency, §6.1), a Stage-F local
   search over richer 1-1/1-2/2-1/pair moves (history heuristic, budget-feasible
-  neighbourhood, adopt-only-significant), fresh-seed Stage G verification with
-  honest ties
+  neighbourhood, adopt-only-significant, surrogate-ordered, beam-capable),
+  fresh-seed Stage G verification with honest ties
 - `book.ts` — opening book (localStorage `umalator_v2_optimizer_book`) — Phase 5, not yet present
 
 Outside this directory only three things changed: `workerCore.ts` compact
@@ -61,13 +66,27 @@ fresh numbers).
 ## Tests
 
 - `npm run test:optimizer` — pure units (space/knapsack/cache/stats) + the
-  live-engine evaluator integration (40 seeds; seconds) + the synthetic
+  live-engine evaluator integration (40 seeds; seconds) + the surrogate units
+  (`surrogate.test.ts`: additive recovery, planted-synergy lift, noise fails the
+  R² gate, inverse-variance weighting, graceful degradation) + the synthetic
   oracle (`search.oracle.test.ts`: 100 small instances fully enumerated,
   recommendation must be the optimum, within δ_min, or a statistical tie —
-  gate ≥95%; plus 5 medium 30–40-option instances checked within δ_min of a
-  random-restart + exhaustive hill-climb baseline, the Stage-F stress;
-  Gaussian noise calibrated to the σ table above — a shared field term that
-  cancels in pairing + a per-build term that survives it, CRN per position).
+  gate ≥95%; 5 medium 30–40-option instances vs a random-restart + exhaustive
+  hill-climb baseline; a Stage-F beam check; and the surrogate on/off race
+  comparison; Gaussian noise calibrated to the σ table above — a shared field
+  term that cancels in pairing + a per-build term that survives it, CRN per
+  position).
+
+Surrogate race findings (measured, in-suite): at the engine's real noise band the
+posterior SE is too wide to certify any move hopeless, so the surrogate is
+quality-safe but race-neutral (its acquisition only reshuffles the search).
+Once the model is trustworthy (large cache / low variance) its α/β pruning cuts
+~20% of search races with zero quality loss. The plan's ≤70%-of-Phase-3 target is
+production-scale (a real Standard run is Stage-D+F-bound); this harness's fixed
+Stage-B screening and the bandit's per-candidate seed floor hold the synthetic
+ratio above it — the assertion pins the always-holds property (real cut, no
+quality loss), not the aspiration.
+
 - `npm run test:optimizer:slow` — real-engine exhaustive check: 3 setups ×
   ~12 purchasable options, every affordable build enumerated on the SAME
   held-out verify seeds; the recommendation must BE the exhaustive best or tie
