@@ -9,7 +9,7 @@
 
 import { banditVsIncumbent } from './bandit';
 import {
-	EffortConfig, KAPPA, PRUNE_KAPPA, SURROGATE_MIN_FIT, SURROGATE_MIN_R2,
+	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA, SURROGATE_MIN_FIT, SURROGATE_MIN_R2,
 	SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
 import { BuildRefLite, calibrateNoise, PairedDiff, SearchEvaluator } from './evaluator';
@@ -35,15 +35,41 @@ export function objPick(obj: ObjectiveKind): (v: SeedValue) => number | null {
 	}
 }
 
+/**
+ * Aggregate a build's per-scenario objective means into one comparable value
+ * (§6.4). Higher is always better (the caller's pick already sign-normalises).
+ *  - mean: plain average across scenarios.
+ *  - maximin: the worst scenario (robust "must not collapse anywhere").
+ *  - blend: (1−λ)·mean + λ·min, λ = LAMBDA_MAXIMIN by default.
+ * Empty input → −Infinity (an unmeasurable build loses, never wins).
+ */
+export function aggregateValues(values: readonly number[], aggregation: AggregationKind, lambda = LAMBDA_MAXIMIN): number {
+	const v = values.filter(Number.isFinite);
+	if (!v.length) return -Infinity;
+	const mean = v.reduce((a, b) => a + b, 0) / v.length;
+	if (aggregation === 'mean' || v.length === 1) return mean;
+	const min = Math.min(...v);
+	if (aggregation === 'maximin') return min;
+	return (1 - lambda) * mean + lambda * min;
+}
+
 export interface SearchInput {
 	space: BuildSpace;
-	/** Scenario to optimize against (Phase 5 generalizes to the scenario set). */
+	/** Scenario to optimize against. When `scenarioIdxs` is absent, this single
+	 *  scenario is the whole scenario set (the common default, §6.3). */
 	scenarioIdx: number;
+	/** Scenario set for robustness (§6.3). Each is searched; the recommendation
+	 *  then aggregates across them by `aggregation` (§6.4). Empty/omitted → [scenarioIdx]. */
+	scenarioIdxs?: number[];
 	objective: ObjectiveKind;
 	aggregation: AggregationKind;
 	effort: EffortConfig;
 	/** The user's current build (gainVsCurrent pairs against it). */
 	current?: BuildRefLite;
+	/** Stage A opening-book starts (§8 A): affordable prior builds used as extra
+	 *  restart points. They only seed the search; every decision is still made
+	 *  by simulation (P1). Affordability is re-checked against the current space. */
+	bookStarts?: readonly string[][];
 }
 
 export interface SearchController {
@@ -92,7 +118,8 @@ function spearman(xs: number[], ys: number[]): number {
 	return sxx && syy ? sxy / Math.sqrt(sxx * syy) : NaN;
 }
 
-export async function runOptimizer(
+/** Full B–F+G pipeline for ONE scenario (§6.3: the scenario set loops this). */
+async function runSingleScenario(
 	ev: SearchEvaluator,
 	input: SearchInput,
 	ctrl: SearchController,
@@ -261,6 +288,17 @@ export async function runOptimizer(
 	const startBuilds: BuildRefLite[] = [base];
 	for (const sol of mckpTopK(knapGroups(), space.budget, Math.max(1, cfg.restarts))) {
 		const b = remember(refOf(selFromKnap(sol.selection.values())));
+		if (!startBuilds.some(s => s.id === b.id)) startBuilds.push(b);
+	}
+	// Stage A opening book (§8 A): prior strong builds become extra restart
+	// points when still affordable + legal. Re-filtered against the CURRENT
+	// space, so a stale book entry can only ever be skipped, never misused.
+	for (const sel of input.bookStarts ?? []) {
+		if (startBuilds.length >= cfg.restarts + 5) break;
+		const clean = sel.filter(id => space.byId.has(id) && !space.byId.get(id)?.forced);
+		if (!clean.length) continue;
+		const b = remember(refOf(clean));
+		if (!affordable(space, b.selection)) continue;
 		if (!startBuilds.some(s => s.id === b.id)) startBuilds.push(b);
 	}
 	emit('knapsack', `${startBuilds.length} restart points`, provisional(startBuilds[startBuilds.length - 1]));
@@ -531,6 +569,108 @@ export async function runOptimizer(
 	// ── Stage G: verification on fresh seeds (the only numbers reported) ──────
 	const short = shortlistBy(ev, si, evaluated, objective, vs, 5, space);
 	return verify(short, cfg.gSeedsMin, cfg.gSeedsCap, false);
+}
+
+/**
+ * Optimize one build against a scenario set (§6.3–6.4). One scenario → the
+ * classic pipeline, unchanged. Several → each is searched independently (its
+ * own anytime recommendation), then the shortlists are merged and re-verified
+ * on fresh seeds ACROSS all scenarios, ranked by the chosen aggregation
+ * (mean / maximin / blend). Cost scales linearly with the scenario count.
+ */
+export async function runOptimizer(
+	ev: SearchEvaluator,
+	input: SearchInput,
+	ctrl: SearchController,
+	onProgress: (p: OptimizerProgress) => void,
+): Promise<OptimizerResult> {
+	const sidxs = input.scenarioIdxs && input.scenarioIdxs.length ? [...new Set(input.scenarioIdxs)] : [input.scenarioIdx];
+	if (sidxs.length <= 1) {
+		return runSingleScenario(ev, { ...input, scenarioIdx: sidxs[0] ?? 0, scenarioIdxs: undefined }, ctrl, onProgress);
+	}
+	const ranIdxs: number[] = [];
+	const per: OptimizerResult[] = [];
+	for (const si of sidxs) {
+		per.push(await runSingleScenario(ev, { ...input, scenarioIdx: si, scenarioIdxs: undefined }, ctrl, onProgress));
+		ranIdxs.push(si);
+		if (ctrl.stopped()) break; // Stop: aggregate on what finished (anytime, P5)
+	}
+	return verifyAcross(ev, input, ranIdxs, per, ctrl);
+}
+
+/** Merge each scenario's shortlist and verify the pooled candidates fresh
+ *  across every scenario, then rank by the aggregation (§6.4). A build tied
+ *  with the leader in ANY scenario is reported as a tie (conservative — we
+ *  only claim a win where every scenario agrees). */
+async function verifyAcross(
+	ev: SearchEvaluator, input: SearchInput, ranIdxs: number[], per: OptimizerResult[], ctrl: SearchController,
+): Promise<OptimizerResult> {
+	const { space, objective, aggregation, effort: cfg } = input;
+	const vs = input.current;
+	const pick = objPick(objective);
+	const ids = ranIdxs.map(si => `S${si}`);
+	const pool = new Map<string, BuildRefLite>();
+	for (const r of per) for (const row of r.shortlist.slice(0, 5)) {
+		if (affordable(space, row.build.selection)) pool.set(row.build.id, row.build);
+	}
+	if (vs && affordable(space, vs.selection)) pool.set(vs.id, vs);
+	const builds = [...pool.values()];
+	if (!builds.length) return per[per.length - 1]; // degenerate: return the last single result
+	const gSeeds = Math.max(1, cfg.gSeedsMin);
+	const allMeasured = (b: BuildRefLite) => ranIdxs.every(si => {
+		const o = ev.objective(NS_VERIFY, si, b, objective, vs);
+		return !!o && o.n > 0 && Number.isFinite(o.mean);
+	});
+	const aggOf = (b: BuildRefLite) => {
+		const objs = ranIdxs.map(si => ev.objective(NS_VERIFY, si, b, objective, vs)!);
+		const vals = objs.map(o => o.mean);
+		const perScenario = objs.map((obj, i) => ({ id: ids[i], obj }));
+		const sem = objs.reduce((m, o) => Math.max(m, Number.isFinite(o.sem) ? o.sem : 0), 0);
+		const n = objs.reduce((m, o) => Math.min(m, o.n), Infinity);
+		return { agg: aggregateValues(vals, aggregation), perScenario, sem, n: Number.isFinite(n) ? n : 0 };
+	};
+	const allTieVs = (best: BuildRefLite, b: BuildRefLite) => ranIdxs.every(si => {
+		const p = ev.paired(NS_VERIFY, si, best, b, pick);
+		return p ? isTie(p.ci95) : true; // a scenario with no common seed cannot prove a difference
+	});
+	let n = gSeeds;
+	let rows: ScoredBuild[];
+	let best: ScoredBuild;
+	for (;;) {
+		const positions = Array.from({ length: n }, (_, i) => i);
+		await ev.ensure(builds.flatMap(b => ranIdxs.map(si => ({ ns: NS_VERIFY, scenarioIdx: si, build: b, positions }))));
+		const ranked = builds.filter(allMeasured)
+			.map(b => ({ b, ...aggOf(b) }))
+			.sort((a, z) => z.agg - a.agg || (a.b.id < z.b.id ? -1 : 1));
+		if (!ranked.length) throw new Error('optimizer: cross-scenario verification produced no measurable builds');
+		rows = ranked.map(({ b, agg, sem, n: nn, perScenario }) => {
+			const sp = costOf(space, b.selection, true);
+			return {
+				build: b, sp, leftover: space.budget - sp, skillCount: b.selection.length,
+				obj: { mean: agg, sem, n: nn }, perScenario, provisional: false,
+				tiedWithBest: b.id !== ranked[0].b.id && allTieVs(ranked[0].b, b),
+			};
+		});
+		const group = rows.filter(r => r.tiedWithBest || r.build.id === ranked[0].b.id);
+		best = group.sort((a, b) => b.leftover - a.leftover || a.skillCount - b.skillCount
+			|| b.obj.mean - a.obj.mean || (a.build.id < b.build.id ? -1 : 1))[0];
+		rows = [best, ...rows.filter(r => r.build.id !== best.build.id)];
+		for (const r of rows) r.tiedWithBest = r.build.id === best.build.id ? false : allTieVs(best.build, r.build);
+		// Resolve the top two on the aggregation before stopping (§G).
+		const two = ranked.filter(x => x.b.id !== best.build.id)[0];
+		if (two && !allTieVs(best.build, two.b)) break; // a real winner somewhere, others agree
+		if (ctrl.stopped() || n >= cfg.gSeedsCap) break;
+		n = Math.min(cfg.gSeedsCap, n + Math.max(500, Math.floor(gSeeds / 4)));
+	}
+	assertFeasible(space, best.build.selection);
+	assertOnePerGroup(space, best.build.selection);
+	return {
+		best, shortlist: rows, noise: per[0].noise,
+		verificationSeeds: n,
+		searchSeedsPerScenario: per.reduce((m, r) => Math.max(m, r.searchSeedsPerScenario), 0),
+		stoppedEarly: ctrl.stopped(),
+		orderingCorrelation: per[0].orderingCorrelation,
+	};
 }
 
 /** Top-k evaluated builds by cached search objective (deterministic order).

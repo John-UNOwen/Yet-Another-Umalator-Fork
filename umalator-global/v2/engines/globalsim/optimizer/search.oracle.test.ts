@@ -20,7 +20,7 @@ import { NS_SEARCH, NS_VERIFY } from './cache';
 import { EffortConfig } from './config';
 import { BuildRefLite, objectiveOf, pairedOf, SearchEvaluator, statsOf } from './evaluator';
 import { BuildSpace, OptOption, simIdentity } from './space';
-import { createController, runOptimizer } from './search';
+import { aggregateValues, createController, runOptimizer } from './search';
 import { MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult, SeedSlot, SeedValue } from './types';
 
 // ── deterministic PRNG + normal noise (CRN: identical per (ns, position)) ───
@@ -60,7 +60,7 @@ function erf(x: number): number {
 interface Instance {
 	space: BuildSpace;
 	/** Latent mean lead (lengths) of a simulated identity. */
-	mu: (identity: string) => number;
+	mu: (identity: string, si?: number) => number;
 	/** Every feasible build, best-first (exact enumeration). */
 	ranked: { ids: string[]; mu: number }[];
 }
@@ -106,19 +106,26 @@ function genInstance(seed: number, nMin = 8, nMax = 17, interactions = true): In
 	const val = new Map<string, number>();
 	for (const o of options) val.set(o.id, (rng() - 0.5) * 1.0);
 	const pairCount = interactions ? 2 + Math.floor(rng() * 3) : 0; // interactions=false → purely additive
-	const pairs: { a: string; b: string; w: number }[] = [];
+	const pairs: { a: string; b: string; w: number; w2: number }[] = [];
 	for (let p = 0; p < pairCount; p++) {
 		const a = options[Math.floor(rng() * nOpts)].id;
 		const b = options[Math.floor(rng() * nOpts)].id;
 		if (a === b || groupOf.get(a) === groupOf.get(b)) continue; // pairs span groups
 		const w = (rng() < 0.6 ? 1 : -1) * (0.15 + rng() * 0.45); // synergy or overlap
-		pairs.push({ a, b, w });
+		// A second, independent-sign weight for scenario ≥ 1 (the SAME pair can
+		// synergise on one mob field and overlap on another, so the optimum moves).
+		// Derived from the pair's ids, NOT from rng(): this keeps the instance
+		// generation stream byte-identical to the single-scenario suite's.
+		let ph = 2166136261;
+		for (const ch of a + '|' + b) ph = Math.imul(ph ^ ch.charCodeAt(0), 16777619);
+		const w2 = (ph & 1 ? 1 : -1) * (0.15 + ((ph >>> 8 & 0xffff) / 0xffff) * 0.45);
+		pairs.push({ a, b, w, w2 });
 	}
 	const recovery = options.filter(() => rng() < 0.35).slice(0, 4).map(o => o.id);
 	const hpMap = new Map(recovery.map(r => [r, 1 + Math.floor(rng() * 3)] as const));
 	const hpThreshold = recovery.length >= 2 ? 2 + Math.floor(rng() * 3) : 0; // hidden "recovery budget"
 
-	const mu = (identity: string): number => {
+	const mu = (identity: string, si = 0): number => {
 		const ids = identity ? identity.split(',') : [];
 		const have = new Set(ids);
 		const recSum = recovery.reduce((a, r) => a + (have.has(r) ? (hpMap.get(r) ?? 0) : 0), 0);
@@ -128,7 +135,7 @@ function genInstance(seed: number, nMin = 8, nMax = 17, interactions = true): In
 			const v = val.get(id) ?? 0;
 			m += recovery.includes(id) && !recOn ? 0 : v; // recovery skills: worth 0 until the hidden HP budget is crossed
 		}
-		for (const p of pairs) if (have.has(p.a) && have.has(p.b)) m += p.w;
+		for (const p of pairs) if (have.has(p.a) && have.has(p.b)) m += si === 0 ? p.w : p.w2; // scenario flips pair signs
 		return m;
 	};
 
@@ -159,8 +166,14 @@ function genInstance(seed: number, nMin = 8, nMax = 17, interactions = true): In
 class OracleEval implements SearchEvaluator {
 	private table = new Map<string, SeedSlot[]>(); // `${ns}|${id}`
 	private races = 0;
-	/** Noise offset separating the two namespaces = the P3 disjointness analog. */
-	private noiseIndex(ns: string, pos: number): number { return ns === NS_SEARCH ? pos : 1000000 + pos; }
+	/** Noise offset separating the two namespaces = the P3 disjointness analog.
+	 *  Scenario 0 keeps the raw positions byte-for-byte (so the calibrated
+	 *  single-scenario results are unchanged); each further scenario shifts the
+	 *  whole stream by 1e8 so its CRN noise is an independent-but-fixed draw. */
+	private noiseIndex(ns: string, si: number, pos: number): number {
+		const np = pos + si * 100_000_000;
+		return ns === NS_SEARCH ? np : 1000000 + np;
+	}
 
 	constructor(private inst: Instance, private noise = 1) {}
 
@@ -174,17 +187,17 @@ class OracleEval implements SearchEvaluator {
 	private static readonly SIGMA_FIELD = 0.6;
 	private static readonly SIGMA_INDEP = 1.5;
 
-	private leadOf(identity: string, ns: string, pos: number): number {
-		if (this.noise === 0) return this.inst.mu(identity);
+	private leadOf(identity: string, ns: string, si: number, pos: number): number {
+		if (this.noise === 0) return this.inst.mu(identity, si);
 		let h = 2166136261;
 		for (let i = 0; i < identity.length; i++) h = Math.imul(h ^ identity.charCodeAt(i), 16777619);
-		const field = gauss(this.noiseIndex(ns, pos) * 3 + 0);
-		const indep = gauss(this.noiseIndex(ns, pos) * 3 + 1 + Math.imul(h | 0, 40503) * 3);
-		return this.inst.mu(identity) + this.noise * (OracleEval.SIGMA_FIELD * field + OracleEval.SIGMA_INDEP * indep);
+		const field = gauss(this.noiseIndex(ns, si, pos) * 3 + 0);
+		const indep = gauss(this.noiseIndex(ns, si, pos) * 3 + 1 + Math.imul(h | 0, 40503) * 3);
+		return this.inst.mu(identity, si) + this.noise * (OracleEval.SIGMA_FIELD * field + OracleEval.SIGMA_INDEP * indep);
 	}
 
-	private valueOf(identity: string, ns: string, pos: number): SeedValue {
-		const lead = this.leadOf(identity, ns, pos);
+	private valueOf(identity: string, ns: string, si: number, pos: number): SeedValue {
+		const lead = this.leadOf(identity, ns, si, pos);
 		const placing = Math.min(10, Math.max(1, 5 - Math.round(lead * 2)));
 		return { lead, win: lead > 0 ? 1 : 0, top3: placing <= 3 ? 1 : 0, placing, hpEmpty: 0, rushed: 0 };
 	}
@@ -193,7 +206,7 @@ class OracleEval implements SearchEvaluator {
 
 	async ensure(reqs: { ns: string; scenarioIdx: number; build: BuildRefLite; positions: number[] }[]) {
 		for (const r of reqs) {
-			const k = `${r.ns}|${r.build.id}`;
+			const k = this.key(r.ns, r.scenarioIdx, r.build.id);
 			let arr = this.table.get(k);
 			let maxPos = -1;
 			for (const p of r.positions) if (p > maxPos) maxPos = p;
@@ -205,26 +218,27 @@ class OracleEval implements SearchEvaluator {
 				arr.fill(null, old);
 			}
 			for (const p of r.positions) {
-				if (arr[p] == null) { arr[p] = this.valueOf(r.build.id, r.ns, p); this.races++; }
+				if (arr[p] == null) { arr[p] = this.valueOf(r.build.id, r.ns, r.scenarioIdx, p); this.races++; }
 			}
 		}
 		return { jobErrors: [] };
 	}
 
-	private slotsOf(ns: string, id: string): SeedSlot[] { return this.table.get(`${ns}|${id}`) ?? []; }
-	slots(ns: string, _si: number, identity: string): SeedSlot[] { return this.slotsOf(ns, identity); }
+	private key(ns: string, si: number, id: string): string { return `${ns}|${si}|${id}`; }
+	private slotsOf(ns: string, si: number, id: string): SeedSlot[] { return this.table.get(this.key(ns, si, id)) ?? []; }
+	slots(ns: string, si: number, identity: string): SeedSlot[] { return this.slotsOf(ns, si, identity); }
 	racesRun(): number { return this.races; }
-	stats(ns: string, _si: number, build: BuildRefLite) {
-		const arr = this.slotsOf(ns, build.id);
+	stats(ns: string, si: number, build: BuildRefLite) {
+		const arr = this.slotsOf(ns, si, build.id);
 		return arr.some(s => s != null) ? statsOf(arr) : null;
 	}
-	paired(ns: string, _si: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null) {
-		return pairedOf(this.slotsOf(ns, a.id), this.slotsOf(ns, b.id), pick);
+	paired(ns: string, si: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null) {
+		return pairedOf(this.slotsOf(ns, si, a.id), this.slotsOf(ns, si, b.id), pick);
 	}
-	objective(ns: string, _si: number, build: BuildRefLite, obj: ObjectiveKind, vs?: BuildRefLite): MeanSem | null {
-		const st = this.stats(ns, _si, build);
+	objective(ns: string, si: number, build: BuildRefLite, obj: ObjectiveKind, vs?: BuildRefLite): MeanSem | null {
+		const st = this.stats(ns, si, build);
 		if (!st) return null;
-		const gain = obj === 'gainVsCurrent' && vs ? this.paired(ns, _si, build, vs, v => v.lead) : null;
+		const gain = obj === 'gainVsCurrent' && vs ? this.paired(ns, si, build, vs, v => v.lead) : null;
 		return objectiveOf(st, obj, gain);
 	}
 	dispose(): void { this.table.clear(); } // free seed slots between instances
@@ -416,6 +430,50 @@ test('Stage F beam variant stays feasible and ≥ plain hill-climb quality (§8F
 		if (h.mu - bm.mu > 0.2) { regress++; console.log(`  BEAM REGRESS #${i}: beam μ ${bm.mu.toFixed(2)} < hill ${h.mu.toFixed(2)}`); }
 	}
 	t.ok(regress === 0, `beam never regresses below the plain hill climb (regress=${regress}/4)`);
+	t.end();
+});
+
+// ── §6.4 aggregation + §6.3 scenario set ───────────────────────────────────
+
+test('aggregateValues: mean / maximin / blend are the exact §6.4 formulas', t => {
+	t.equal(aggregateValues([2, 4], 'mean'), 3, 'mean = average');
+	t.equal(aggregateValues([2, 4], 'maximin'), 2, 'maximin = worst scenario');
+	t.equal(aggregateValues([2, 4], 'blend'), 0.7 * 3 + 0.3 * 2, 'blend = (1−λ)·mean + λ·min at λ=0.3');
+	t.equal(aggregateValues([5], 'maximin'), 5, 'one scenario → maximin == the value');
+	t.equal(aggregateValues([5], 'blend'), 5, 'one scenario → blend == the value (min==mean)');
+	t.equal(aggregateValues([], 'mean'), -Infinity, 'nothing measured → loses (never wins)');
+	t.equal(aggregateValues([2, NaN, 4], 'mean'), 3, 'non-finite dropped before aggregating');
+	t.end();
+});
+
+test('scenario set + maximin beats mean on the worst-case objective (§6.3–6.4)', async t => {
+	// Two scenarios whose pair synergies carry opposite signs, so the optimum
+	// moves between them. maximin must trade a little mean for a better floor.
+	const cfg: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, fMaxRounds: 3, batchCap: 1200, gSeedsMin: 1200, gSeedsCap: 1200 };
+	const worstTrueMu = (inst: ReturnType<typeof genInstance>, id: string) => Math.min(inst.mu(id, 0), inst.mu(id, 1));
+	let maximinSum = 0, meanSum = 0, wins = 0, N = 0, feasible = true, perTwo = true;
+	for (let i = 0; i < 6; i++) {
+		const inst = genInstance(90210 + i * 173, 20, 26);
+		const run = async (aggregation: 'mean' | 'maximin') => {
+			const ev = new OracleEval(inst);
+			const res = await runOptimizer(
+				ev, { space: inst.space, scenarioIdx: 0, scenarioIdxs: [0, 1], objective: 'meanLead', aggregation, effort: cfg },
+				createController(), () => undefined);
+			ev.dispose();
+			if (res.best.leftover < 0) feasible = false;
+			if (!res.best.perScenario || res.best.perScenario.length !== 2) perTwo = false;
+			return worstTrueMu(inst, res.best.build.id);
+		};
+		const mMean = await run('mean');
+		const mMax = await run('maximin');
+		meanSum += mMean; maximinSum += mMax;
+		if (mMax >= mMean - 0.15) wins++;
+		N++;
+	}
+	t.ok(feasible, 'multi-scenario recommendation is never over budget');
+	t.ok(perTwo, 'the recommendation reports a per-scenario value for every scenario');
+	t.ok(maximinSum >= meanSum - 0.5, `maximin does not lose on average worst-case μ (${maximinSum.toFixed(2)} vs ${meanSum.toFixed(2)})`);
+	t.ok(wins >= 3, `maximin reaches a better-or-equal floor on most instances (wins=${wins}/${N})`);
 	t.end();
 });
 

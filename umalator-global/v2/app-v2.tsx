@@ -883,6 +883,23 @@ function App() {
     setUma2(uma1);
   }, [uma1, uma2]);
 
+  // Optimizer "Open in Compare": copy the optimized uma (uma1) and apply the
+  // recommended build's added skills (group-exclusive, same rule as the chart
+  // double-click) as Uma 2, so it can be compared against the current build.
+  const handleOpenInCompare = useCallback((addedSkillIds: string[]) => {
+    setUma2(() => {
+      let skills = [...uma1.skills];
+      for (const skillId of addedSkillIds) {
+        const groupId = (skillmeta as Record<string, { groupId?: string }>)[skillId]?.groupId;
+        if (!groupId) continue;
+        skills = skills.filter((id) => (skillmeta as Record<string, { groupId?: string }>)[id]?.groupId !== groupId);
+        if (!skills.includes(skillId)) skills.push(skillId);
+      }
+      return { ...uma1, skills };
+    });
+    setActiveUmaTab(2);
+  }, [uma1]);
+
   // Skill info popover state
   const [popoverSkillId, setPopoverSkillId] = useState<string | null>(null);
 
@@ -2398,6 +2415,7 @@ function App() {
                     ownedByGroup={hasSkills}
                     hints={skillHints}
                     seed={seed}
+                    onOpenInCompare={handleOpenInCompare}
                   />
                 ) : (
                   /* RESULTS - Compare mode */

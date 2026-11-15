@@ -16,9 +16,10 @@ import { useState, useRef, useEffect, useMemo } from 'preact/hooks';
 import { buildSpace, BuildSpace } from './engines/globalsim/optimizer/space';
 import { createEvaluator, Evaluator } from './engines/globalsim/optimizer/evaluator';
 import { createController, runOptimizer, SearchController } from './engines/globalsim/optimizer/search';
+import { bookKey, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
 import { effortConfig } from './engines/globalsim/optimizer/config';
 import type {
-	EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
+	AggregationKind, EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
 	ScenarioSpec, ScoredBuild,
 } from './engines/globalsim/optimizer/types';
 import type { ChartRaceConditions } from './engines/globalsim/chart';
@@ -29,7 +30,7 @@ import { loadGlobalsimCourseIds } from './engines/globalsim/courses';
 import { calculateSkillCost } from './skill-chart-utils';
 import { convertUmaStateForWorker } from './simulation-utils';
 import { HorseState } from '../../components/HorseDefTypes';
-import { Grade } from '../../uma-skill-tools/RaceParameters';
+import { Grade, GroundCondition } from '../../uma-skill-tools/RaceParameters';
 import { fromJS, Map as ImmMap } from 'immutable';
 import skillnames from '../skillnames.json';
 
@@ -55,6 +56,9 @@ export interface OptimizerPaneProps {
 	hints: Map<string, number>;
 	/** App base seed — pre-fills the seed input. */
 	seed: number;
+	/** "Open in Compare": hand the recommended build's added skills to the app,
+	 *  which merges them onto a copy of the current uma as Uma 2 (optional). */
+	onOpenInCompare?: (addedSkillIds: string[]) => void;
 }
 
 /** skillnames values are arrays like ["JP", "EN"] — prefer last (EN), same as skill-chart-pane. */
@@ -91,6 +95,18 @@ const PRESETS: { id: EffortPreset; label: string }[] = [
 	{ id: 'thorough', label: 'Thorough' },
 	{ id: 'untilStopped', label: 'Until stopped' },
 ];
+const AGGREGATIONS: { id: AggregationKind; label: string }[] = [
+	{ id: 'mean', label: 'Average (mean)' },
+	{ id: 'maximin', label: 'Worst case (maximin)' },
+	{ id: 'blend', label: 'Blend (70% avg + 30% worst)' },
+];
+// Ground variants for the robustness scenario set (§6.3): same mob field,
+// different footing, so a build must hold up across the ground the event might
+// run on. Indexed; the current ground is always scenario 0.
+const GROUND_LABEL: Record<number, string> = {
+	[GroundCondition.Good]: 'Firm', [GroundCondition.Yielding]: 'Good',
+	[GroundCondition.Soft]: 'Soft', [GroundCondition.Heavy]: 'Heavy',
+};
 const STAGE_LABEL: Record<OptimizerProgress['stage'], string> = {
 	noise: 'Calibrating noise',
 	screen: 'Screening options',
@@ -120,6 +136,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [objective, setObjective] = useState<ObjectiveKind>('p1');
 	const [preset, setPreset] = useState<EffortPreset>('standard');
 	const [seed, setSeed] = useState(props.seed);
+	const [aggregation, setAggregation] = useState<AggregationKind>('mean');
+	/** Robustness scenario count (ground variants, §6.3): 1 = current only. */
+	const [robustness, setRobustness] = useState(1);
+	const [useBook, setUseBook] = useState(true);
 	const [running, setRunning] = useState(false);
 	const [progress, setProgress] = useState<OptimizerProgress | null>(null);
 	const [result, setResult] = useState<OptimizerResult | null>(null);
@@ -235,15 +255,39 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				courseIds,
 				mobPreset,
 			};
-			const scenarios: ScenarioSpec[] = [{ id: 'main', label: 'Current setup', conds, mobPreset }];
+			// §6.3 scenario set: scenario 0 is the current setup; the robustness
+			// variants re-run the SAME mob field on different footing.
+			const grounds = [conditions.ground];
+			for (const g of [GroundCondition.Good, GroundCondition.Soft, GroundCondition.Heavy]) {
+				if (grounds.length >= robustness) break;
+				if (!grounds.includes(g)) grounds.push(g);
+			}
+			const scenarios: ScenarioSpec[] = grounds.map((g, i) => {
+				const gc = { ...conds, ground: g as ChartRaceConditions['ground'] };
+				return {
+					id: i === 0 ? 'main' : `ground-${g}`,
+					label: i === 0 ? 'Current setup' : `${GROUND_LABEL[g] ?? `ground ${g}`} field`,
+					conds: gc, mobPreset,
+				};
+			});
+			const scenarioIdxs = scenarios.map((_, i) => i);
 			const ev = createEvaluator({
 				workerFactory, space, baseHorse, scenarios, baseSeed: seedUse, skillData,
 			});
 			evRef.current = ev;
 
+			// §8 A opening book: fingerprint the primary setup, seed the search
+			// from prior strong builds for it (re-filtered to today's roster).
+			const bk = bookKey({
+				courseId: String(courseId), distance: course.distance,
+				strategy: String((uma as any)?.strategy ?? ''), mobPresetId: String((mobPreset as any)?.id ?? (mobPreset as any)?.name ?? 'default'),
+				ground: conditions.ground,
+			});
+			const bookStarts = useBook ? selectStarts(space, bk) : [];
+
 			const res = await runOptimizer(
 				ev,
-				{ space, scenarioIdx: 0, objective, aggregation: 'mean', effort: effortConfig(preset) },
+				{ space, scenarioIdx: 0, scenarioIdxs, objective, aggregation, bookStarts, effort: effortConfig(preset) },
 				ctrl,
 				(p) => {
 					// Stage events fire often; cap state updates at ~10/s (the
@@ -259,6 +303,11 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			console.log('[optimizer]', res);
 			setResult(res);
 			setProgress(null);
+			if (useBook) {
+				saveBook(bk, res.shortlist.slice(0, 5).map(r => ({
+					selection: [...r.build.selection], value: r.obj.mean, savedAt: Date.now(),
+				})));
+			}
 		} catch (e) {
 			setMessage(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -326,6 +375,26 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<input type="number" step={1} style={{ ...inputStyle, width: 130 }} value={seed}
 						disabled={running} onInput={(e) => setSeed((e.target as HTMLInputElement).valueAsNumber as number)} />
 				</div>
+				<div>
+					<label style={labelStyle}>Robustness</label>
+					<select style={inputStyle} disabled={running} value={robustness}
+						onChange={(e) => setRobustness(Number((e.target as HTMLSelectElement).value))}>
+						<option value={1}>This setup only</option>
+						<option value={2}>+ 1 ground variant</option>
+						<option value={3}>+ 2 ground variants</option>
+					</select>
+				</div>
+				<div style={{ display: robustness > 1 ? 'block' : 'none' }}>
+					<label style={labelStyle}>Aggregate</label>
+					<select style={inputStyle} disabled={running} value={aggregation}
+						onChange={(e) => setAggregation((e.target as HTMLSelectElement).value as AggregationKind)}>
+						{AGGREGATIONS.map((a) => <option value={a.id}>{a.label}</option>)}
+					</select>
+				</div>
+				<label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, paddingBottom: 4, cursor: 'pointer' }}>
+					<input type="checkbox" checked={useBook} disabled={running} onChange={() => setUseBook((v) => !v)} />
+					<span style={{ opacity: 0.85 }}>Use &amp; save opening book</span>
+				</label>
 				<button type="button" class="v2-optimizer-run" disabled={running}
 					style={{ padding: '6px 16px', borderRadius: 6, cursor: running ? 'default' : 'pointer' }}
 					onClick={run}>
@@ -401,14 +470,28 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			)}
 
 			{/* ── Results ── */}
-			{result && <OptimizerResults result={result} objective={objective} objDigits={objDigits} />}
+			{result && (
+				<OptimizerResults
+					result={result} objective={objective} objDigits={objDigits}
+					aggregation={aggregation}
+					hints={hints} ownedByGroup={ownedByGroup}
+					onOpenInCompare={props.onOpenInCompare}
+				/>
+			)}
 		</div>
 	);
 }
 
-function OptimizerResults(props: { result: OptimizerResult; objective: ObjectiveKind; objDigits: number }) {
-	const { result, objective, objDigits } = props;
+function OptimizerResults(props: {
+	result: OptimizerResult; objective: ObjectiveKind; objDigits: number; aggregation: AggregationKind;
+	hints: Map<string, number>; ownedByGroup: Map<string, string>; onOpenInCompare?: (ids: string[]) => void;
+}) {
+	const { result, objective, objDigits, aggregation, hints, ownedByGroup, onOpenInCompare } = props;
 	const objLabel = OBJECTIVES.find((o) => o.id === objective)?.label ?? objective;
+	const aggLabel = AGGREGATIONS.find((a) => a.id === aggregation)?.label ?? aggregation;
+	const multi = (result.best.perScenario?.length ?? 0) > 1;
+	const best = result.best;
+	const openCompare = () => onOpenInCompare?.([...best.build.selection]);
 	return (
 		<div class="v2-optimizer-results">
 			<table class="v2-optimizer-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -417,7 +500,8 @@ function OptimizerResults(props: { result: OptimizerResult; objective: Objective
 						<th style={thStyle}>#</th>
 						<th style={thStyle}>Skills</th>
 						<th style={{ ...thStyle, textAlign: 'right' }}>SP spent / left</th>
-						<th style={{ ...thStyle, textAlign: 'right' }}>{objLabel} (95% CI)</th>
+						<th style={{ ...thStyle, textAlign: 'right' }}>{objLabel} (95% CI){multi ? ` · ${aggLabel}` : ''}</th>
+						{multi && <th style={{ ...thStyle, textAlign: 'right' }} title="Objective on the single worst scenario (the maximin floor)">worst scenario</th>}
 						<th style={{ ...thStyle, textAlign: 'right' }}>P(1st)</th>
 						<th style={{ ...thStyle, textAlign: 'right' }}>P(top-3)</th>
 						<th style={{ ...thStyle, textAlign: 'right' }}>mean ℓ</th>
@@ -442,6 +526,10 @@ function OptimizerResults(props: { result: OptimizerResult; objective: Objective
 							<td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: i === 0 ? 600 : 400 }}>
 								{fmtMeanCi(row.obj, objDigits)}
 							</td>
+							{multi && (() => {
+								const vals = (row.perScenario ?? []).map(ps => ps.obj.mean).filter(Number.isFinite);
+								return <td style={{ ...tdStyle, textAlign: 'right' }}>{vals.length ? fmtN(Math.min(...vals), objDigits) : '—'}</td>;
+							})()}
 							<td style={{ ...tdStyle, textAlign: 'right' }}>{fmtPct(row.stats?.win.mean)}</td>
 							<td style={{ ...tdStyle, textAlign: 'right' }}>{fmtPct(row.stats?.top3.mean)}</td>
 							<td style={{ ...tdStyle, textAlign: 'right' }}>{fmtN(row.stats?.lead.mean)}</td>
@@ -449,8 +537,42 @@ function OptimizerResults(props: { result: OptimizerResult; objective: Objective
 					))}
 				</tbody>
 			</table>
+			{best.build.selection.length > 0 && (
+				<details class="v2-optimizer-inbuild" open style={{ marginTop: 8, fontSize: 13 }}>
+					<summary style={{ cursor: 'pointer', opacity: 0.85 }}>
+						Recommended build · {best.build.selection.length} skill{best.build.selection.length > 1 ? 's' : ''} · {best.sp} SP
+						{multi ? ` · worst scenario ${fmtN(Math.min(...(best.perScenario ?? []).map(p => p.obj.mean).filter(Number.isFinite)), objDigits)}` : ''}
+					</summary>
+					<table style={{ marginTop: 6, borderCollapse: 'collapse' }}>
+						<thead>
+							<tr><th style={thStyle}>Skill</th><th style={{ ...thStyle, textAlign: 'right' }}>SP</th></tr>
+						</thead>
+						<tbody>
+							{best.build.selection.map((id) => (
+								<tr key={id}>
+									<td style={tdStyle}>{skillName(id)}</td>
+									<td style={{ ...tdStyle, textAlign: 'right' }}>{calculateSkillCost(id, hints, ownedByGroup)} SP</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+					{multi && best.perScenario && (
+						<div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+							per scenario: {best.perScenario.map(ps => `${ps.id} ${fmtN(ps.obj.mean, objDigits)}`).join(' · ')}
+						</div>
+					)}
+					{onOpenInCompare && (
+						<button type="button" class="v2-optimizer-compare" style={{ marginTop: 8, padding: '5px 12px', borderRadius: 6, cursor: 'pointer' }}
+							title="Load this build onto a copy of your current uma as Uma 2, to compare against it"
+							onClick={openCompare}>
+							Open in Compare →
+						</button>
+					)}
+				</details>
+			)}
 			<div class="v2-optimizer-footnote" style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
 				verification: {result.verificationSeeds.toLocaleString()} fresh seeds · noise σΔ(ℓ) {fmtN(result.noise.sigmaDeltaLead)} L
+				{multi ? ` · aggregated by ${aggLabel.toLowerCase()}` : ''}
 				{result.stoppedEarly && (
 					<span style={{ color: '#d0a030', marginLeft: 10 }}>
 						Stopped early — results come from the short Stage G verification only.

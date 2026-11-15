@@ -27,20 +27,29 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
   move ordering (acquisition gain + κ·SE) and α/β-with-error-bars pruning
   below the R²=0.3 gate it falls back to in-context values; it only ever
   decides what to simulate (P1) and never prunes an option it hasn't learned
-- `search.ts` — Stages B–F + G orchestration (anytime): chart-parity screening,
-  MCKP restarts, in-context drop/add/replace/pair moves with bandit allocation
-  and knapsack re-solve (ℓ is the search currency, §6.1), a Stage-F local
-  search over richer 1-1/1-2/2-1/pair moves (history heuristic, budget-feasible
-  neighbourhood, adopt-only-significant, surrogate-ordered, beam-capable),
-  fresh-seed Stage G verification with honest ties
-- `book.ts` — opening book (localStorage `umalator_v2_optimizer_book`) — Phase 5, not yet present
+- `search.ts` — Stages A–F + G orchestration (anytime): opening-book starts,
+  chart-parity screening, MCKP restarts, in-context drop/add/replace/pair moves
+  with bandit allocation and knapsack re-solve (ℓ is the search currency, §6.1),
+  a Stage-F local search over richer 1-1/1-2/2-1/pair moves (history heuristic,
+  budget-feasible neighbourhood, adopt-only-significant, surrogate-ordered,
+  beam-capable), fresh-seed Stage G verification with honest ties. Across a
+  scenario set (§6.3) it searches each scenario independently then re-verifies
+  the merged shortlist across all of them, ranked by mean / maximin / blend
+  (aggregateValues, §6.4) with conservative (all-scenarios-must-agree) ties
+- `book.ts` — opening book in localStorage (`umalator_v2_optimizer_book`):
+  prior strong builds keyed by a coarse (course · distance band · strategy ·
+  mob preset · ground) fingerprint, best-effort (never fatal), and only ever
+  used as restart seeds when still affordable and one-per-group (§8 A)
 
 Outside this directory only three things changed: `workerCore.ts` compact
 records carry `bestRivalFinishTimeRaw` (both the JS and the wasm
 `run_compact` paths, bit-identical — `compact-parity.test.ts`),
 `metrics.ts` gained `leadMarginL` (ℓ in lengths,
 `(bestRivalT − ownT) × finish speed / 2.5`), and the app shell gained the
-Optimize tab.
+Optimize tab (its pane carries the scenario/robustness + aggregation controls,
+the opening-book toggle, the recommended build's in-build skill list, and an
+"Open in Compare" button that loads the build onto a copy of the current uma as
+Uma 2).
 
 ## Noise calibration record (§7.3, measured 2026-11-15)
 
@@ -68,14 +77,19 @@ fresh numbers).
 - `npm run test:optimizer` — pure units (space/knapsack/cache/stats) + the
   live-engine evaluator integration (40 seeds; seconds) + the surrogate units
   (`surrogate.test.ts`: additive recovery, planted-synergy lift, noise fails the
-  R² gate, inverse-variance weighting, graceful degradation) + the synthetic
-  oracle (`search.oracle.test.ts`: 100 small instances fully enumerated,
-  recommendation must be the optimum, within δ_min, or a statistical tie —
-  gate ≥95%; 5 medium 30–40-option instances vs a random-restart + exhaustive
-  hill-climb baseline; a Stage-F beam check; and the surrogate on/off race
-  comparison; Gaussian noise calibrated to the σ table above — a shared field
-  term that cancels in pairing + a per-build term that survives it, CRN per
-  position).
+  R² gate, inverse-variance weighting, graceful degradation) + the opening-book
+  units (`book.test.ts`: key fingerprinting, best-effort storage, the
+  affordable/one-per-group seed filter) + the synthetic oracle
+  (`search.oracle.test.ts`: 100 small instances fully enumerated, recommendation
+  must be the optimum, within δ_min, or a statistical tie — gate ≥95%; 5 medium
+  30–40-option instances vs a random-restart + exhaustive hill-climb baseline; a
+  Stage-F beam check; the surrogate on/off race comparison; and the §6.4 scenario
+  set — `aggregateValues` formulas plus a two-scenario maximin-vs-mean run whose
+  optimum moves between scenarios). Gaussian noise is calibrated to the σ table
+  above — a shared field term that cancels in pairing + a per-build term that
+  survives it, CRN per position. The oracle's second-scenario weight is derived
+  from the pair ids, not the RNG, so scenario 0 stays byte-identical to the
+  single-scenario run (its 95% gate is unaffected by the scenario work).
 
 Surrogate race findings (measured, in-suite): at the engine's real noise band the
 posterior SE is too wide to certify any move hopeless, so the surrogate is
