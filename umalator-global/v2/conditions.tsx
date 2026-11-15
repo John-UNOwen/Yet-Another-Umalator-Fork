@@ -33,8 +33,8 @@ interface CompactConditionsProps {
 	setSeason: (v: number) => void;
 	time: number;
 	setTime: (v: number) => void;
-	/** GlobalSim mode (integration plan Phase 3): show the mob-field selector. */
-	globalsimField?: {
+	/** GlobalSim mob-field selector (mob preset, gate, compare layout) — always shown. */
+	globalsimField: {
 		preset: string;
 		setPreset: (v: string) => void;
 		gate: number | 'auto';
@@ -122,43 +122,41 @@ export function CompactConditions({
 					</Tooltip>
 				))}
 			</div>
-			{globalsimField && (
-				<div class="v2-globalsim-field">
-					<CustomSelect
-						value={globalsimField.preset}
-						onChange={(val) => globalsimField.setPreset(val as string)}
-						options={globalsimField.presets}
-						className="v2-field-preset-select"
-					/>
-					<CustomSelect
-						value={globalsimField.gate}
-						onChange={(val) => globalsimField.setGate(val as number | 'auto')}
-						options={GATE_OPTIONS}
-						className="v2-field-gate-select"
-					/>
-					{globalsimField.showLayout && globalsimField.layout && globalsimField.setLayout && (
-						<div
-							class="v2-mode-toggle v2-field-layout-toggle"
-							title="Mob field: each build races alone against 8 mobs, so margins isolate the builds. Head-to-head: both umas share one race against 7 mobs (mirrored gate pairs, both races averaged), so debuffs, blocking and duels between your builds count — at 2 races per seed."
+			<div class="v2-globalsim-field">
+				<CustomSelect
+					value={globalsimField.preset}
+					onChange={(val) => globalsimField.setPreset(val as string)}
+					options={globalsimField.presets}
+					className="v2-field-preset-select"
+				/>
+				<CustomSelect
+					value={globalsimField.gate}
+					onChange={(val) => globalsimField.setGate(val as number | 'auto')}
+					options={GATE_OPTIONS}
+					className="v2-field-gate-select"
+				/>
+				{globalsimField.showLayout && globalsimField.layout && globalsimField.setLayout && (
+					<div
+						class="v2-mode-toggle v2-field-layout-toggle"
+						title="Mob field: each build races alone against 8 mobs, so margins isolate the builds. Head-to-head: both umas share one race against 7 mobs (mirrored gate pairs, both races averaged), so debuffs, blocking and duels between your builds count — at 2 races per seed."
+					>
+						<button
+							type="button"
+							class={globalsimField.layout === 'mob' ? 'active' : ''}
+							onClick={() => globalsimField.setLayout('mob')}
 						>
-							<button
-								type="button"
-								class={globalsimField.layout === 'mob' ? 'active' : ''}
-								onClick={() => globalsimField.setLayout('mob')}
-							>
-								Mob field
-							</button>
-							<button
-								type="button"
-								class={globalsimField.layout === 'h2h' ? 'active' : ''}
-								onClick={() => globalsimField.setLayout('h2h')}
-							>
-								Head-to-head
-							</button>
-						</div>
-					)}
-				</div>
-			)}
+							Mob field
+						</button>
+						<button
+							type="button"
+							class={globalsimField.layout === 'h2h' ? 'active' : ''}
+							onClick={() => globalsimField.setLayout('h2h')}
+						>
+							Head-to-head
+						</button>
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }

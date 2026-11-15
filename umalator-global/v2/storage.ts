@@ -485,7 +485,7 @@ export interface SessionState {
 	time: number;
 	// Simulation settings
 	samples: number;
-	mode: 'compare' | 'skill' | 'stamina';
+	mode: 'compare' | 'skill' | 'optimizer';
 	// Uma states
 	uma1: UmaState;
 	uma2: UmaState;
@@ -626,58 +626,6 @@ export function loadPreferences(): Preferences {
 }
 
 // ============================================
-// ENGINE CHOICE (integration plan Phase 7)
-// ============================================
-
-/**
- * Simulation engine id. 'v2' = our classic engine, 'v1' = alpha123's vendored
- * upstream engine, 'globalsim' = the GlobalSim full-field wasm engine
- * (engines/globalsim/). Canonical type location — sim-settings.tsx re-exports it.
- */
-export type SimEngine = 'v1' | 'v2' | 'globalsim';
-
-/**
- * Single place the app's default engine is decided (plan §5 Phase 7). Flipped
- * to 'globalsim' after Phase 6's live acceptance passed on the Pages deploy
- * (plan: default once Phases 4–6 pass). A persisted choice and URL-hash
- * engine still win over this default; pre-Phase-7 share links deserialize to
- * 'v2' explicitly, so they keep opening in classic v2 as authored.
- */
-export const DEFAULT_ENGINE: SimEngine = 'globalsim';
-
-const ENGINE_KEY = 'umalator_v2_engine';
-
-/** Accept only the three known ids; anything else → null (caller falls back). */
-function normalizeEngine(raw: unknown): SimEngine | null {
-	return raw === 'v1' || raw === 'v2' || raw === 'globalsim' ? raw : null;
-}
-
-/**
- * Read the persisted engine choice. Safety pattern follows pool.ts
- * loadThreadsOption: no-throw, SSR/absent-localStorage safe, validated value.
- * The session blob deliberately does NOT carry the engine — this key is its
- * only localStorage home, keeping the restore precedence single-sourced:
- * URL hash > this key > DEFAULT_ENGINE.
- */
-export function loadEngineChoice(): SimEngine {
-	try {
-		if (typeof localStorage === 'undefined') return DEFAULT_ENGINE;
-		return normalizeEngine(localStorage.getItem(ENGINE_KEY)) ?? DEFAULT_ENGINE;
-	} catch {
-		return DEFAULT_ENGINE;
-	}
-}
-
-export function saveEngineChoice(v: SimEngine): void {
-	try {
-		if (typeof localStorage === 'undefined') return;
-		localStorage.setItem(ENGINE_KEY, v);
-	} catch {
-		/* private mode etc. — the default is fine */
-	}
-}
-
-// ============================================
 // URL STATE SERIALIZATION
 // ============================================
 
@@ -694,8 +642,6 @@ export interface ShareableState {
 	uma1: UmaState;
 	uma2: UmaState;
 	skillHints?: Record<string, number>;  // skill id → hint level; only non-zero saved. Optional for backward compat with older links.
-	/** Engine (Phase 7). Undefined → the key is dropped by JSON.stringify, so older links (absent engine) deserialize to classic default behavior. */
-	engine?: SimEngine;
 }
 
 /**
@@ -767,11 +713,6 @@ export async function deserializeStateFromHash(hash: string): Promise<ShareableS
 			uma1,
 			uma2,
 			skillHints: (parsed.skillHints && typeof parsed.skillHints === 'object') ? parsed.skillHints : {},
-			// Phase 7: a link that names an engine restores it. An absent/unknown
-			// engine means a pre-Phase-7 link — those were built when classic v2
-			// was the only default, so they restore 'v2' regardless of the app's
-			// current default (a link replays as its author saw it).
-			engine: normalizeEngine(parsed.engine) ?? 'v2',
 		};
 	} catch (e) {
 		console.error('Failed to deserialize state from hash:', e);

@@ -21,8 +21,6 @@ import { IntlProvider } from "preact-i18n";
 import {
   convertUmaStateForWorker,
   buildRaceParameters,
-  buildSimulationOptions,
-  getDefaultPacer,
 } from "./simulation-utils";
 import { Grade } from "../../uma-skill-tools/RaceParameters";
 
@@ -57,7 +55,6 @@ import {
   Minus,
   Plus,
   Menu,
-  Calculator,
   Book,
   Calendar,
   Heart,
@@ -76,7 +73,6 @@ import { TourProvider, TourOverlay } from "./tour";
 import { SkillChartPane } from "./skill-chart-pane";
 import { OptimizerPane } from "./optimizer-pane";
 import { SkillChartDetail } from "./skill-chart-detail";
-import { StaCalcResults } from "./stacalc";
 // import { PasswordGate } from "./PasswordGate";
 import { FeedbackDrawer } from "./feedback-drawer";
 import { SimulationSettings } from "./sim-settings";
@@ -110,11 +106,8 @@ import {
   savePreferences,
   copyShareableUrl,
   deserializeStateFromHash,
-  loadEngineChoice,
-  saveEngineChoice,
   COLOR_PALETTES,
   type ColorPalette,
-  type SimEngine,
 } from "./storage";
 import courseData from "../course_data.json";
 import skilldata from "../skill_data.json";
@@ -241,23 +234,6 @@ function MaintenanceTime() {
   return <>{timeFmt.format(start)} – {timeFmt.format(end)}, {dateFmt.format(start)}</>;
 }
 
-// Undo a GlobalSim coverage-gate strip (see the drop effect in App): re-add every
-// stashed skill id to the build (skipping any that are already there) and restore
-// its forced position only when it originally had one. Runs when the engine leaves
-// globalsim mode, so an uncovered skill never dies just from toggling the engine.
-function restoreDroppedSkills(
-  uma: UmaState,
-  stash: Map<string, string | undefined>,
-): UmaState {
-  const skills = [...uma.skills];
-  const forcedSkillPositions = { ...uma.forcedSkillPositions };
-  for (const [id, pos] of stash) {
-    if (!skills.includes(id)) skills.push(id);
-    if (pos !== undefined) forcedSkillPositions[id] = pos;
-  }
-  return { ...uma, skills, forcedSkillPositions };
-}
-
 function App() {
   // Load saved state on mount
   const savedSession = useRef(loadSession());
@@ -297,62 +273,16 @@ function App() {
 
   // Simulation settings
   const [samples, setSamples] = useState(savedSession.current?.samples ?? 500);
-  const [mode, setMode] = useState<"compare" | "skill" | "stamina" | "optimizer">(
+  const [mode, setMode] = useState<"compare" | "skill" | "optimizer">(
     savedSession.current?.mode ?? "compare",
   );
   const [seed, setSeed] = useState(() =>
     Math.floor(Math.random() * 0xffffffff),
   );
-  const [syncRng, setSyncRng] = useState(true);
-  const [skillWisdomCheck_, setSkillWisdomCheck] = useState(true);
-  const skillWisdomCheck = skillWisdomCheck_ || mode === "stamina";
-  const [rushedKakari, setRushedKakari] = useState(true);
-  const [leadCompetition, setLeadCompetition] = useState(false);
-  const [competeFight, setCompeteFight] = useState(false);
-  // Per-strategy dueling activation rates (0-100). Canonical defaults per docs/dueling.md.
-  // Front Runners are excluded by the solver regardless.
-  const [duelingRates, setDuelingRates] = useState<{
-    runaway: number; frontRunner: number; paceChaser: number; lateSurger: number; endCloser: number;
-  }>(() => {
-    const saved = localStorage.getItem('umalator_v2_duelingRates');
-    if (saved) {
-      try { return JSON.parse(saved); } catch {}
-    }
-    return { runaway: 10, frontRunner: 20, paceChaser: 30, lateSurger: 35, endCloser: 35 };
-  });
-  useEffect(() => {
-    localStorage.setItem('umalator_v2_duelingRates', JSON.stringify(duelingRates));
-  }, [duelingRates]);
-  const [laneMovement, setLaneMovement] = useState(true);
-  // 'v2' = our engine, 'v1' = alpha123's vendored upstream engine (tools/sync-upstream-engine.mjs)
-  // 'globalsim' = GlobalSim engine (integration plan): compare AND the skill
-  // chart run the wasm full-field engine via engines/globalsim/pool.ts
-  // (compare = Phase 4, chart = Phase 5).
-  // Phase 7: the choice persists in localStorage (storage.ts engine-choice
-  // helpers, same safety pattern as pool.ts loadThreadsOption) and travels in
-  // the share-URL hash. Restore precedence: URL hash (loadFromHash below,
-  // applied after this initial value) > localStorage > DEFAULT_ENGINE — now
-  // 'globalsim' in storage.ts, flipped after Phase 6's live acceptance.
-  // Pre-Phase-7 links carry no engine field and deserialize to an explicit
-  // 'v2', so they still restore classic v2 as authored.
-  const [engine, setEngine] = useState<SimEngine>(() => loadEngineChoice());
-  useEffect(() => {
-    saveEngineChoice(engine);
-    // A stale GlobalSim error never applies to another engine's results.
-    setGlobalsimError(null);
-    // Same staleness rule for the loaded skill table: every consumer reads a
-    // non-null globalsimSkillIds as "GlobalSim mode is active" (skills.tsx hides
-    // the forced-position control on it and coverage-filters the picker and
-    // templates; the skill chart pane, uma panel and the classic chart
-    // pre-filter gate on it too). Once loaded it was never unloaded, so after
-    // one globalsim visit a classic session kept the globalsim filtering and
-    // lost the "Force @ position (m)" input even though classic runs honor it.
-    // Unload on leaving globalsim; re-entering re-runs the table effect below,
-    // and skills.ts caches the table module-wide, so that reload is a cache hit,
-    // not a refetch.
-    if (engine !== "globalsim") setGlobalsimSkillIds(null);
-  }, [engine]);
-  const globalsimMode = engine === "globalsim";
+  // GlobalSim (wasm) is the only engine: compare AND the skill chart run the
+  // full-field engine via engines/globalsim/pool.ts. The classic TS engine and
+  // the v1/v2/GlobalSim selector were removed; the HP/stamina calculator that
+  // only ever ran on classic was dropped with them.
   // Active GlobalSim skill table (keys of globalsim/skills.json, fetched once when
   // GlobalSim mode is enabled; null = classic behavior until it arrives).
   const [globalsimSkillIds, setGlobalsimSkillIds] = useState<Set<string> | null>(null);
@@ -401,20 +331,18 @@ function App() {
   // races both umas together against 7 mobs (mirrored gate pairs). Compare
   // only — the skill chart always uses the mob layout.
   const [globalsimLayout, setGlobalsimLayout] = useState<"mob" | "h2h">("mob");
-  const globalsimFieldConfig = globalsimMode
-    ? {
-        preset: globalsimFieldPreset,
-        setPreset: setGlobalsimFieldPreset,
-        gate: globalsimGate,
-        setGate: setGlobalsimGate,
-        presets: Object.entries(mobPresets).map(([value, p]: [string, any]) => ({ value, label: `Field: ${p.name}` })),
-        layout: globalsimLayout,
-        setLayout: setGlobalsimLayout,
-        showLayout: mode === "compare",
-      }
-    : undefined;
+  const globalsimFieldConfig = {
+    preset: globalsimFieldPreset,
+    setPreset: setGlobalsimFieldPreset,
+    gate: globalsimGate,
+    setGate: setGlobalsimGate,
+    presets: Object.entries(mobPresets).map(([value, p]: [string, any]) => ({ value, label: `Field: ${p.name}` })),
+    layout: globalsimLayout,
+    setLayout: setGlobalsimLayout,
+    showLayout: mode === "compare",
+  };
   useEffect(() => {
-    if (engine !== "globalsim" || globalsimSkillIds) return;
+    if (globalsimSkillIds) return;
     let alive = true;
     loadGlobalsimSkillTable().then((table) => {
       if (!alive) return;
@@ -441,9 +369,8 @@ function App() {
     return () => {
       alive = false;
     };
-  }, [engine, globalsimSkillIds]);
+  }, [globalsimSkillIds]);
   const [autoSeed, setAutoSeed] = useState(false);
-  const [forceFullSpurt, setForceFullSpurt] = useState(true);
 
   // Panel visibility
   const [umaDrawerOpen, setUmaDrawerOpen] = useState(false);
@@ -470,7 +397,6 @@ function App() {
   // Simulation results
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<CompareResults | null>(null);
-  const [hpcalcResults, setHpcalcResults] = useState<any>(null);
 
   // Skill chart results
   const [skillChartResults, setSkillChartResults] = useState<Map<string, any>>(
@@ -496,104 +422,9 @@ function App() {
   const [selectedSkillForChart, setSelectedSkillForChart] = useState("");
   const [chartRunType, setChartRunType] = useState("medianrun");
 
-  // Simulation worker (for compare/hpcalc mode). Launched LAZILY: the classic
-  // engine worker carries the whole simulator bundle (~50 MB of parsed skill
-  // data); with GlobalSim as the default engine, spawning it on mount charged
-  // every page that cost. ensureClassicWorker() creates it on first classic use.
-  const classicWorkerRef = useRef<Worker | null>(null);
-  const ensureClassicWorker = useCallback(() => {
-    if (classicWorkerRef.current) return classicWorkerRef.current;
-    const w = new Worker(new URL("./simulator.worker.ts", import.meta.url), {
-      type: "module",
-    });
-    w.addEventListener("message", (e: MessageEvent) => {
-      const { type, results: workerResults } = e.data;
-      switch (type) {
-        case "compare":
-          setResults(workerResults);
-          break;
-        case "compare-complete":
-          setIsRunning(false);
-          break;
-        case "hpcalc":
-          setHpcalcResults(workerResults);
-          break;
-        case "hpcalc-complete":
-          setIsRunning(false);
-          break;
-      }
-    });
-    w.addEventListener("error", (e) => {
-      console.error("[V2] Worker error:", e);
-      setIsRunning(false);
-    });
-    classicWorkerRef.current = w;
-    return w;
-  }, []);
-
-  // Chart mode worker pool (4 workers for parallel skill testing). Created
-  // lazily on the first CLASSIC-engine chart run (GlobalSim's chart has its
-  // own pool; charging every page 4 idle classic workers is how an 8-worker
-  // globalsim chart ended the renderer on memory-tight browsers).
-  const chartWorkersRef = useRef<Array<Worker & { workerId?: number }>>([]);
-  const ensureChartWorkers = useCallback(() => {
-    if (chartWorkersRef.current.length > 0) return chartWorkersRef.current;
-    const workers: Array<Worker & { workerId?: number }> = [];
-    for (let i = 0; i < 4; i++) {
-      const w = new Worker(new URL("./simulator.worker.ts", import.meta.url), {
-        type: "module",
-      }) as Worker & { workerId?: number };
-      w.workerId = i;
-      w.addEventListener("message", (e: MessageEvent) => {
-        const { type, workerId, results: workerResults, round, total } = e.data;
-
-        switch (type) {
-          case "chart-progress":
-            setSkillChartProgress((prev) => ({
-              ...prev,
-              [workerId]: { round, total },
-            }));
-            break;
-
-          case "chart-update":
-            setSkillChartResults((prev) => {
-              const merged = new Map(prev);
-              if (workerResults instanceof Map) {
-                workerResults.forEach((result: any, skillId: string) => {
-                  merged.set(skillId, result);
-                });
-              } else if (workerResults && typeof workerResults === "object") {
-                Object.entries(workerResults).forEach(
-                  ([skillId, result]: [string, any]) => {
-                    merged.set(skillId, result);
-                  },
-                );
-              }
-              return merged;
-            });
-            break;
-
-          case "chart-complete":
-            setCompletedWorkers((prev) => {
-              const newCount = prev + 1;
-              if (newCount === 4) {
-                // All workers finished
-                setIsRunning(false);
-              }
-              return newCount;
-            });
-            break;
-        }
-      });
-      w.addEventListener("error", (e) => {
-        console.error(`[V2] Chart Worker ${i} error:`, e);
-        setIsRunning(false);
-      });
-      workers.push(w);
-    }
-    chartWorkersRef.current = workers;
-    return workers;
-  }, []);
+  // Simulation runs go through the GlobalSim wasm worker pool (see the run
+  // handlers). The classic TS simulator.worker.ts and its lazy worker pools
+  // were removed with the classic engine.
 
   // Uma 1 state
   const [uma1, setUma1] = useState<UmaState>(
@@ -605,50 +436,20 @@ function App() {
     savedSession.current?.uma2 ?? defaultUmaState,
   );
 
-  // The GlobalSim switch must be non-destructive. The drop effect below gates the
-  // working uma1/uma2 builds while in globalsim mode, but on its own that permanently
-  // strips uncovered skill ids from the working builds (and the debounced auto-save
-  // persists the gated state to localStorage, so the loss outlives even a reload).
-  // Every id the drop effect removes — with its forced position, when it had one — is
-  // stashed here per uma slot (uma1 = slot 0, uma2 = slot 1), and leaving globalsim
-  // puts exactly those back: the switch's own removal is undone, while edits made
-  // during globalsim (covered skills added/removed, stats, strategy) survive intact.
-  // A globalsim -> v1/v2 round-trip therefore returns the pre-switch skills, and the
-  // auto-save effect then writes the restored builds back into the session.
-  //   - This effect is declared ABOVE the drop effect so the per-toggle counter reset
-  //     is enqueued before that effect's increments (React applies queued state
-  //     updates in enqueue order), and so a restore on leaving globalsim precedes any
-  //     later drop pass — which no-ops anyway while the engine is not globalsim.
+  // Per-uma-slot stash of the skills the coverage-gate drop effect below strips
+  // from a working build (id -> its former forced position). GlobalSim is the
+  // only engine now, so nothing is restored on an engine switch; the stash just
+  // records what the drop effect removed.
   const globalsimDroppedStash = useRef<Array<Map<string, string | undefined>>>([
     new Map(),
     new Map(),
   ]);
-  const prevEngineRef = useRef<SimEngine>(engine);
-  useEffect(() => {
-    const prev = prevEngineRef.current;
-    if (prev === engine) return;
-    prevEngineRef.current = engine;
-    if (prev === "globalsim") {
-      // Leaving globalsim: put back exactly what the drop effect stashed away.
-      const stash1 = globalsimDroppedStash.current[0];
-      const stash2 = globalsimDroppedStash.current[1];
-      globalsimDroppedStash.current = [new Map(), new Map()];
-      if (stash1.size) setUma1((uma) => restoreDroppedSkills(uma, stash1));
-      if (stash2.size) setUma2((uma) => restoreDroppedSkills(uma, stash2));
-    }
-    // Per-toggle counter: reset on every engine change (0 when leaving; on entering,
-    // this toggle's drops re-add to it in the drop effect that runs right after), so
-    // the "Dropped N" note reports this toggle only, never a session-wide total.
-    setGlobalsimDropped(0);
-  }, [engine]);
 
-  // GlobalSim mode (D5): uncovered skills must never reach the engine, so skills outside
+  // Coverage gate (D5): uncovered skills must never reach the engine, so skills outside
   // the active table are dropped from any build state entering the app — session/URL-hash
-  // restore, saved slots, JSON/paste/OCR imports, roster and preset loads. Behavior
-  // outside GlobalSim mode is untouched, and the drops are reversible: every stripped
-  // id goes into globalsimDroppedStash above, which restores them on leaving globalsim.
+  // restore, saved slots, JSON/paste/OCR imports, roster and preset loads.
   useEffect(() => {
-    if (engine !== "globalsim" || !globalsimSkillIds) return;
+    if (!globalsimSkillIds) return;
     const dropUncovered = (
       uma: UmaState,
       stash: Map<string, string | undefined>,
@@ -670,7 +471,7 @@ function App() {
     if (next1) setUma1(next1);
     const next2 = dropUncovered(uma2, globalsimDroppedStash.current[1]);
     if (next2) setUma2(next2);
-  }, [engine, globalsimSkillIds, uma1, uma2]);
+  }, [globalsimSkillIds, uma1, uma2]);
 
   // Map of groupId -> skillId for owned skills (for "Hide Owned" filter in skill chart)
   const hasSkills = useMemo(() => {
@@ -703,9 +504,9 @@ function App() {
         season,
         time,
         samples,
-        // "optimizer" persists as-is; storage's SessionState union predates it
-        // (loadSession normalizes unknown modes back to "compare").
-        mode: mode as "compare" | "skill" | "stamina",
+        // All three modes persist as-is; loadSession normalizes unknown modes
+        // back to "compare".
+        mode: mode as "compare" | "skill" | "optimizer",
         uma1,
         uma2,
       });
@@ -813,9 +614,6 @@ function App() {
               ? new Map(Object.entries(state.skillHints))
               : new Map(),
           );
-          // Phase 7: a link that names an engine wins over the persisted
-          // choice (URL hash > localStorage > default). Older links leave it.
-          if (state.engine) setEngine(state.engine);
           setSelectedPresetId(null);
         }
       }
@@ -1029,12 +827,10 @@ function App() {
       return;
     }
 
-    // GlobalSim engine (Phase 5): the chart runs through the wasm worker pool
-    // — a shared per-seed baseline + one "+skill" variant per candidate,
-    // paired by seed (plan §5 Phase 5). Candidates are already activateable +
-    // coverage-filtered above (Phase 2b). The classic path below is unchanged
-    // for v1/v2.
-    if (engine === "globalsim") {
+    // GlobalSim chart: the chart runs through the wasm worker pool — a shared
+    // per-seed baseline + one "+skill" variant per candidate, paired by seed.
+    // Candidates are already activateable + coverage-filtered above.
+    {
       const controller = new AbortController();
       chartAbortRef.current = controller;
       (async () => {
@@ -1117,48 +913,6 @@ function App() {
         });
       return;
     }
-
-    // Load skillmeta for worker
-    import("../../skill_meta.json").then((skillmeta) => {
-      // Distribute skills across 4 workers
-      const quarter = Math.floor(activateableSkills.length / 4);
-      const skillBatches = [
-        activateableSkills.slice(0, quarter),
-        activateableSkills.slice(quarter, quarter * 2),
-        activateableSkills.slice(quarter * 2, quarter * 3),
-        activateableSkills.slice(quarter * 3),
-      ];
-
-      const chartOptions = buildSimulationOptions({
-        seed: seed || Math.floor(Math.random() * 2 ** 31),
-        syncRng: false,
-        skillWisdomCheck: false,
-        rushedKakari: false,
-        leadCompetition: false,
-        competeFight: false,
-        laneMovement: false,
-      });
-
-      // Send tasks to all 4 workers
-      skillBatches.forEach((batch, i) => {
-        if (batch.length > 0) {
-          ensureChartWorkers()[i].postMessage({
-            msg: "chart",
-            data: {
-              skills: batch,
-              course,
-              racedef,
-              uma: convertUmaStateForWorker(uma1),
-              pacer: getDefaultPacer(),
-              options: chartOptions,
-              skillmeta: skillmeta.default,
-              workerId: i,
-              fastMode: chartFastMode,
-            },
-          });
-        }
-      });
-    });
   }, [
     courseId,
     ground,
@@ -1167,13 +921,10 @@ function App() {
     time,
     uma1,
     seed,
-    ensureChartWorkers,
     chartFastMode,
     globalsimSkillIds,
     globalsimSkillTable,
     globalsimTableFailed,
-    // GlobalSim chart path (Phase 5)
-    engine,
     samples,
     globalsimFieldPreset,
     globalsimGate,
@@ -1230,10 +981,9 @@ function App() {
         return;
       }
 
-      // GlobalSim engine (Phase 4): BOTH sides of the compare run through the
-      // wasm worker pool (9-runner mob field, paired by seed) instead of the
-      // classic simulator.worker.ts path.
-      if (engine === "globalsim") {
+      // GlobalSim compare: BOTH sides of the compare run through the wasm
+      // worker pool (9-runner mob field, paired by seed).
+      {
         (async () => {
           // The skill table is mandatory in GlobalSim mode (same reason as
           // the chart path): a missing table means no unknown-skill check and
@@ -1300,72 +1050,7 @@ function App() {
           .finally(() => setIsRunning(false));
         return;
       }
-
-      // Send simulation request to worker
-      ensureClassicWorker().postMessage({
-        msg: "compare",
-        data: {
-          nsamples: samples,
-          course,
-          racedef: buildRaceParameters(ground, weather, season, time),
-          uma1: convertUmaStateForWorker(uma1),
-          uma2: convertUmaStateForWorker(uma2),
-          pacer: getDefaultPacer(),
-          options: buildSimulationOptions({
-            seed,
-            syncRng,
-            skillWisdomCheck,
-            rushedKakari,
-            leadCompetition,
-            competeFight,
-            duelingRates: competeFight ? duelingRates : undefined,
-            laneMovement,
-            // The classic engine serves compare only for v1/v2 here; the
-            // 'globalsim' branch above returns before this point.
-            engine: engine === 'globalsim' ? 'v2' : engine,
-          }),
-        },
-      });
-    } else if (mode === "stamina") {
-      setIsRunning(true);
-      setHpcalcResults(null);
-
-      const course = courseData[courseId];
-      if (!course) {
-        console.error("[V2] Course not found:", courseId);
-        setIsRunning(false);
-        return;
-      }
-
-      ensureClassicWorker().postMessage({
-        msg: "hpcalc",
-        data: {
-          nsamples: samples,
-          course,
-          racedef: buildRaceParameters(ground, weather, season, time),
-          uma: convertUmaStateForWorker(uma1),
-          pacer: getDefaultPacer(),
-          options: {
-            // Stamina mode has no GlobalSim path (plan D6): with 'globalsim'
-            // selected it still runs classic v2, so the simulation switches
-            // stay ENABLED in the settings bar in this mode and their live
-            // values flow through to this hpcalc run.
-            ...buildSimulationOptions({
-              seed,
-              syncRng,
-              skillWisdomCheck,
-              rushedKakari,
-              leadCompetition,
-              competeFight,
-              duelingRates: competeFight ? duelingRates : undefined,
-              laneMovement,
-              engine: engine === 'globalsim' ? 'v2' : engine,
-            }),
-            forceFullSpurt,
-          },
-        },
-      });
-    } else {
+    } else if (mode === "skill") {
       // Skill chart mode
       handleRunSkillChart();
     }
@@ -1379,19 +1064,10 @@ function App() {
     time,
     uma1,
     uma2,
-    ensureClassicWorker,
     seed,
-    syncRng,
-    skillWisdomCheck,
-    rushedKakari,
-    leadCompetition,
-    competeFight,
-    duelingRates,
-    laneMovement,
-    engine,
     autoSeed,
     handleRunSkillChart,
-    // GlobalSim compare path (Phase 4)
+    // GlobalSim compare path
     globalsimSkillIds,
     globalsimSkillTable,
     globalsimTableFailed,
@@ -1418,28 +1094,6 @@ function App() {
     }
   }, [results, displayRun]);
 
-  // Stamina calculator snapshot - convert single-uma run data to RaceSnapshot format
-  const [staminaRunType, setStaminaRunType] = useState<string>('medianrun');
-  const staminaSnapshot = useMemo(() => {
-    if (!hpcalcResults?.runData) return null;
-    const run = hpcalcResults.runData[staminaRunType];
-    if (!run) return null;
-    // Pad single-uma data to two-uma RaceSnapshot format
-    return {
-      t: [run.t[0], []] as [number[], number[]],
-      p: [run.p[0], []] as [number[], number[]],
-      v: [run.v[0], []] as [number[], number[]],
-      hp: [run.hp[0], []] as [number[], number[]],
-      sk: [run.sk[0] || new Map(), new Map()] as [Map<string, number[][]>, Map<string, number[][]>],
-      sdly: [run.sdly, 0] as [number, number],
-      rushed: [[], []] as [[number, number][], [number, number][]],
-      posKeep: [],
-      competeFight: [[0, 0], [0, 0]] as [[number, number], [number, number]],
-      leadCompetition: [[0, 0], [0, 0]] as [[number, number], [number, number]],
-      downhillActivations: [[], []] as [[number, number][], [number, number][]],
-    } as RaceSnapshot;
-  }, [hpcalcResults, staminaRunType]);
-
   // Skill chart snapshot - selected skill's run data for visualization
   const skillChartSnapshot = useMemo(() => {
     if (mode !== "skill" || !selectedSkillForChart || !skillChartResults.has(selectedSkillForChart)) {
@@ -1455,7 +1109,7 @@ function App() {
   // Extract skill activation regions from results for track visualization
   const skillRegions = useMemo(() => {
     // Use appropriate snapshot based on mode
-    const snapshot = mode === "skill" ? skillChartSnapshot : mode === "stamina" ? staminaSnapshot : currentSnapshot;
+    const snapshot = mode === "skill" ? skillChartSnapshot : currentSnapshot;
     if (!snapshot) return [];
 
     const colors = [
@@ -1498,7 +1152,7 @@ function App() {
     });
 
     return regions;
-  }, [mode, skillChartSnapshot, currentSnapshot, staminaSnapshot]);
+  }, [mode, skillChartSnapshot, currentSnapshot]);
 
   // Build position keep labels from simulation results
   const posKeepLabels = useMemo(() => {
@@ -1836,14 +1490,6 @@ function App() {
                   </button>
                   <button
                     type="button"
-                    class={mode === "stamina" ? "active" : ""}
-                    onClick={() => setMode("stamina")}
-                  >
-                    <Heart size={14} />
-                    Stamina
-                  </button>
-                  <button
-                    type="button"
                     class={mode === "optimizer" ? "active" : ""}
                     onClick={() => setMode("optimizer")}
                   >
@@ -1976,9 +1622,6 @@ function App() {
                           samples,
                           uma1,
                           uma2,
-                          // Phase 7: shared links restore the engine too
-                          // (older links without the key keep classic behavior).
-                          engine,
                           // Only persist non-zero hint levels to keep the link compact.
                           skillHints: Object.fromEntries(
                             [...skillHints].filter(([, v]) => v > 0),
@@ -2010,16 +1653,6 @@ function App() {
                   }
                   items={[
                     {
-                      id: "hp-calc",
-                      label: "HP Calculator",
-                      icon: <Calculator size={16} />,
-                      onClick: () =>
-                        window.open(
-                          "/hp-calculator/",
-                          "_blank",
-                        ),
-                    },
-                    {
                       id: "events",
                       label: "Events",
                       icon: <Calendar size={16} />,
@@ -2044,22 +1677,6 @@ function App() {
               setSamples={setSamples}
               seed={seed}
               setSeed={setSeed}
-              syncRng={syncRng}
-              setSyncRng={setSyncRng}
-              skillWisdomCheck={skillWisdomCheck}
-              setSkillWisdomCheck={setSkillWisdomCheck}
-              rushedKakari={rushedKakari}
-              setRushedKakari={setRushedKakari}
-              leadCompetition={leadCompetition}
-              setLeadCompetition={setLeadCompetition}
-              competeFight={competeFight}
-              setCompeteFight={setCompeteFight}
-              duelingRates={duelingRates}
-              setDuelingRates={setDuelingRates}
-              laneMovement={laneMovement}
-              engine={engine}
-              setEngine={setEngine}
-              setLaneMovement={setLaneMovement}
               autoSeed={autoSeed}
               setAutoSeed={setAutoSeed}
               hideNotInGame={hideNotInGame}
@@ -2073,7 +1690,6 @@ function App() {
                 online: simServerOnline, cores: simServerCores, tokenNeeded: simServerTokenNeeded,
                 check: () => { void checkSimServer(); },
               }}
-              mode={mode}
             />
 
             {/* Content area wrapper for widescreen layout */}
@@ -2098,9 +1714,9 @@ function App() {
                     uma2={uma2ForTrack}
                   >
                     {/* Velocity overlay - use appropriate snapshot based on mode */}
-                    {((mode === "compare" && currentSnapshot) || (mode === "skill" && skillChartSnapshot) || (mode === "stamina" && staminaSnapshot)) && (
+                    {((mode === "compare" && currentSnapshot) || (mode === "skill" && skillChartSnapshot)) && (
                       <VelocityOverlay
-                        data={mode === "skill" ? skillChartSnapshot : mode === "stamina" ? staminaSnapshot : currentSnapshot}
+                        data={mode === "skill" ? skillChartSnapshot : currentSnapshot}
                         courseDistance={
                           (courseData as any)[courseId]?.distance ?? 2000
                         }
@@ -2132,7 +1748,7 @@ function App() {
                   </RaceTrack>
 
                   {/* Velocity toggle controls below track - show when there's data to display */}
-                  {((mode === "compare" && results) || (mode === "skill" && skillChartSnapshot) || (mode === "stamina" && staminaSnapshot)) && (
+                  {((mode === "compare" && results) || (mode === "skill" && skillChartSnapshot)) && (
                     <div class="v2-velocity-toggles">
                       <label class="v2-switch">
                         <input
@@ -2357,47 +1973,6 @@ function App() {
                       </div>
                     )}
                   </div>
-                ) : mode === "stamina" ? (
-                  /* RESULTS - Stamina calculator mode */
-                  <div class="v2-results-pane">
-                    <div class="stacalc-controls">
-                      <label class="v2-switch">
-                        <input
-                          type="checkbox"
-                          checked={forceFullSpurt}
-                          onChange={(e) => setForceFullSpurt((e.target as HTMLInputElement).checked)}
-                        />
-                        <span class="v2-switch-slider" />
-                        <span class="v2-switch-label">Force Full Spurt</span>
-                      </label>
-                      <Tooltip content="When ON, the uma always sprints at max speed in the final stretch — even without enough stamina. Remaining HP can go negative, showing how much stamina you're short. When OFF, the uma slows down if stamina is low, matching real race behavior." position="bottom" className="stacalc-info-tooltip">
-                        <HelpCircle size={14} class="stacalc-info-icon" />
-                      </Tooltip>
-                    </div>
-                    {hpcalcResults ? (
-                      <StaCalcResults
-                        results={hpcalcResults}
-                        nsamples={samples}
-                        strategy={uma1.strategy}
-                        courseDistance={courseData[courseId]?.distance || 2000}
-                        onSelectRun={(runType) => setStaminaRunType(runType)}
-                      />
-                    ) : isRunning ? (
-                      <div class="v2-results-pane v2-results-empty">
-                        <div class="v2-results-running">
-                          <span class="v2-spinner" />
-                          Running stamina analysis...
-                        </div>
-                      </div>
-                    ) : (
-                      <div class="v2-results-pane v2-results-empty">
-                        <div class="v2-results-placeholder">
-                          <Heart size={32} />
-                          <p>Click RUN to analyze stamina requirements</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 ) : mode === "optimizer" ? (
                   /* RESULTS - Skill Optimizer mode (GlobalSim engine) */
                   <OptimizerPane
@@ -2501,7 +2076,7 @@ function App() {
                 </div>
 
                 <div class="v2-drawer-content">
-                  {globalsimMode && globalsimDropped > 0 && (
+                  {globalsimDropped > 0 && (
                     <div class="v2-globalsim-note">
                       Dropped {globalsimDropped} uncovered skill
                       {globalsimDropped === 1 ? "" : "s"} on import (not yet supported
@@ -2550,7 +2125,7 @@ function App() {
                     <TraineesTab
                       onLoadToUma1={handleUma1Load}
                       onLoadToUma2={handleUma2Load}
-                      currentMode={mode as "compare" | "skill" | "stamina"}
+                      currentMode={mode as "compare" | "skill" | "optimizer"}
                       currentUma1={uma1}
                       currentUma2={uma2}
                     />
@@ -2561,7 +2136,7 @@ function App() {
                       onStateChange={setUmasState}
                       onLoadToUma1={(s) => { handleUma1Load(s); setActiveUmaTab(1); }}
                       onLoadToUma2={(s) => { handleUma2Load(s); setActiveUmaTab(2); }}
-                      currentMode={mode as "compare" | "skill" | "stamina"}
+                      currentMode={mode as "compare" | "skill" | "optimizer"}
                       course={courseData[courseId]}
                     />
                   )}
@@ -2684,16 +2259,6 @@ function App() {
                   rel="noopener"
                 >
                   GlobalSim engine
-                </a>
-                &nbsp;|&nbsp;
-                {/* Absolute on purpose: the Pages deploy serves only the v2 app,
-                    so a root-relative /hp-calculator/ would 404 there. */}
-                <a
-                  href="https://umalator.app/hp-calculator/"
-                  target="_blank"
-                  rel="noopener"
-                >
-                  HP Calculator
                 </a>
               </div>
             </footer>
@@ -2852,14 +2417,6 @@ function App() {
                         </button>
                         <button
                           type="button"
-                          class={mode === "stamina" ? "active" : ""}
-                          onClick={() => setMode("stamina")}
-                        >
-                          <Heart size={14} />
-                          Stamina
-                        </button>
-                        <button
-                          type="button"
                           class={mode === "optimizer" ? "active" : ""}
                           onClick={() => setMode("optimizer")}
                         >
@@ -2901,22 +2458,6 @@ function App() {
                         setSamples={setSamples}
                         seed={seed}
                         setSeed={setSeed}
-                        syncRng={syncRng}
-                        setSyncRng={setSyncRng}
-                        skillWisdomCheck={skillWisdomCheck}
-                        setSkillWisdomCheck={setSkillWisdomCheck}
-                        rushedKakari={rushedKakari}
-                        setRushedKakari={setRushedKakari}
-                        leadCompetition={leadCompetition}
-                        setLeadCompetition={setLeadCompetition}
-                        competeFight={competeFight}
-                        setCompeteFight={setCompeteFight}
-                        duelingRates={duelingRates}
-                        setDuelingRates={setDuelingRates}
-                        laneMovement={laneMovement}
-                        engine={engine}
-                        setEngine={setEngine}
-                        setLaneMovement={setLaneMovement}
                         autoSeed={autoSeed}
                         setAutoSeed={setAutoSeed}
                         hideNotInGame={hideNotInGame}
@@ -2924,7 +2465,6 @@ function App() {
                         globalsimUncoveredCount={globalsimUncoveredCount}
                         threads={globalsimThreads}
                         setThreads={setGlobalsimThreads}
-                        mode={mode}
                       />
                     </div>
                     <div class="v2-mobile-settings-section">
@@ -2967,14 +2507,6 @@ function App() {
                     </div>
                     <div class="v2-mobile-settings-section">
                       <h4>Tools</h4>
-                      <Button
-                        variant="ghost"
-                        className="v2-mobile-settings-btn"
-                        onClick={() => window.open("/hp-calculator/", "_blank")}
-                        icon={<Calculator size={14} />}
-                      >
-                        HP Calculator
-                      </Button>
                       <Button
                         variant="ghost"
                         className="v2-mobile-settings-btn"

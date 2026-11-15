@@ -41,7 +41,7 @@ export interface OptimizerPaneProps {
 	uma: any;
 	/** Offerable skill ids, already coverage-filtered by the caller. */
 	candidates: string[];
-	/** Merged engine skill table; null until the GlobalSim engine is loaded. */
+	/** Merged GlobalSim skill table; null while the engine assets load. */
 	skillData: unknown | null;
 	/** courseData[courseId] — only .distance is read here. */
 	course: { distance: number } & any;
@@ -400,7 +400,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		return (
 			<div class="v2-optimizer-pane" style={{ padding: 16 }}>
 				<h2>Skill Optimizer</h2>
-				<p style={{ opacity: 0.8 }}>Load the GlobalSim engine first (engine switch in Settings) — the optimizer
+				<p style={{ opacity: 0.8 }}>The GlobalSim engine is still loading — the optimizer
 					needs the merged skill table and the wasm worker pool.</p>
 			</div>
 		);

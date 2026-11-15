@@ -7,12 +7,11 @@
  */
 
 import { Grade, GroundCondition, Weather, Season, Time } from '../../uma-skill-tools/RaceParameters';
-import { PosKeepMode } from '../../uma-skill-tools/RaceSolver';
 import skillmeta from '../skill_meta.json';
 import type { UmaState } from './uma-panel';
 
 // Re-export enums for convenience
-export { Grade, GroundCondition, Weather, Season, Time, PosKeepMode };
+export { Grade, GroundCondition, Weather, Season, Time };
 
 /**
  * Check if a skill is a debuff skill (can have multiple copies)
@@ -121,69 +120,5 @@ export function buildRaceParameters(
 		skillId: '',
 		orderRange: strategy ? ORDER_RANGE_FOR_STRATEGY[strategy] : null,
 		numUmas: 9
-	};
-}
-
-/**
- * Simulation options configuration
- */
-export interface DuelingRates {
-	runaway: number;       // % chance an Oonige uma engages in dueling
-	frontRunner: number;   // % chance a Nige uma duels (solver excludes them anyway — kept for completeness)
-	paceChaser: number;    // % chance a Senkou uma duels
-	lateSurger: number;    // % chance a Sashi uma duels
-	endCloser: number;     // % chance an Oikomi uma duels
-}
-
-export interface SimulationOptions {
-	engine?: 'v1' | 'v2';
-	seed: number;
-	syncRng: boolean;
-	skillWisdomCheck: boolean;
-	rushedKakari: boolean;
-	leadCompetition: boolean;
-	competeFight: boolean;
-	duelingRates?: DuelingRates;
-	laneMovement: boolean;
-}
-
-/**
- * Build simulation options object
- */
-export function buildSimulationOptions(options: Partial<SimulationOptions> = {}) {
-	return {
-		seed: options.seed ?? Math.floor(Math.random() * 0xFFFFFFFF),
-		posKeepMode: PosKeepMode.Approximate,
-		pacemakerCount: 1,
-		syncRng: options.syncRng ?? true,
-		skillWisdomCheck: options.skillWisdomCheck ?? true,
-		rushedKakari: options.rushedKakari ?? true,
-		leadCompetition: options.leadCompetition ?? false,
-		competeFight: options.competeFight ?? false,
-		duelingRates: options.duelingRates,
-		laneMovement: options.laneMovement ?? true,
-		// which solver the worker dispatches to: 'v2' = ours, 'v1' = vendored upstream
-		engine: (options as any).engine ?? 'v2',
-	};
-}
-
-/**
- * Default pacer state - must match v1's HorseState defaults
- */
-export function getDefaultPacer() {
-	return {
-		outfitId: '',
-		speed: 1200,
-		stamina: 1200,
-		power: 800,
-		guts: 400,
-		wisdom: 400,
-		strategy: 'Nige',
-		distanceAptitude: 'S',
-		surfaceAptitude: 'A',
-		strategyAptitude: 'A',
-		mood: 2,
-		skills: {},
-		forcedSkillPositions: {}
 	};
 }

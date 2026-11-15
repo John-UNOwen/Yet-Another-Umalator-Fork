@@ -41,7 +41,7 @@ export interface UmasTabProps {
 	onStateChange: (next: UmasTabState) => void;
 	onLoadToUma1: (state: UmaState) => void;
 	onLoadToUma2: (state: UmaState) => void;
-	currentMode: 'compare' | 'skill' | 'stamina';
+	currentMode: 'compare' | 'skill' | 'optimizer';
 	course: RosterCourse;
 }
 
