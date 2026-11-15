@@ -22,6 +22,7 @@ import {
 	createGlobalsimPool, PoolJob, WorkerLike,
 	autoThreadCount, resolveThreadCount, serverAwareThreadCount, loadThreadsOption, saveThreadsOption,
 	THREADS_STORAGE_KEY, MAX_THREADS, AUTO_THREADS_MAX,
+	__testResetWorkerBudget, __testWorkerBudgetLive,
 } from './pool';
 import { buildCompareJobs, globalsimSeedList, hashString64, GlobalsimCompareInput, DEFAULT_CHUNK_SIZE } from './compare';
 import { parseMobPresets } from './mobs';
@@ -95,6 +96,68 @@ test('happy path: prepare→run streams every chunk back', async t => {
 	t.end();
 });
 
+test('shared worker budget caps live workers across concurrent pools', async t => {
+	// Regression for the no-global-bound defect: compare, the skill chart and the
+	// optimizer each call createGlobalsimPool; with no shared accounting two runs
+	// in flight would each eagerly spawn `threads` workers at once (threads ×
+	// panes live wasm instances). A tiny forced capacity makes the overlap
+	// observable regardless of the machine's core count. The shared capacity is
+	// the LARGEST per-pool threads a pool asks for (so one lone run is never
+	// throttled), so here capacity = 2 while the two pools together want 4.
+	__testResetWorkerBudget(2);
+	let liveNow = 0, maxLive = 0;
+	const mkFactory = () => () => {
+		const w = new FakeWorker(0);
+		w.respond = (m, ww) => { if (m.type === 'prepare') ww.fire(preparedOk(m)); else if (m.type === 'run') ww.fire(chunkOk(m)); };
+		liveNow++;
+		if (liveNow > maxLive) maxLive = liveNow;
+		const origTerminate = w.terminate.bind(w);
+		w.terminate = () => { if (!w.terminated) liveNow--; origTerminate(); };
+		return w;
+	};
+	// Four jobs each so both pools want to be full; the fake workers respond
+	// immediately, so both batches must still drain under contention.
+	const jobsA = [job('a1', 'X', [1]), job('a2', 'Y', [2]), job('a3', 'Z', [3]), job('a4', 'W', [4])];
+	const jobsB = [job('b1', 'X', [5]), job('b2', 'Y', [6]), job('b3', 'Z', [7]), job('b4', 'W', [8])];
+	const pA = createGlobalsimPool({ factory: mkFactory(), threads: 2, onChunk: () => {} });
+	const pB = createGlobalsimPool({ factory: mkFactory(), threads: 2, onChunk: () => {} });
+	const [ra, rb] = await Promise.all([pA.runJobs(jobsA), pB.runJobs(jobsB)]);
+	t.deepEqual(ra.errors, [], 'pool A drained under contention');
+	t.deepEqual(rb.errors, [], 'pool B drained under contention (no starvation / hang)');
+	t.ok(maxLive >= 2, `both pools were live at once (peak ${maxLive})`);
+	t.ok(maxLive <= 2 + 1, `total live workers stayed within the budget(2) plus one first-worker slot: ${maxLive}`);
+	t.ok(maxLive < 4, `never ran both pools at full threads (would be 4): peak ${maxLive}`);
+	pA.dispose(); pB.dispose();
+	t.equal(__testWorkerBudgetLive(), 0, 'every permit returned to the shared budget after dispose');
+	t.equal(liveNow, 0, 'no leaked workers');
+	t.end();
+});
+
+test('lone pool still gets its full thread count from the shared budget', async t => {
+	// The cap must never throttle a single run below its own requested threads
+	// (server-aware auto scales to MAX_THREADS with no contention).
+	__testResetWorkerBudget();   // capacity derived from resolveThreadCount() (≥1)
+	let liveNow = 0, maxLive = 0;
+	const factory = () => {
+		const w = new FakeWorker(0);
+		w.respond = (m, ww) => { if (m.type === 'prepare') ww.fire(preparedOk(m)); else if (m.type === 'run') ww.fire(chunkOk(m)); };
+		liveNow++;
+		if (liveNow > maxLive) maxLive = liveNow;
+		const orig = w.terminate.bind(w);
+		w.terminate = () => { if (!w.terminated) liveNow--; orig(); };
+		return w;
+	};
+	const want = resolveThreadCount();
+	const jobs = Array.from({ length: want + 3 }, (_, i) => job(`j${i}`, `K${i}`, [i]));
+	const pool = createGlobalsimPool({ factory, threads: want, onChunk: () => {} });
+	const res = await pool.runJobs(jobs);
+	t.deepEqual(res.errors, [], 'single pool drains with no contention');
+	t.equal(maxLive, want, `a lone pool still runs at its full ${want} threads`);
+	pool.dispose();
+	t.equal(__testWorkerBudgetLive(), 0, 'permits returned after dispose');
+	t.end();
+});
+
 test('preparation affinity: same setupKey runs without re-preparing, matching job preferred out of order', async t => {
 	const { workers, factory } = scripted((m, w) => {
 		if (m.type === 'prepare') w.fire(preparedOk(m));
@@ -161,6 +224,47 @@ test('non-dead prepare failure = immediate job error, no requeue', async t => {
 	t.equal(res.errors.length, 1);
 	t.ok(/geometry fetch 404/.test(res.errors[0].error));
 	t.equal(workers[0].sent.filter(m => m.type === 'prepare').length, 1, 'never retried');
+	pool.dispose();
+	t.end();
+});
+
+test('non-dead prepare failure invalidates the cached preparation (no stale-key poisoning)', async t => {
+	// Regression: workerCore.handlePrepare frees the held PreparedRace BEFORE
+	// building the next one, so a failed prepare leaves the worker holding NO
+	// preparation. The pool must drop slot.preparedKey on a non-dead prepare
+	// failure — keeping the previous key made dispatch bare-run the next
+	// matching job into the worker's "no preparation" reply: a permanent job
+	// error for every later job of that setup, for the pool's lifetime.
+	const held = new Map<number, string | null>();   // per-worker state, mirrors workerCore.prepared
+	const { workers, factory } = scripted((m, w) => {
+		if (m.type === 'prepare') {
+			held.set(w.instance, null);   // handlePrepare frees before constructing
+			if (String(m.setupKey) === 'B') {
+				w.fire({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: false, error: 'bad request', dead: false });
+			} else {
+				held.set(w.instance, String(m.setupKey));
+				w.fire(preparedOk(m));
+			}
+		} else if (m.type === 'run') {
+			if (held.get(w.instance) == null) {
+				w.fire({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: false, dead: false, error: `no preparation for job ${m.jobId}` });
+			} else w.fire(chunkOk(m));
+		}
+	});
+	let delivered = 0;
+	const pool = createGlobalsimPool({ factory, threads: 1, onChunk: () => { delivered++; } });
+	const res1 = await pool.runJobs([job('x1', 'X', [1]), job('x2', 'X', [2]), job('b', 'B', [3])]);
+	// While the preparation is still alive the affinity fast path is correct:
+	// x2 runs bare, only the B input error is reported.
+	t.deepEqual(res1.errors, [{ jobId: 'b', error: 'prepare failed: bad request' }], 'batch 1: only the B input error');
+	// B's failed prepare (after freeing X) is where the cached key goes stale.
+	// The next X job must be RE-prepared and succeed — pre-fix this failed with
+	// "chunk failed: no preparation for job x3" (the poisoned slot).
+	const res2 = await pool.runJobs([job('x3', 'X', [4]), job('b2', 'B', [5])]);
+	t.deepEqual(res2.errors.map(e => e.jobId), ['b2'], 'batch 2: x3 succeeds on a rebuilt preparation; only b2 errors');
+	t.equal(delivered, 3, 'x1, x2 and x3 all delivered their records');
+	const seq = workers[0].sent.map(m => `${m.type}:${(m as any).id ?? (m as any).jobId}`).join(' ');
+	t.ok(seq.includes('prepare:x3 run:x3'), `stale key dropped, preparation rebuilt: ${seq}`);
 	pool.dispose();
 	t.end();
 });

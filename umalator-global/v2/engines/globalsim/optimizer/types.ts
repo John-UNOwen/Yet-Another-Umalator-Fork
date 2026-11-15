@@ -11,8 +11,9 @@ export type ObjectiveKind =
 	| 'p1'
 	/** Mean lead margin ℓ (lengths). */
 	| 'meanLead'
-	/** P(top 3) — the engine's finishOrder is 1-based (compact-parity pins the
-	 *  sign of ℓ against finishOrder === 1), so top-3 is finishOrder ≤ 3. */
+	/** P(top 3) — the engine's finishOrder is 0-based (winner = 0, and
+	 *  compact-parity pins the sign of ℓ against finishOrder === 0), so
+	 *  top-3 is finishOrder ≤ 2. */
 	| 'pTop3'
 	/** Mean placing, LOWER is better (sign-flipped when ranking). */
 	| 'meanPlacing'
@@ -41,11 +42,11 @@ export interface SeedValue {
 	 *  predates bestRivalFinishTimeRaw — such seeds are unusable and dropped
 	 *  from ℓ statistics (never coerced to 0). Win/top3/placing stay valid. */
 	lead: number | null;
-	/** 1 when finishOrder === 1. */
+	/** 1 when finishOrder === 0 — the engine's finishOrder is 0-based (winner = 0). */
 	win: 0 | 1;
-	/** 1 when finishOrder ≤ 3 (engine finishOrder is 1-based). */
+	/** 1 when finishOrder ≤ 2 (0-based finishOrder ⇒ top-3). */
 	top3: 0 | 1;
-	/** Engine placing, 1-based. */
+	/** Human placing, 1-based (engine finishOrder + 1 ⇒ a win places 1, never 0). */
 	placing: number;
 	hpEmpty: 0 | 1;
 	rushed: 0 | 1;

@@ -66,7 +66,7 @@ import { presets, visiblePresets, DEFAULT_PRESET } from "./presets";
 import { V2UmaPanel, UmaState, defaultUmaState } from "./uma-panel";
 import { TraineesTab } from "./trainees-tab";
 import { UmasTab, UmasTabState, initialUmasTabState } from "./roster/umas-tab";
-import { V2ResultsPane, CompareResults, RaceSnapshot } from "./results-pane";
+import { V2ResultsPane, CompareResults, RaceSnapshot, calcStats } from "./results-pane";
 import { VelocityOverlay } from "./velocity-overlay";
 import { TourProvider, TourOverlay } from "./tour";
 import { SkillChartPane } from "./skill-chart-pane";
@@ -2176,13 +2176,7 @@ function App() {
                       (courseData as any)[courseId]?.distance ?? 2000
                     }
                     skillnames={skillnames}
-                    result={
-                      results.results.length > 0
-                        ? results.results[
-                            Math.floor(results.results.length / 2)
-                          ]
-                        : 0
-                    }
+                    result={calcStats(results.results).median}
                   />
                 ) : (
                   <p

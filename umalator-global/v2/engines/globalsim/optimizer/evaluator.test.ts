@@ -19,7 +19,7 @@ import { pathToFileURL } from 'url';
 
 import { HorseState, SkillSet } from '../../../../../components/HorseDefTypes';
 import { GroundCondition, Season, Time, Weather } from '../../../../../uma-skill-tools/RaceParameters';
-import { parseMobPresets } from '../mobs';
+import { MobPreset, parseMobPresets } from '../mobs';
 import { createGlobalsimWorkerCore, WasmApi } from '../workerCore';
 import { WorkerFactory, WorkerLike } from '../pool';
 import { calculateSkillCost, isPurpleSkill, skillGroups } from '../../../skill-chart-utils';
@@ -27,7 +27,8 @@ import { createEvaluator, calibrateNoise, seedValueOf, statsOf } from './evaluat
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { buildSpace, simIdentity } from './space';
 import { ScenarioSpec } from './types';
-import { leadMarginL } from '../metrics';
+import { leadMarginL, SeedCompactRecord } from '../metrics';
+import { buildCompareJobs, GlobalsimCompareInput } from '../compare';
 import { EffortConfig, STANDARD } from './config';
 
 const repoRoot = path.resolve(__dirname, '../../../../../');
@@ -122,14 +123,16 @@ const positions = Array.from({ length: SEEDS }, (_, i) => i);
 // ── pure folding unit tests ──────────────────────────────────────────────────
 
 test('seedValueOf folds records; statsOf drops null leads from ℓ stats only', t => {
+	// finishOrder is 0-based: order 2 = 3rd place ⇒ win 0, top3 1, placing 3.
 	const rec: any = { seed: 1, finishTimeRaw: 120, bestRivalFinishTimeRaw: 119.8, finishOrder: 2, hpEmptyOnRace: false, rushingStartCount: 1, tail: [[0, 1990, 11.5]] };
 	const v = seedValueOf(rec, DISTANCE)!;
-	t.ok(v !== 'err' && v.win === 0 && v.top3 === 1 && v.placing === 2 && v.rushed === 1, 'flags from finishOrder/HP/rush');
+	t.ok(v !== 'err' && v.win === 0 && v.top3 === 1 && v.placing === 3 && v.rushed === 1, 'flags from 0-based finishOrder/HP/rush');
 	t.ok(v !== 'err' && v.lead != null && v.lead < 0, 'negative lead when best rival finished first');
 	t.equal(v !== 'err' && v.lead, leadMarginL(rec, DISTANCE), 'lead == metrics.leadMarginL');
-	const oldPkg: any = { seed: 2, finishTimeRaw: 120, finishOrder: 1 };
+	// Winner = finishOrder 0 (old-pkg record shape: no bestRivalFinishTimeRaw).
+	const oldPkg: any = { seed: 2, finishTimeRaw: 120, finishOrder: 0 };
 	const v2 = seedValueOf(oldPkg, DISTANCE)!;
-	t.ok(v2 !== 'err' && v2.lead === null && v2.win === 1, 'old-pkg record: usable placing stats, null lead');
+	t.ok(v2 !== 'err' && v2.lead === null && v2.win === 1 && v2.placing === 1, 'old-pkg winner record: usable placing stats, null lead');
 	t.equal(seedValueOf({ seed: 3, error: 'boom' }, DISTANCE), 'err', 'engine error → err');
 	const st = statsOf([v, v2, 'err', null]);
 	t.equal(st.n, 2, 'null/err excluded from n');
@@ -243,5 +246,85 @@ test('locked (include) skills are simulated for EVERY build, empty selection inc
 	t.ok(prepares.every(m => playerSkills(m).includes(lock)),
 		'the locked skill reaches the engine horse on every preparation — even with an EMPTY selection');
 	evLock.dispose();
+	t.end();
+});
+
+// ── finishOrder 0-basedness on REAL engine output ─────────────────────────────
+// The optimizer once read the engine's 0-based finishOrder as 1-based, so 'win'
+// silently measured P(2nd). The synthetic oracle could not catch that (it builds
+// SeedValues itself); only real run_compact records pin the mapping. A weak mob
+// field guarantees finishOrder 0 records (win path), the default field a
+// finishOrder > 0 loser (loss path) — both fold rules run over real records.
+
+/** One compact run of `horse` against `preset`, through the real wasm pkg. */
+function runCompact(horse: HorseState, preset: MobPreset): Promise<SeedCompactRecord[]> {
+	const seeds = Array.from({ length: 24 }, (_, i) => BASE_SEED + i);
+	const input = {
+		uma1: horse, uma2: horse,
+		courseId: COURSE, distance: DISTANCE,
+		ground: GroundCondition.Good, weather: Weather.Sunny, season: Season.Spring, time: Time.Midday,
+		knownSkillIds, courseIds, mobPreset: preset, skillData: mergedTable,
+		seedBase: BASE_SEED, sampleCount: seeds.length, threads: 1, fixedGate: GATE,
+		// workerFactory only matters to the pool path; runCompact drives workerCore directly.
+	} as unknown as GlobalsimCompareInput;
+	const built = buildCompareJobs(input, seeds, 'compact');
+	if (built.errors.length) return Promise.reject(new Error(`job build errors: ${built.errors.join(' | ')}`));
+	const job = built.jobs[0];
+	return new Promise((resolve, reject) => {
+		const core = createGlobalsimWorkerCore({
+			postMessage: (m: any) => queueMicrotask(() => {
+				if (m.type === 'prepared') {
+					if (!m.ok) reject(new Error(`prepare failed: ${m.error}`));
+					else core.onMessage({ type: 'run', jobId: 'j1', seeds: job.seeds, mode: 'compact' });
+				} else if (m.type === 'chunk') {
+					if (m.ok) resolve(m.records);
+					else reject(new Error(`chunk failed: ${m.error}`));
+				}
+			}),
+			loadWasm: loadPkgFresh,
+			fetchText: (url: string) => fs.promises.readFile(path.join(geomDir, path.basename(url)), 'utf8'),
+		});
+		core.onMessage({ type: 'skillData', skillData: mergedTable });
+		core.onMessage({ type: 'prepare', id: 'p1', setupKey: 'k1', request: job.request });
+	});
+}
+
+test('real wasm run_compact: finishOrder is 0-based and the winner (0) folds to win', async t => {
+	// Same field shape, stats low enough that ANY healthy build wins every seed.
+	const weakPreset: MobPreset = {
+		name: `${mobPreset.name} (weak sparring partners)`,
+		runners: mobPreset.runners.map(r => ({ ...r, speed: 300, stamina: 300, power: 300, guts: 300, wisdom: 300, skills: [] })),
+	};
+	const winner = baseHorse();
+	const loser = new HorseState({
+		speed: 400, stamina: 400, power: 400, guts: 400, wisdom: 400,
+		strategy: 'Senkou', distanceAptitude: 'A', surfaceAptitude: 'A', strategyAptitude: 'A', mood: 2,
+	}).set('skills', SkillSet([]));
+	const winRecs = await runCompact(winner, weakPreset);
+	const loseRecs = await runCompact(loser, mobPreset);
+	const winOk = winRecs.filter(r => !r.error && typeof r.finishOrder === 'number');
+	const loseOk = loseRecs.filter(r => !r.error && typeof r.finishOrder === 'number');
+	t.equal(winOk.length, 24, 'win-path run: every seed produced a finishOrder record');
+	t.equal(loseOk.length, 24, 'loss-path run: every seed produced a finishOrder record');
+	// The fastest runner (finishOrder 0) must fold to win=1, placing=1 — under the
+	// old 1-based reading that same record folded to win=0, placing=0.
+	t.ok(winOk.every(r => r.finishOrder === 0), 'the dominant build wins every seed (finishOrder 0 exists — win path exercised)');
+	const vWin = seedValueOf(winOk[0], DISTANCE);
+	t.ok(vWin !== 'err' && vWin.win === 1 && vWin.top3 === 1 && vWin.placing === 1,
+		`finishOrder 0 (fastest) counts as a WIN, places 1 — got ${JSON.stringify(vWin)}`);
+	// Loss path on the real default field: never a win, placing never 0.
+	t.ok(loseOk.every(r => r.finishOrder !== 0 && (r.finishOrder as number) > 0), 'the weak build never wins the default field (loss path exercised)');
+	const vLose = seedValueOf(loseOk[0], DISTANCE);
+	t.ok(vLose !== 'err' && vLose.win === 0 && vLose.placing >= 2, `finishOrder > 0 folds to win=0, placing ≥ 2 — got ${JSON.stringify(vLose)}`);
+	// Every real record respects the 0-based rule (top-3 ⇔ finishOrder ≤ 2).
+	for (const r of [...winOk, ...loseOk]) {
+		const v = seedValueOf(r, DISTANCE);
+		if (v === 'err' || v.win !== (r.finishOrder === 0 ? 1 : 0)
+			|| v.top3 !== ((r.finishOrder as number) <= 2 ? 1 : 0)
+			|| v.placing !== (r.finishOrder as number) + 1) {
+			t.fail(`real record finishOrder=${r.finishOrder} mis-folded: ${JSON.stringify(v)}`);
+		}
+	}
+	t.pass('on all 48 real records: win ⇔ finishOrder 0, top3 ⇔ finishOrder ≤ 2, placing = finishOrder + 1');
 	t.end();
 });

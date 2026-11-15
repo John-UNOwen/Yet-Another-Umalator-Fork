@@ -193,7 +193,8 @@ async function runSingleScenario(
 				if (top && !isTie(top.ci95)) break; // #1 vs #2 resolved (§G)
 			}
 			emit('verify', `verifying ${n}/${nCap} seeds`);
-			if (n >= nCap) break;
+			// Stop mid-verify: truncate on the spot like verifyAcross (anytime, P5).
+			if (ctrl.stopped() || n >= nCap) break;
 			n = Math.min(nCap, n + Math.max(500, Math.floor(cfg.gSeedsMin / 4)));
 		}
 		const ranked = rankedOf();
@@ -234,7 +235,7 @@ async function runSingleScenario(
 			best, shortlist: rows, noise,
 			verificationSeeds: n,
 			searchSeedsPerScenario: maxSearchFilled,
-			stoppedEarly,
+			stoppedEarly: stoppedEarly || ctrl.stopped(),
 			orderingCorrelation: Number.isFinite(orderingCorrelation) ? orderingCorrelation : undefined,
 		};
 	};

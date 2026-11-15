@@ -392,20 +392,36 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 		props.onDblClickRow(id);
 	}
 
-	// IntersectionObserver virtualization — only render cells for visible rows
+	// IntersectionObserver virtualization — only render cells for visible rows.
+	// The observer is created ONCE per mount. It used to be memoized on
+	// props.data, and the parent streams a fresh Array.from(...) per paint, so
+	// every streamed chart update disconnected the observer and re-observed
+	// every row (and left in-view rows unobserved, since only the placeholder
+	// branch had a ref). The effect runs after refs are attached, so
+	// root.current is the real scroll container; its initial sweep adopts the
+	// rows rendered before the effect ran, and the ref callbacks (on both row
+	// branches, observe() is a no-op for already-observed elements) adopt rows
+	// mounted/reused by later data updates — no teardown, no re-observation.
 	const root = useRef<HTMLDivElement>(null);
 	const inView = useRef(new Map<string, boolean>());
 	const [, forceRerender] = useState(false);
-	const obs = useMemo(() => {
-		return new IntersectionObserver((entries) => {
+	const obsRef = useRef<IntersectionObserver | null>(null);
+	const observeRow = (el: Element | null) => { if (el) obsRef.current?.observe(el); };
+	useEffect(() => {
+		const obs = new IntersectionObserver((entries) => {
 			entries.forEach(entry => inView.current.set((entry.target as HTMLElement).dataset.skillid!, entry.isIntersecting));
 			forceRerender({} as any);
 		}, {
 			root: root.current,
 			rootMargin: "68px 0px 68px 0px"
 		});
-	}, [props.data]);
-	useEffect(() => () => obs.disconnect(), [props.data]);
+		obsRef.current = obs;
+		root.current?.querySelectorAll('tr[data-skillid]').forEach(el => obs.observe(el));
+		return () => {
+			obs.disconnect();
+			obsRef.current = null;
+		};
+	}, []);
 
 	return (
 		<div class={`v2-skill-chart-wrapper${props.dirty ? ' dirty' : ''}`} ref={root}>
@@ -442,7 +458,7 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 
 						if (inView.current.get(id)) {
 							return (
-								<tr key={row.id} data-skillid={id} class={props.selectedSkillId === id ? 'selected' : ''}>
+								<tr key={row.id} data-skillid={id} ref={observeRow} class={props.selectedSkillId === id ? 'selected' : ''}>
 									{row.getAllCells().map(cell => (
 										<td key={cell.id}>
 											{flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -451,7 +467,7 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 								</tr>
 							);
 						} else {
-							return <tr key={row.id} data-skillid={id} ref={el => el && obs.observe(el)}>{((skillnames as any)[id]?.slice(-1)[0]) ?? id}</tr>;
+							return <tr key={row.id} data-skillid={id} ref={observeRow}>{((skillnames as any)[id]?.slice(-1)[0]) ?? id}</tr>;
 						}
 					})}
 				</tbody>

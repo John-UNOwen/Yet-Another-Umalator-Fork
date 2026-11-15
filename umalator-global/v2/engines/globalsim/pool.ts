@@ -167,6 +167,100 @@ interface Slot {
 	expecting: 'prepared' | 'chunk' | null;
 }
 
+// ── shared worker budget ──────────────────────────────────────────────────────
+//
+// Every createGlobalsimPool (compare sampling, compare rep, the skill chart,
+// the optimizer evaluator — and any two of those running at once, since the
+// three modes gate independently) used to size its OWN pool to `threads`
+// workers with no knowledge of the others, so N concurrent panes could hold
+// N × threads live wasm workers (each ~120 MB browser-side — the memory wall
+// that caps AUTO_THREADS_MAX). The budget is the one shared accounting point
+// the pools had no way to share: it caps the TOTAL live workers across every
+// live pool at the configured thread budget, so overlapping runs SHARE the
+// budget instead of each taking a full pool.
+//
+// How it stays fair without ever deadlocking:
+//  • A permit is taken per worker for the worker's whole slot lifetime (a
+//    crash-recreate reuses the slot's permit, so recovery can't be starved).
+//  • When the budget is full, a pool first tries to RECLAIM an idle (no
+//    in-flight chunk) worker from another pool — idle warm workers are the
+//    first to go, preserving the un-contended preparation-affinity optimisation
+//    (a lone pool keeps every worker warm and runs exactly as before).
+//  • A pool is never starved to zero workers: its first slot is granted even
+//    when every other pool is busy (bounded oversubscription, at most one per
+//    actively-over-budget pool), which is what guarantees progress instead of a
+//    runJobs promise that can never resolve on an empty slot set.
+//  • Beyond the first slot, a contended pool waits on a FIFO permit queue; a
+//    pool also yields its surplus warm workers when a batch drains while
+//    someone is waiting, handing the budget over at the batch boundary.
+//
+// Capacity is the environment's thread budget: the largest per-pool `threads`
+// any pool has asked for. A single pool is therefore never throttled below its
+// own requested count (so server-aware auto → MAX_THREADS still scales up);
+// it is only shared when two runs actually overlap.
+interface WorkerBudget {
+	capacity: number;
+	live: number;
+	waiters: Array<() => void>;
+	reclaimers: Set<() => boolean>;
+}
+const workerBudget: WorkerBudget = { capacity: 0, live: 0, waiters: [], reclaimers: new Set() };
+
+function budgetCapacity(): number {
+	if (workerBudget.capacity < 1) workerBudget.capacity = Math.max(1, resolveThreadCount());
+	return workerBudget.capacity;
+}
+/** Raise the shared capacity to at least `threads` (a pool never throttles a
+ *  single run below its own requested count; overlap is what shares it). */
+function budgetRaiseCapacity(threads: number): void {
+	if (threads > budgetCapacity()) {
+		workerBudget.capacity = threads;
+		budgetPump();   // newly-available room may already satisfy queued pools
+	}
+}
+/** Hand free capacity to the longest-waiting pool (each waiter reserves its
+ *  own permit as it is granted). */
+function budgetPump(): void {
+	while (workerBudget.live < workerBudget.capacity && workerBudget.waiters.length) {
+		workerBudget.waiters.shift()!();
+	}
+}
+function budgetRelease(n: number): void {
+	if (n <= 0) return;
+	workerBudget.live = Math.max(0, workerBudget.live - n);
+	budgetPump();
+}
+function budgetReleaseNoPump(): void {
+	workerBudget.live = Math.max(0, workerBudget.live - 1);
+}
+/** Ask another pool to release ONE idle worker (its warm-but-unneeded slot). */
+function budgetTryReclaim(exclude: () => boolean): boolean {
+	for (const r of workerBudget.reclaimers) {
+		if (r === exclude) continue;
+		if (r()) return true;
+	}
+	return false;
+}
+/** Try to reserve one permit synchronously: free capacity, else reclaim idle
+ *  slots from other pools, else (lastResort) oversubscribe by one so a pool is
+ *  never left with zero workers. Returns false when the caller must wait. */
+function budgetReserve(exclude: () => boolean, lastResort: boolean): boolean {
+	if (workerBudget.live < budgetCapacity()) { workerBudget.live++; return true; }
+	while (workerBudget.live >= budgetCapacity() && budgetTryReclaim(exclude)) { /* reclaimer did live-- */ }
+	if (workerBudget.live < budgetCapacity()) { workerBudget.live++; return true; }
+	if (lastResort) { workerBudget.live++; return true; }
+	return false;
+}
+
+// Test-only seams: force a deterministic capacity (and clear the ledger) between
+// pool tests, and read the live permit count. Never used by the app.
+export function __testResetWorkerBudget(capacity?: number): void {
+	workerBudget.waiters.length = 0;
+	workerBudget.reclaimers.clear();
+	workerBudget.live = 0;
+	workerBudget.capacity = capacity ?? 0;   // 0 → re-derived lazily from resolveThreadCount()
+}
+export function __testWorkerBudgetLive(): number { return workerBudget.live; }
 export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	const threads = Math.max(1, Math.min(MAX_THREADS, opts.threads ?? resolveThreadCount()));
 	const queue: Queued[] = [];
@@ -175,6 +269,96 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	let running: { resolve: () => void; reject: (e: Error) => void } | null = null;
 	let disposed = false;
 	let aborted = false;
+
+	// ── shared-budget plumbing (see the worker budget block above) ──────────────
+	// `held` = permits this pool owns: one per live slot PLUS any permit reserved
+	// for a slot that has not materialised yet (async grant). dispose/abort
+	// release `held` exactly once, so pending grants must not re-release.
+	let held = 0;
+	const pendingWaiters = new Set<() => void>();
+	budgetRaiseCapacity(threads);
+	workerBudget.reclaimers.add(reclaimIdleSlot);
+
+	/** Release one idle (no in-flight chunk) slot back to the shared budget and
+	 *  return true, or false when every slot is busy. Never called on this pool
+	 *  from itself (the acquirer excludes its own reference), so it only ever
+	 *  gives away warm-but-unneeded capacity to a contended run. */
+	function reclaimIdleSlot(): boolean {
+		const i = slots.findIndex(s => !s.inflight);
+		if (i < 0) return false;
+		const s = slots[i];
+		try { s.worker?.terminate(); } catch { /* already gone */ }
+		s.worker = null;
+		slots.splice(i, 1);
+		held--;
+		budgetReleaseNoPump();
+		return true;
+	}
+
+	/** Grow toward min(threads, queued work), taking permits from the shared
+	 *  budget: sync while capacity is free (fast path — identical to the
+	 *  historical eager creation), then a guaranteed first slot, then FIFO waits
+	 *  with idle-reclaim from other pools. */
+	function grow(): void {
+		if (disposed || aborted) return;
+		const target = Math.min(threads, Math.max(1, queue.length));
+		while (slots.length < target) {
+			if (budgetReserve(reclaimIdleSlot, slots.length === 0)) { held++; makeSlot(); continue; }
+			// Contended remainder: queue ONE waiter; it materialises its slot on
+			// grant then re-runs grow() for the rest.
+			if (pendingWaiters.size > 0) break;
+			let grantReady!: () => void;
+			const p = new Promise<void>(res => { grantReady = res; });
+			const grant = () => { workerBudget.live++; grantReady(); };
+			workerBudget.waiters.push(grant);
+			pendingWaiters.add(grant);
+			budgetPump();
+			p.then(() => {
+				const mine = pendingWaiters.delete(grant);
+				if (disposed || aborted) { if (mine) budgetRelease(1); return; }
+				// The grant already did live++ for this permit — it is ours now.
+				held++;
+				if (slots.length >= threads || queue.length === 0) { held--; budgetRelease(1); return; }
+				makeSlot();
+				dispatch();
+				grow();
+			});
+			break;
+		}
+	}
+
+	/** Hand every idle slot to contended waiters at a batch boundary (a lone
+	 *  pool keeps its warm preparations; only a waiting pool triggers yield). */
+	function yieldIdleToWaiters(): void {
+		if (!workerBudget.waiters.length) return;
+		let released = 0;
+		for (let i = slots.length - 1; i >= 0; i--) {
+			if (slots[i].inflight) continue;
+			try { slots[i].worker?.terminate(); } catch { /* already gone */ }
+			slots[i].worker = null;
+			slots.splice(i, 1);
+			held--;
+			released++;
+		}
+		if (released) budgetRelease(released);
+	}
+
+	/** Give up every permit this pool still holds (dispose/abort): drop any
+	 *  still-queued (unfired) grant so it can never fire a stray live++, then
+	 *  release the permits backing live slots and a kept grant. A grant that
+	 *  already fired but whose slot has not materialised yet is left queued in
+	 *  pendingWaiters — its .then releases that permit (mine === true), so it is
+	 *  never double-counted here. */
+	function releaseBudget(): void {
+		if (pendingWaiters.size) {
+			for (const g of pendingWaiters) {
+				const i = workerBudget.waiters.indexOf(g);
+				if (i >= 0) workerBudget.waiters.splice(i, 1);   // only still-queued grants
+			}
+		}
+		if (held > 0) { budgetRelease(held); held = 0; }
+		workerBudget.reclaimers.delete(reclaimIdleSlot);
+	}
 
 	function makeSlot(): Slot {
 		const slot: Slot = { gen: 0, worker: null, preparedKey: null, inflight: null, expecting: null };
@@ -235,6 +419,12 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				// Input-level prepare failure — a retry would fail identically.
 				const msg = `prepare failed: ${data.error}`;
 				slot.inflight = null;
+				// Invalidate the cached preparation: workerCore.handlePrepare
+				// frees the held PreparedRace before building the next one, so
+				// a failed prepare can leave the worker with NO preparation.
+				// Keeping the old key here would make dispatch bare-run the
+				// next matching job into a "no preparation" failure — forever.
+				slot.preparedKey = null;
 				errors.push({ jobId: job.id, error: msg });
 				opts.onJobError?.(job, msg);
 				dispatch();
@@ -281,6 +471,10 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			}
 		}
 		if (running && queue.length === 0 && slots.every(s => !s.inflight)) {
+			// Batch drained: if another run is waiting on the shared budget, hand
+			// our surplus warm workers over (a lone pool keeps them warm — the
+			// preparation-affinity fast path is untouched when un-contended).
+			yieldIdleToWaiters();
 			const r = running; running = null;
 			r.resolve();
 		}
@@ -296,8 +490,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			// result), so resolve ONLY the entries added during this call.
 			const errorsFrom = errors.length;
 			queue.push(...jobs.map(job => ({ job, requeues: 0 })));
-			const n = Math.min(threads, Math.max(1, queue.length));
-			while (slots.length < n) makeSlot();
+			grow();   // size from the SHARED worker budget (see the budget block)
 			return new Promise<void>((resolve, reject) => {
 				running = { resolve, reject };
 				dispatch();
@@ -307,6 +500,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			disposed = true;
 			for (const slot of slots) { try { slot.worker?.terminate(); } catch { /* gone */ } slot.worker = null; }
 			slots.length = 0;
+			releaseBudget();
 			queue.length = 0;
 			running?.resolve();
 			running = null;
@@ -322,6 +516,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				slot.worker = null;
 			}
 			slots.length = 0;
+			releaseBudget();
 			// Pending runJobs promise rejects; nothing is requeued (Stop semantics).
 			const r = running;
 			running = null;

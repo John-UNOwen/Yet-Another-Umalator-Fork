@@ -19,6 +19,9 @@
  *   (e) is covered in pool.test.ts (fake worker factory).
  *   (f) the representative-run pool receives the injected skill table too
  *       (scripted workers; regression — rep requests omit skillData).
+ *   (g) streaming paints hand out independent results snapshots (scripted
+ *       workers; regression — sharing the live margins array froze the
+ *       results-pane histogram at the first progress paint).
  */
 
 // Same CC_GLOBAL-before-import trick as adapter.test.ts.
@@ -298,5 +301,55 @@ test('(f) representative-run pool receives the injected skill table (scripted wo
 		'no full-mode prepare reached the engine without the table (legacy-table fallback)');
 	t.ok(res.runData.minrun && res.runData.maxrun && res.runData.meanrun && res.runData.medianrun,
 		'all four representative snapshots built (null = rep runs silently failed)');
+	t.end();
+});
+
+// ── (g) streaming paints hand out independent results snapshots (scripted workers) ──
+
+test('(g) each progress paint delivers an independent results snapshot (streaming histogram)', async t => {
+	// Regression: results-pane buckets `results.results` in a useMemo keyed on
+	// ARRAY IDENTITY (results-pane.tsx Histogram), and app-v2 stores each
+	// partial straight into state. A paint that hands out the engine’s LIVE
+	// margins array by reference therefore keeps the same identity across
+	// paints while the array silently grows — the memo never invalidates and
+	// the histogram freezes at whatever the first paint contained. (The
+	// classic worker posted structured-cloned arrays per message, so identity
+	// was fresh every time; that is the contract consumers were written to.)
+	// Scripted workers hold back every third chunk past the 100 ms paint
+	// throttle so later paints genuinely carry more margins than the first.
+	let chunkSeq = 0;
+	const scriptedFactory: WorkerFactory = (): WorkerLike => {
+		const msgCbs: ((e: { data: any }) => void)[] = [];
+		const send = (m: any) => queueMicrotask(() => { for (const cb of msgCbs) cb({ data: m }); });
+		return {
+			postMessage: (m: any) => queueMicrotask(() => {
+				if (m.type === 'skillData') return;
+				if (m.type === 'prepare') { send({ type: 'prepared', id: m.id, ok: true }); return; }
+				if (m.type === 'run') {
+					const variant = Number(String(m.jobId).split('|')[0]);
+					const delay = (chunkSeq++ % 3) === 2 ? 220 : 0;
+					const records = (m.seeds as number[]).map((seed: number) => ({
+						seed, finishTimeRaw: variant ? 124 : 125, finishOrder: 3, tail: null,
+					}));
+					setTimeout(() => send({ type: 'chunk', jobId: m.jobId, ok: true, records }), delay);
+				}
+			}),
+			addEventListener: (type: string, cb: any) => { if (type === 'message') msgCbs.push(cb); },
+			terminate: () => { /* scripted: nothing to tear down */ },
+		};
+	};
+	const h = horseWithSkills(['100011']);
+	const snaps: { len: number; ref: number[] }[] = [];
+	const res = await runGlobalsimCompare(compareInput(h, h, {
+		skillData: { __fixture_table__: {} }, workerFactory: scriptedFactory, sampleCount: 60, threads: 1,
+		onProgress: (p) => snaps.push({ len: p.results.length, ref: p.results }),
+	}));
+	t.equal(res.globalsim.doneSeeds, 60, 'all 60 seeds paired through the scripted bridge');
+	t.ok(snaps.length >= 2, `progress streamed ${snaps.length} paints`);
+	const first = snaps[0];
+	const last = snaps[snaps.length - 1];
+	t.ok(last.len > first.len, `later paints carry more margins (${first.len} → ${last.len})`);
+	t.notEqual(first.ref, last.ref, 'paints hand out distinct arrays (identity invalidates the pane memo)');
+	t.equal(first.ref.length, first.len, 'an early paint’s snapshot does not mutate after delivery');
 	t.end();
 });

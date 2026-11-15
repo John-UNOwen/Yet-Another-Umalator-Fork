@@ -132,8 +132,10 @@ test('mob layout: wasm run_compact records deepStrictEqual JS extractCompact', a
 	'bestRivalFinishTimeRaw present and finite on every ok record');
 	t.ok(leadable.every(r => {
 		const l = leadMarginL(r, 2000);
-		return l !== null && Number.isFinite(l) && Math.sign(l) === (typeof r.finishOrder === 'number' && r.finishOrder === 1 ? 1 : -1);
-	}), 'leadMarginL finite and sign-consistent with finishOrder===1');
+		// finishOrder is 0-based (lib.rs order_index from enumerate): the winner
+		// is 0, and ℓ > 0 ⇔ the player beat every rival ⇔ finishOrder === 0.
+		return l !== null && Number.isFinite(l) && Math.sign(l) === (typeof r.finishOrder === 'number' && r.finishOrder === 0 ? 1 : -1);
+	}), 'leadMarginL finite and sign-consistent with finishOrder===0 (0-based: 0 = won)');
 	t.end();
 });
 

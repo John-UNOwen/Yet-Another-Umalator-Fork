@@ -14,9 +14,11 @@
  *     GET    /multiplex?ids=a,b    → {msgs:[{s,m}]} long-poll ALL sessions on
  *                                    ONE connection (browser per-host socket
  *                                    cap is 6 — one held GET per session would
- *                                    pin the client at ~6 workers)
+ *                                    pin the client at ~6 workers).
+ *                                    &ack=1 acknowledges the previous
+ *                                    response (see dequeue-on-ack below)
  *     GET    /session/:id/out      → {msgs:[...]} long-poll (single session,
- *                                    tests/compat)
+ *                                    tests/compat; same &ack=1 protocol)
  *     DELETE /session/:id          → 202                   (kill child)
  *   child (--child flag) the real createGlobalsimWorkerCore over process IPC —
  *     identical message protocol to globalsim.worker.ts, so the browser-side
@@ -24,6 +26,13 @@
  *
  * One child PER session is not optional: node runs races synchronously, so a
  * single process would serialize every "worker" onto one core.
+ *
+ * Dequeue-on-acknowledge: long-poll responses PEAK the session queue — a
+ * message is removed from it only when the client's NEXT poll carries
+ * ack=1, meaning the previous response was fully received and dispatched.
+ * A response lost to a dropped connection or an aborted fetch is therefore
+ * redelivered on the next poll instead of vanishing (the client dispatches
+ * a response window wholly or not at all, so window-level acks are exact).
  *
  * ## Security
  *
@@ -96,7 +105,12 @@ interface Waiter {
 interface Session {
 	id: string;
 	child: ChildProcess;
+	// Dequeue-on-ack queue: `out` holds every message the client has not
+	// acknowledged; `sent` counts the leading ones already handed to the last
+	// long-poll response, awaiting that response's ack=1. Responses peek the
+	// whole queue, so a lost response window is redelivered, not lost.
 	out: any[];
+	sent: number;
 	waiter: Waiter | null;
 	lastSeen: number;
 	dead: boolean;
@@ -140,11 +154,13 @@ function masterMain(): void {
 	}
 
 	function flush(s: Session): void {
-		if (s.waiter && s.out.length > 0) {
+		// Wake only for messages NEWER than the window already awaiting ack.
+		if (s.waiter && s.out.length > s.sent) {
 			const w = s.waiter;
 			s.waiter = null;
 			clearTimeout(w.timer);
-			w.resolve(s.out.splice(0, s.out.length));
+			s.sent = s.out.length;   // in flight until the next ack=1
+			w.resolve([...s.out]);   // peek, not splice — see Session.out
 		}
 		flushAllMux();
 	}
@@ -152,19 +168,24 @@ function masterMain(): void {
 	// ── multiplex waiters: ONE long-poll feeds every watched session ─────────
 	interface MuxWaiter {
 		ids: Set<string>;
+		acked: boolean;   // this request carried ack=1 (commit on collect)
 		resolve: (msgs: Array<{ s: string; m: unknown }>) => void;
 		timer: NodeJS.Timeout;
 	}
 	const muxWaiters: MuxWaiter[] = [];
-	function collectMux(ids: Set<string>): Array<{ s: string; m: unknown }> | null {
+	function collectMux(ids: Set<string>, commit: boolean): Array<{ s: string; m: unknown }> | null {
 		let any = false;
 		const got: Array<{ s: string; m: unknown }> = [];
 		for (const id of ids) {
 			const s = sessions.get(id);
 			if (!s) { got.push({ s: id, m: { type: '__died' } }); any = true; continue; }
+			// ack=1: the client fully processed the previous response — its
+			// in-flight window leaves the queue here (and only here).
+			if (commit && s.sent > 0) { s.out.splice(0, s.sent); s.sent = 0; }
 			if (s.out.length > 0) {
 				any = true;
-				for (const m of s.out.splice(0, s.out.length)) got.push({ s: id, m });
+				s.sent = s.out.length;   // snapshot awaiting the next ack
+				for (const m of s.out) got.push({ s: id, m });   // peek, incl. any unacked head
 			}
 		}
 		return any ? got : null;
@@ -172,7 +193,7 @@ function masterMain(): void {
 	function flushAllMux(): void {
 		for (let i = muxWaiters.length - 1; i >= 0; i--) {
 			const w = muxWaiters[i];
-			const got = collectMux(w.ids);
+			const got = collectMux(w.ids, w.acked);
 			if (got) {
 				muxWaiters.splice(i, 1);
 				clearTimeout(w.timer);
@@ -200,7 +221,7 @@ function masterMain(): void {
 			console.error('fork failed:', e?.message || e);
 			return null;
 		}
-		const s: Session = { id, child, out: [], waiter: null, lastSeen: Date.now(), dead: false };
+		const s: Session = { id, child, out: [], sent: 0, waiter: null, lastSeen: Date.now(), dead: false };
 		child.on('message', (env: any) => { s.out.push(env && env.m ? env.m : env); flush(s); });
 		child.on('exit', () => {
 			if (!s.dead) {
@@ -246,10 +267,14 @@ function masterMain(): void {
 			}
 			if (p === '/multiplex' && req.method === 'GET') {
 				const idset = new Set((url.searchParams.get('ids') ?? '').split(',').filter(x => /^\d+$/.test(x)));
-				const got = collectMux(idset);
+				// ack=1 → the client dispatched the previous response in full:
+				// commit its in-flight window before snapshotting the next one.
+				const acked = url.searchParams.get('ack') === '1';
+				const got = collectMux(idset, acked);
 				if (got) { json(res, 200, { msgs: got }); return; }
 				const waiter: MuxWaiter = {
 					ids: idset,
+					acked,
 					resolve: (msgs) => { if (!res.writableEnded) json(res, 200, { msgs }); },
 					timer: setTimeout(() => {
 						const i = muxWaiters.indexOf(waiter);
@@ -280,8 +305,15 @@ function masterMain(): void {
 				}
 				// GET /out — long-poll; at most one waiter per session.
 				if (req.method !== 'GET') { json(res, 405, { error: 'GET only' }); return; }
+				// same dequeue-on-ack protocol as /multiplex (ack=1 commits the
+				// window the previous response handed over)
+				if (url.searchParams.get('ack') === '1' && s.sent > 0) { s.out.splice(0, s.sent); s.sent = 0; }
 				if (s.waiter) { const old = s.waiter; s.waiter = null; clearTimeout(old.timer); old.resolve([]); }
-				if (s.out.length > 0) { json(res, 200, { msgs: s.out.splice(0, s.out.length) }); return; }
+				if (s.out.length > 0) {
+					s.sent = s.out.length;   // snapshot awaiting the next ack
+					json(res, 200, { msgs: [...s.out] });
+					return;
+				}
 				if (s.dead) { json(res, 200, { msgs: [{ type: '__died' }] }); return; }
 				const onTimeout = (): void => {
 					if (s.waiter === waiter) { s.waiter = null; json(res, 200, { msgs: [] }); }

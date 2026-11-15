@@ -172,7 +172,7 @@ export interface GlobalsimStatsBlock {
 
 /** Classic CompareResults shape + the additive globalsim block (see file header). */
 export interface GlobalsimCompareResults {
-	results: number[];                       // sorted margins, lengths, positive = UMA 2 ahead
+	results: number[];                       // margins in chunk-arrival order (unsorted), lengths, positive = UMA 2 ahead
 	runData: {
 		minrun: unknown | null; maxrun: unknown | null; meanrun: unknown | null; medianrun: unknown | null;
 		allruns?: unknown;
@@ -428,7 +428,14 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 
 	const paint = (jobErrors: Array<{ jobId: string; error: string }>, runData: { min: unknown | null; max: unknown | null; mean: unknown | null; median: null | unknown }, elapsed: number) => {
 		const s = summarizeAggregate(agg);
-		const partial = buildResults(margins, s, input, runData, jobErrors, elapsed, margins.length);
+		// Hand out a SNAPSHOT of the margins, never the live array: consumers
+		// key on array identity (results-pane buckets `results.results` in a
+		// useMemo keyed on the array; app-v2 stores the partial straight into
+		// state), which mirrors the classic worker's structured-cloned
+		// per-message arrays. Sharing the live `margins` array kept the same
+		// identity while it silently grew, so the memo never invalidated and
+		// the streaming histogram froze at the first paint.
+		const partial = buildResults(margins.slice(), s, input, runData, jobErrors, elapsed, margins.length);
 		input.onProgress?.(partial);
 		return partial;
 	};

@@ -124,16 +124,23 @@ export function emptyStats(): BuildStats {
 
 /** Fold a raw compact record to SeedValue (lead computed, tail dropped).
  *  'err' = engine error on this seed OR unreadable placing — deterministic,
- *  never refetched, never counted in statistics. */
+ *  never refetched, never counted in statistics.
+ *
+ *  The engine's finishOrder is 0-BASED: vendor/GlobalSim/src/lib.rs fills
+ *  order_index from `order.iter().enumerate()` over finish times sorted
+ *  ascending, so the winner is 0 — and both wasm run_compact and the JS
+ *  extractCompact fallback pass it through verbatim. Hence win ⇔
+ *  finishOrder === 0, top-3 ⇔ finishOrder ≤ 2, and the human-facing /
+ *  ranked `placing` is finishOrder + 1 (1st place reports as 1, never 0). */
 export function seedValueOf(rec: SeedCompactRecord, distanceM: number): SeedSlot {
 	if (rec.error) return 'err';
-	const placing = typeof rec.finishOrder === 'number' ? rec.finishOrder : NaN;
-	if (!Number.isFinite(placing)) return 'err';
+	const order = typeof rec.finishOrder === 'number' ? rec.finishOrder : NaN;
+	if (!Number.isFinite(order)) return 'err';
 	return {
 		lead: leadMarginL(rec, distanceM),
-		win: placing === 1 ? 1 : 0,
-		top3: placing <= 3 ? 1 : 0,
-		placing,
+		win: order === 0 ? 1 : 0,
+		top3: order <= 2 ? 1 : 0,
+		placing: order + 1,
 		hpEmpty: rec.hpEmptyOnRace ? 1 : 0,
 		rushed: (rec.rushingStartCount ?? 0) > 0 ? 1 : 0,
 	};

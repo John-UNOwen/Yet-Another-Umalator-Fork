@@ -14,7 +14,11 @@
  *                        connections, so a long-poll PER worker would pin the
  *                        pool at ~6 workers no matter the threads setting.
  *                        One held GET feeds all workers; ids= refreshes on
- *                        watch (abort → immediate re-GET).
+ *                        watch (abort → immediate re-GET). A window is
+ *                        dropped server-side only when the next poll carries
+ *                        ack=1 (set only after full dispatch), so an
+ *                        aborted/dropped response is redelivered — results
+ *                        windows are never lost.
  *   worker crash       → child exit pushes {type:'__died'} OR transport loss →
  *                        ONE 'error' event per worker (pool then recreates)
  *   terminate()        → unwatch + DELETE (child killed server-side)
@@ -89,6 +93,11 @@ class SimMux {
 	private handlers = new Map<string, (m: any) => void>();
 	private running = false;
 	private ac: AbortController | null = null;
+	// Dequeue-on-ack (mirrors sim-server): true only when the PREVIOUS
+	// response was fully received AND dispatched — only then does the next
+	// poll's ack=1 let the server drop that window. A response lost to an
+	// abort/drop leaves this false, so the server redelivers the window.
+	private ackNext = false;
 
 	private constructor(private readonly base: string, private readonly token: string) {}
 
@@ -108,14 +117,18 @@ class SimMux {
 		while (this.handlers.size > 0) {
 			const ac = new AbortController();
 			this.ac = ac;
+			// The ack rides this request only; until the response below is
+			// dispatched in full, the window stays unacked server-side.
+			const ack = this.ackNext;
+			this.ackNext = false;
 			let got: Array<{ s: string; m: any }>;
 			try {
 				const ids = [...this.handlers.keys()].join(',');
-				const res = await fetch(`${this.base}/multiplex?ids=${encodeURIComponent(ids)}`, { headers: simHdrs(this.token), signal: ac.signal });
+				const res = await fetch(`${this.base}/multiplex?ids=${encodeURIComponent(ids)}${ack ? '&ack=1' : ''}`, { headers: simHdrs(this.token), signal: ac.signal });
 				if (!res.ok) { this.failAll(`http ${res.status}`); return; }
 				got = (await res.json() as any).msgs ?? [];
 			} catch (e: any) {
-				if (e?.name === 'AbortError') continue;   // id set changed → immediate re-GET
+				if (e?.name === 'AbortError') continue;   // id set changed → immediate re-GET (the unacked window is redelivered)
 				this.failAll(String(e?.message || e));
 				return;
 			}
@@ -124,6 +137,7 @@ class SimMux {
 				if (m && m.type === '__died') this.handlers.delete(s);
 				if (h) { try { h(m); } catch { /* caller */ } }
 			}
+			this.ackNext = true;   // window dispatched in full → the next poll acknowledges it
 		}
 		this.running = false;
 	}

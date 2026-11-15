@@ -140,7 +140,11 @@ function formatBashin(bashin: number): string {
 	return `${sign}${bashin.toFixed(2)}L`;
 }
 
-function calcStats(results: number[]) {
+/** Aggregated finish-margin stats (min/max/mean/median). Sorts defensively —
+ *  the engine's margin array arrives in chunk-arrival order, not sorted.
+ *  Exported so the Race Summary drawer headline reads the same aggregated
+ *  median the summary tiles report (app-v2.tsx). */
+export function calcStats(results: number[]) {
 	if (results.length === 0) return { min: 0, max: 0, mean: 0, median: 0 };
 	const sorted = [...results].sort((a, b) => a - b);
 	const min = sorted[0];
