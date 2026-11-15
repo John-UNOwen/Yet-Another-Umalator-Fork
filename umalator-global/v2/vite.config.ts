@@ -117,13 +117,20 @@ export default defineConfig(({ mode }) => {
   // Can be overridden via VITE_BASE env var if needed
   base: process.env.VITE_BASE || './',
 
-  // Dev server config
+  // Dev server config. host: true binds every interface, so a phone or
+  // laptop on the LAN can open http://<this-pc>:5173 (Windows may ask to
+  // allow node through the Firewall on first run).
   server: {
+    host: true,
     port: 5173,
     // Serve static files from project root (for icons/, fonts/, etc.)
     fs: {
       allow: [projectRoot]
     }
+  },
+  preview: {
+    host: true,
+    port: 4173,
   },
 
   resolve: {
