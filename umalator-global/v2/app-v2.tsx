@@ -57,7 +57,6 @@ import {
   Menu,
   Book,
   Calendar,
-  Heart,
   LayoutGrid,
   Wand2,
 } from "lucide-react";

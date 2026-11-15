@@ -14,13 +14,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | Application | URL | Description |
 |------------|-----|-------------|
-| **V2 simulator (default landing)** | [umalator.app](https://umalator.app/) | V2 modern Global UI — served at the root. Old `/umalator-global/v2` and `/v2` paths 301 here (`_redirects`). |
-| **V1 Global simulator** | [/umalator-global](https://umalator.app/umalator-global) | Original Global simulator (English) |
-| **JP simulator** | [/umalator](https://umalator.app/umalator) | Bilingual JP simulator |
+| **V2 simulator (default landing)** | [umalator.app](https://umalator.app/) | The simulator — GlobalSim (wasm) engine, Compare / Skill / Optimizer modes. Served at the root. Old `/umalator-global/v2` and `/v2` paths 301 here, as do the retired `/umalator`, `/umalator-global` and `/hp-calculator` roots (`_redirects`; exact paths only, so `/umalator-global/` sub-apps below stay reachable). |
 | **Skill visualizer (v2 — primary)** | [/skill-visualizer](https://umalator.app/skill-visualizer) | Modern Global v2 skill activation visualizer. Rewrite (URL stays) to `/umalator-global/skill-visualizer/v2/` via `_redirects`. |
 | **Skill visualizer (JP — legacy)** | [/skill-visualizer-jp](https://umalator.app/skill-visualizer-jp) | Original JP-data visualizer (was at `/skill-visualizer/` before the v2 reshuffle). |
 | **Skill visualizer (Global v1 — legacy)** | [/umalator-global/skill-visualizer](https://umalator.app/umalator-global/skill-visualizer) | Original Global-data visualizer; unchanged path. |
-| **HP calculator** | [/hp-calculator](https://umalator.app/hp-calculator) | HP survival rate calculator |
 | **Mechanics Explorer** | [/mechanics-explorer](https://umalator.app/mechanics-explorer) | Stat → race-mechanics formula explorer (live readout + stat-sweep charts). Rewrite to `/umalator-global/mechanics-explorer/` via `_redirects`. |
 | **Events** | [/events](https://umalator.app/events) | Upcoming race tracker with gacha banners |
 | **Team Trials planner** | [/team-trials](https://umalator.app/team-trials) | Team Stadium lineup planner (5 teams × 3 runners) |
@@ -30,29 +27,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Project Structure
 
 ```
-├── umalator/                    # JP simulator source (v1)
-├── umalator-global/             # Global simulator (v1 + v2)
-│   ├── v2/                      # V2 modern UI (experimental)
-│   │   ├── app-v2.tsx          # Main v2 application
+├── umalator-global/             # Global simulator app (v2)
+│   ├── v2/                      # The app (served at the site root)
+│   │   ├── app-v2.tsx          # Main application
+│   │   ├── engines/globalsim/  # GlobalSim engine layer (worker, wasm bridge, modes)
 │   │   ├── components/         # V2-specific components
 │   │   ├── tour/               # Onboarding tour system
 │   │   ├── velocity-overlay.tsx
 │   │   ├── results-pane.tsx
 │   │   └── vite.config.ts      # V2 uses Vite
 │   ├── mechanics-explorer/      # Stat → mechanics formula explorer (standalone sub-app)
-│   ├── build.mjs               # Builds both v1 and v2
+│   ├── build.mjs               # Builds the v2 app + generates its data files
 │   ├── skill_data.json         # English game data
 │   └── course_data.json
-├── hp-calculator/               # HP calculator tool
 ├── events/                      # Events page
-├── uma-skill-tools/             # Core simulation library
+├── uma-skill-tools/             # Shared library (enums, course data, skill parsing, cost calc)
 ├── tools/                       # Utility scripts
 │   └── pull-master-mdb.sh      # Pull latest Global master.mdb from MEGA
 ├── docs/                        # Documentation and reference data
 │   └── master.mdb              # Global master.mdb (source of truth for in-game data)
 ├── uma-tools-worker/            # Cloudflare Worker for webhooks
 ├── components/                  # Shared UI components
-│   ├── HorseDef.tsx
 │   ├── RaceTrack.tsx
 │   ├── RacetrackCow.tsx         # Visual cow easter egg
 │   └── RacetrackCowMooCoins.tsx # MooCoins wrapper (dev only)
@@ -63,17 +58,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Building Frontend Applications
 
-**Umalator (v1 + v2):**
+**Simulator app (v2):**
 ```bash
 cd umalator-global
-node build.mjs              # Build both v1 and v2 (production)
+node build.mjs              # Build v2 (production)
 node build.mjs --serve      # Dev server with hot reload
 node build.mjs --serve 3000 # Custom port
 node build.mjs --debug      # Unminified with assertions
 ```
 
-**Access URLs:**
-- V1: `http://localhost:8000/umalator-global/`
+**Access URL:**
 - V2: `http://localhost:8000/umalator-global/v2/`
 
 The dev server:
@@ -83,7 +77,6 @@ The dev server:
 
 **Other Applications:**
 ```bash
-cd hp-calculator && node build.mjs
 cd events && node build.mjs
 cd skill-visualizer && npm run build  # or build.bat on Windows
 cd build-planner && npm run build
@@ -173,33 +166,40 @@ All frontend apps use:
 - **Preact** (React alternative) with JSX via `jsxFactory: "h"`
 - **D3.js** for charts and visualizations
 - **Immutable.js** for state management
-- **esbuild** for bundling (v1)
-- **Vite** for v2 development (optional)
+- **esbuild** for bundling (`umalator-global/build.mjs`)
+- **Vite** for the v2 app — dev server (HMR) and the deployed `dist/` build
 
 TypeScript config uses `"moduleResolution": "bundler"` and targets ES2018.
 
-### V1 vs V2
+### Engine: GlobalSim only
 
-**V1 (Classic):**
-- Original UI in `umalator/app.tsx`
-- Single-page layout with sidebars
-- Built with esbuild
-- Served at `/umalator-global/`
+There is one simulation engine: **GlobalSim**, the Rust engine vendored at
+`vendor/GlobalSim` (pinned by `vendor/GlobalSim/VERSION`, currently `v77`), compiled to wasm
+by the `globalsim-wasm/` crate and run in the browser by the worker in
+`umalator-global/v2/engines/globalsim/` (`globalsim.worker.ts` + `workerCore.ts`).
 
-**V2 (Experimental):**
+The classic TypeScript engine has been removed: the JP v1 app, the classic Global v1 app,
+the v2 classic worker (`v2/simulator.worker.ts`) and the HP/stamina calculator all went with
+it. There is no v1 left to compare against — `umalator-global/v2/` is the app, served at the
+site root, with three modes (Compare, Skill, Optimizer), all on GlobalSim.
+
+`uma-skill-tools/` is still imported (enums in `RaceParameters.ts`, course data,
+`ConditionParser`, skill cost building via `RaceSolverBuilder`), but it no longer runs the
+simulation.
+
+**The app (v2):**
 - Modern redesigned UI in `umalator-global/v2/`
 - Component-based architecture
 - Mobile-first responsive design
 - Guided onboarding tour
 - Modal dialogs, feedback drawer, mobile navigation
-- Built with esbuild (can use Vite for dev)
-- Served at `/umalator-global/v2/`
+- Built with esbuild (`build.mjs`); the deployed bundle comes from the Vite `dist/` build
+- Served at the site root (the old `/umalator-global/v2/` path 301s there)
 
-Both versions:
-- Share the same simulation engine (`uma-skill-tools`)
-- Share data files (skill_data.json, course_data.json)
-- Share core components (`components/`)
-- Use `CC_GLOBAL` flag to toggle JP/Global variants
+Everything else is shared as before:
+- Data files (skill_data.json, course_data.json)
+- Core components (`components/`)
+- `CC_GLOBAL` build define, always `'true'` in the app
 
 ### V2 Component Architecture
 
@@ -251,7 +251,6 @@ v2/
 ### Key Shared Components
 
 **Horse Configuration:**
-- `HorseDef.tsx`: Horse configuration UI with save/load functionality
 - `HorseDefTypes.ts`: HorseState Record class (Immutable.js) with regional defaults
 - `UmaCard.ts`: PNG export/import with embedded JSON metadata
 - `OCRModal.tsx` + `GeminiOCR.ts`: Screenshot import using Google Gemini AI
@@ -295,7 +294,7 @@ flow across two environments:
 
 | Consumer | File | Env | Auth |
 |---|---|---|---|
-| v2 + v1 web modals | `components/GeminiOCR.ts` (shared lib) | Browser | Proxy (no key) → user-key fallback |
+| v2 web modal | `components/GeminiOCR.ts` (shared lib) | Browser | Proxy (no key) → user-key fallback |
 | OCR proxy | `uma-tools-worker/webhook-proxy.js` | Cloudflare Worker | Server `GEMINI_API_KEY` secret |
 | Discord bot | `uma-tools-bot/src/gemini-ocr.ts` | Node | Server key |
 
@@ -354,16 +353,20 @@ the new model has a free tier if you rely on the proxy).
 - Loads Champions Meeting/LoH event settings
 - Takes priority over hash-based state
 
-### umalator vs umalator-global
+### `CC_GLOBAL` (Global-only app)
 
-Both share the same source code (`umalator/app.tsx`, etc.) but differ in:
-- **Build flag**: `CC_GLOBAL: 'true'` vs `'false'` (set by esbuild)
-- **Data files**: Global uses English data in `umalator-global/*.json`
-- **Presets**: Different Champions Meeting/LOH event presets per region
+The JP simulator variant was removed. Every simulator build defines `CC_GLOBAL: 'true'` —
+`umalator-global/build.mjs` for esbuild, `umalator-global/v2/vite.config.ts` for Vite — and
+reads the Global/English data files in `umalator-global/`.
 
-The `CC_GLOBAL` flag controls UI strings (e.g., "Firm/Good/Soft/Heavy" vs "良/稍重/重/不良") and which race presets are shown.
+The flag is still read by shared code, so components keep compiling both ways: skill level
+labels in `components/SkillList.tsx`, regional default stats in `components/HorseDefTypes.ts`,
+the language storage key in `components/Language.tsx`. The JP skill visualizer
+(`skill-visualizer-jp/build.mjs`) is the one remaining build with `CC_GLOBAL: 'false'`.
 
-**See [.claude/UMALATOR-GLOBAL-MAPPING.md](.claude/UMALATOR-GLOBAL-MAPPING.md)** for detailed file mapping, build process comparison, and data redirect plugin documentation.
+**See [.claude/UMALATOR-GLOBAL-MAPPING.md](.claude/UMALATOR-GLOBAL-MAPPING.md)** — historical
+reference: it describes the retired `umalator/` (JP) build layout that the old Global v1 build
+aliased into itself.
 
 ### Data Files
 
@@ -532,7 +535,7 @@ To add a character/outfit that exists in JP but not yet on Global:
 
 ## Adding Race Event Presets
 
-Race presets (Champions Meeting, League of Heroes) are in `umalator/app.tsx` lines 56-67.
+Race presets (Champions Meeting, League of Heroes) live in `umalator-global/v2/presets.ts`.
 
 ### Finding Course IDs
 
@@ -542,11 +545,15 @@ jq 'to_entries | .[] | select(.value.raceTrackId == 10008 and .value.distance ==
 # Returns: "10810" (Kyoto 3000m)
 ```
 
-Track IDs (in `tracknames.json`): Tokyo=10006, Kyoto=10008, Nakayama=10005, Hanshin=10009
+Track IDs (in `umalator-global/tracknames.json`): Tokyo=10006, Kyoto=10008, Nakayama=10005, Hanshin=10009
 
 ### Adding a Preset
 
-Edit the `CC_GLOBAL ? [...]` array in `umalator/app.tsx`:
+The CM list is generated, not hand-edited: `build.mjs` → `generateCMPresets()` writes
+`v2/cm-presets.generated.json`, which `presets.ts` reads. Race conditions come from the JP DB
+(`docs/master(1).mdb`), run dates from the Global `docs/master.mdb`, falling back to the
+hand-maintained `v2/cm-dates.json` for CMs the Global client does not know yet (a CM with no
+resolvable date is skipped). Entries look like this:
 
 ```typescript
 // Example: CM 8 - Sagittarius Cup (added January 2026)
@@ -563,16 +570,20 @@ Edit the `CC_GLOBAL ? [...]` array in `umalator/app.tsx`:
 }
 ```
 
+So adding a future CM normally means adding its `"id": "YYYY-MM-DD"` entry to
+`v2/cm-dates.json` and rebuilding.
+
 **Parameters:**
-- **id**: Unique numeric identifier (optional but recommended)
+- **id**: CM number (unique; this is the key into the JP and Global schedules)
 - **type**: `EventType.CM` or `EventType.LOH`
-- **name**: Display name (required for Global with id)
-- **date**: `'YYYY-MM'` or `'YYYY-MM-DD'`
+- **name**: Display name — the generator derives it from the CM number (CM 1 = Taurus)
+- **date**: `'YYYY-MM-DD'`
 - **courseId**: From `course_data.json` (e.g., 10506 = Nakayama 2500m inner)
 - **season**: `Season.Spring|Summer|Autumn|Winter`
 - **ground**: `GroundCondition.Good` (=Firm), `Yielding` (=Good), `Soft`, `Heavy`
 - **weather**: `Weather.Sunny|Cloudy|Rainy|Snowy`
 - **time**: `Time.Morning|Midday|Evening|Night`
+- **confirmed**: `true` when the date came from the shipped Global schedule, `false` for a `cm-dates.json` prediction
 
 **Note**: LOH events ignore ground/weather (always Firm/Sunny). Presets auto-sort by date.
 
@@ -761,37 +772,23 @@ Essential for working with skill conditions, race parameters, and understanding 
 
 ```bash
 # Build all applications
-npm run build:all  # = build:global; JP v1 retired, no umalator/ build step
-node umalator-global/build.mjs  # Builds both v1 and v2
-node hp-calculator/build.mjs
+npm run build:all  # = build:global (the v2 app); the retired v1 / HP-calculator apps have no build step
+node umalator-global/build.mjs  # Builds the v2 app (+ regenerates its data files)
 node events/build.mjs
 ```
 
 ### Cache Busting
 
-V1 uses manual version query parameters for cache busting. When deploying significant changes (especially bug fixes), bump the version string to force browsers to fetch fresh bundles.
+The app is the v2 Vite build, and Vite cache-busts it automatically: `vite build` emits
+content-hashed filenames (`assets/index-<hash>.js`, `assets/index-<hash>.css`) and the generated
+`index.html` references them. Nothing to bump by hand.
 
-**Files to update:**
-- `umalator-global/index.html`: Update `?v=YYYYMMDD[x]` on `bundle.css` and `bundle.js`
-- `umalator/app.tsx`: Update `?v=YYYYMMDD[x]` on `simulator.worker.js` (line ~1632)
+The one fixed-name output is the engine worker: `worker.rollupOptions` in `v2/vite.config.ts`
+sets `entryFileNames: '[name].js'`, so `globalsim.worker.js` is copied to the site root by
+`build-all.sh` (the main bundle resolves it as `../globalsim.worker.js`).
 
-**Example:**
-```html
-<!-- Before -->
-<link rel="stylesheet" href="bundle.css?v=20260220">
-<script src="bundle.js?v=20260220"></script>
-
-<!-- After (bump with letter suffix for same-day changes) -->
-<link rel="stylesheet" href="bundle.css?v=20260220a">
-<script src="bundle.js?v=20260220a"></script>
-```
-
-**When to bump:**
-- Bug fixes that users with cached bundles would miss
-- Breaking changes to the worker protocol
-- After updating skill_data.json or other embedded data
-
-**Note:** V2 uses Vite for production builds, which handles cache busting automatically via content hashing.
+The old v1 scheme — hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js` /
+`bundle.css` / `simulator.worker.js` — is gone along with the classic app.
 
 ### Cloudflare Pages
 

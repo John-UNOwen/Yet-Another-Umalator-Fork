@@ -27,7 +27,6 @@ cd ../..
 echo "Copying v2 to root..."
 cp umalator-global/v2/dist/index.html ./index.html
 cp umalator-global/v2/dist/favicon.svg ./favicon.svg 2>/dev/null || true
-cp umalator-global/v2/dist/simulator.worker.js ./simulator.worker.js 2>/dev/null || true
 # globalsim.worker.js sits at the v2 dist root (worker.rollupOptions entryFileNames
 # '[name].js') and the main bundle resolves it as ../globalsim.worker.js from
 # /assets/, i.e. the site root — it must be copied here or the default engine 404s.
@@ -35,12 +34,12 @@ cp umalator-global/v2/dist/globalsim.worker.js ./globalsim.worker.js 2>/dev/null
 rm -rf assets
 cp -r umalator-global/v2/dist/assets ./assets
 
-# NOTE: the JP v1 app (umalator/app.tsx + its build.mjs) was retired on 2026-08-27;
-# /umalator and /umalator-global now 301 to the v2 root via _redirects. umalator/ still
-# holds shared sim glue (compare.ts, hpcalc.ts, BasinnChart.tsx) that v2 imports, but
-# there is nothing to build there. Leaving the old `cd umalator && node build.mjs` here
-# broke every Pages build for a week: set -e aborted the script at that step, so the
-# deploy failed and the site kept serving pre-merge assets.
+# NOTE: the JP v1 app and the classic Global v1 app were both retired; their
+# routes (/umalator, /umalator-global) 301 to the v2 root via _redirects. The
+# classic simulator glue (umalator/, uma-skill-tools-v1/, the classic worker) was
+# removed once GlobalSim became the only engine, so there is nothing to build for
+# them. The old `cd umalator && node build.mjs` step was deleted here for the same
+# reason it broke Pages builds before: set -e aborted the whole deploy on it.
 
 echo ""
 echo "Building skill-visualizer (JP) → /skill-visualizer-jp/..."
@@ -88,5 +87,3 @@ echo ""
 echo "========================================="
 echo "Build complete! All applications ready."
 echo "========================================="
-# Note: hp-calculator uses Vite (requires Node 20+) and is built locally.
-# Pre-built files (bundle.js, bundle.css, index.html) are committed to git.

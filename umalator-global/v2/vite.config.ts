@@ -9,11 +9,9 @@ const projectRoot = path.resolve(__dirname, '../..');
 // Custom plugin to redirect data file imports to Global versions
 // This matches esbuild's redirectData plugin behavior
 function redirectDataFiles(): Plugin {
-  // Both engines resolve their data to the same Global files: engine v2 (ours) and
-  // engine v1 (vendored alpha123, see tools/sync-upstream-engine.mjs).
+  // The engine resolves its data to the same Global files.
   const engineDataDirs = [
     path.join(projectRoot, 'uma-skill-tools/data'),
-    path.join(projectRoot, 'uma-skill-tools-v1/data')
   ];
 
   return {

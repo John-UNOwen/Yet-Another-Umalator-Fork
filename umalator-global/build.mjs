@@ -535,7 +535,7 @@ const MIME_TYPES = {
 	'.woff': 'font/woff'
 };
 
-const ARTIFACTS = ['bundle.js', 'bundle.css', 'simulator.worker.js', 'bundle-v2.js', 'bundle-v2.css'];
+const ARTIFACTS = ['bundle-v2.js', 'bundle-v2.css'];
 
 function runServer(ctx, port) {
 	const requestCount = new Map(ARTIFACTS.map(f => [f, 0]));
@@ -548,8 +548,6 @@ function runServer(ctx, port) {
 		.filter(b => b && b.length > 0)
 		.map(b => b.replace(/^\//, '') + '/')
 		.filter((v, i, a) => a.indexOf(v) === i);
-	// client makes two requests for simulator.worker.js, avoid rebuilding on the second one
-	let workerState = 0;
 	http.createServer(async (req, res) => {
 		// Raw request URLs keep '..' segments and path.join(root, url) would
 		// normalize them out of root — refuse them (same guard as mechanics-explorer).
@@ -571,7 +569,7 @@ function runServer(ctx, port) {
 		const isV2Artifact = artifactKey.startsWith('v2/') && ARTIFACTS.some(a => artifactKey.endsWith(a.replace('bundle-v2', 'bundle-v2')));
 		const artifactName = isV2Artifact ? path.basename(artifactKey) : filename;
 		if (!isSkillVis && ARTIFACTS.indexOf(artifactName) > -1) {
-			const requestN = requestCount.get(artifactName) + (artifactName == 'simulator.worker.js' ? (workerState = +!workerState) : 1);
+			const requestN = requestCount.get(artifactName) + 1;
 			requestCount.set(artifactName, requestN);
 			if (requestN != buildCount) {
 				buildCount += 1;

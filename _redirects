@@ -27,6 +27,12 @@
 /umalator/ / 301
 /umalator/index.html / 301
 
+# HP calculator dropped (it only ever ran on the classic engine). Its old URLs
+# now go to the app.
+/hp-calculator / 301
+/hp-calculator/ / 301
+/hp-calculator/* / 301
+
 # Backward compat: old v2 URLs → root
 /umalator-global/v2/* /:splat 301
 /v2/* /:splat 301
