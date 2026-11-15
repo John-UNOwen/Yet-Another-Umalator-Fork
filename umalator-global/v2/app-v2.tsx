@@ -62,6 +62,7 @@ import {
   Calendar,
   Heart,
   LayoutGrid,
+  Wand2,
 } from "lucide-react";
 import { V2TrackSelect } from "./track-select";
 import { CompactConditions } from "./conditions";
@@ -73,6 +74,7 @@ import { V2ResultsPane, CompareResults, RaceSnapshot } from "./results-pane";
 import { VelocityOverlay } from "./velocity-overlay";
 import { TourProvider, TourOverlay } from "./tour";
 import { SkillChartPane } from "./skill-chart-pane";
+import { OptimizerPane } from "./optimizer-pane";
 import { SkillChartDetail } from "./skill-chart-detail";
 import { StaCalcResults } from "./stacalc";
 // import { PasswordGate } from "./PasswordGate";
@@ -295,7 +297,7 @@ function App() {
 
   // Simulation settings
   const [samples, setSamples] = useState(savedSession.current?.samples ?? 500);
-  const [mode, setMode] = useState<"compare" | "skill" | "stamina">(
+  const [mode, setMode] = useState<"compare" | "skill" | "stamina" | "optimizer">(
     savedSession.current?.mode ?? "compare",
   );
   const [seed, setSeed] = useState(() =>
@@ -701,7 +703,9 @@ function App() {
         season,
         time,
         samples,
-        mode,
+        // "optimizer" persists as-is; storage's SessionState union predates it
+        // (loadSession normalizes unknown modes back to "compare").
+        mode: mode as "compare" | "skill" | "stamina",
         uma1,
         uma2,
       });
@@ -1160,6 +1164,36 @@ function App() {
     globalsimThreads,
     simServerOnline,
     globalsimWorkerFactory,
+  ]);
+
+  // Candidate skills for the Skill Optimizer pane — the same activateable +
+  // coverage filter as handleRunSkillChart (plan Phase 2b pre-filter).
+  const optimizerCandidates = useMemo(() => {
+    const course = courseData[courseId];
+    if (!course) return [] as string[];
+    const racedef = buildRaceParameters(
+      ground,
+      weather,
+      season,
+      time,
+      uma1.strategy,
+    );
+    const baseSkills = getBaseSkillsToTest(uma1, hideNotInGame);
+    return getActivateableSkills(
+      baseSkills,
+      uma1,
+      course,
+      racedef,
+    ).filter((id) => !globalsimSkillIds || globalsimSkillIds.has(id));
+  }, [
+    courseId,
+    ground,
+    weather,
+    season,
+    time,
+    uma1,
+    hideNotInGame,
+    globalsimSkillIds,
   ]);
 
   // Run simulation via worker
@@ -1791,6 +1825,14 @@ function App() {
                     <Heart size={14} />
                     Stamina
                   </button>
+                  <button
+                    type="button"
+                    class={mode === "optimizer" ? "active" : ""}
+                    onClick={() => setMode("optimizer")}
+                  >
+                    <Wand2 size={14} />
+                    Optimizer
+                  </button>
                 </div>
                 <Button
                   variant="primary"
@@ -2339,6 +2381,24 @@ function App() {
                       </div>
                     )}
                   </div>
+                ) : mode === "optimizer" ? (
+                  /* RESULTS - Skill Optimizer mode (GlobalSim engine) */
+                  <OptimizerPane
+                    workerFactory={globalsimWorkerFactory}
+                    uma={uma1}
+                    candidates={optimizerCandidates}
+                    skillData={globalsimSkillTable}
+                    course={courseData[courseId]}
+                    courseId={courseId}
+                    conditions={{ ground, weather, season, time }}
+                    mobPreset={
+                      (mobPresets as any)[globalsimFieldPreset] ??
+                      (mobPresets as any)["default"]
+                    }
+                    ownedByGroup={hasSkills}
+                    hints={skillHints}
+                    seed={seed}
+                  />
                 ) : (
                   /* RESULTS - Compare mode */
                   <V2ResultsPane
@@ -2471,7 +2531,7 @@ function App() {
                     <TraineesTab
                       onLoadToUma1={handleUma1Load}
                       onLoadToUma2={handleUma2Load}
-                      currentMode={mode}
+                      currentMode={mode as "compare" | "skill" | "stamina"}
                       currentUma1={uma1}
                       currentUma2={uma2}
                     />
@@ -2482,7 +2542,7 @@ function App() {
                       onStateChange={setUmasState}
                       onLoadToUma1={(s) => { handleUma1Load(s); setActiveUmaTab(1); }}
                       onLoadToUma2={(s) => { handleUma2Load(s); setActiveUmaTab(2); }}
-                      currentMode={mode}
+                      currentMode={mode as "compare" | "skill" | "stamina"}
                       course={courseData[courseId]}
                     />
                   )}
@@ -2778,6 +2838,14 @@ function App() {
                         >
                           <Heart size={14} />
                           Stamina
+                        </button>
+                        <button
+                          type="button"
+                          class={mode === "optimizer" ? "active" : ""}
+                          onClick={() => setMode("optimizer")}
+                        >
+                          <Wand2 size={14} />
+                          Optimizer
                         </button>
                       </div>
                     </div>

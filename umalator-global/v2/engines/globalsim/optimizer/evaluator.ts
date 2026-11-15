@@ -72,26 +72,35 @@ export interface EnsureReq {
 	positions: number[];
 }
 
-export interface Evaluator {
+/**
+ * The narrow surface the pipeline (bandit/search/tests with synthetic
+ * evaluators) needs. createEvaluator returns the full Evaluator, so the real
+ * engine path satisfies this by construction; a fake only implements these.
+ */
+export interface SearchEvaluator {
 	/** First n seeds of one namespace/scenario list (deterministic; lists are
 	 *  fixed-size per scenario, so prefixes are stable forever). */
 	seeds(ns: string, scenarioIdx: number, n: number): number[];
-	seedPosition(ns: string, scenarioIdx: number, seed: number): number;
 	/** Run all missing slots across the requests in ONE pool batch. */
 	ensure(reqs: EnsureReq[]): Promise<{ jobErrors: Array<{ jobId: string; error: string }> }>;
 	/** Cached seed slots for a build/scenario ([] when unknown). */
 	slots(ns: string, scenarioIdx: number, identity: string): SeedSlot[];
 	/** Races dispatched so far (progress). */
 	racesRun(): number;
-	cacheStats(): ReturnType<EvalCache['stats']>;
 	stats(ns: string, scenarioIdx: number, build: BuildRefLite): BuildStats | null;
 	paired(ns: string, scenarioIdx: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null): PairedDiff | null;
 	/** Objective value + CI of one build (§6.1; meanPlacing sign-flipped;
 	 *  gainVsCurrent pairs against `vs`). */
 	objective(ns: string, scenarioIdx: number, build: BuildRefLite, obj: ObjectiveKind, vs?: BuildRefLite): MeanSem | null;
+	/** Release anything external (pool/threads). Cache semantics end here. */
+	dispose(): void;
+}
+
+export interface Evaluator extends SearchEvaluator {
+	seedPosition(ns: string, scenarioIdx: number, seed: number): number;
+	cacheStats(): ReturnType<EvalCache['stats']>;
 	/** Free the pool (Stop). The cache survives; the next ensure starts fresh workers. */
 	abort(): void;
-	dispose(): void;
 }
 
 /** Deterministic per-scenario salt (scenario 0 keeps the raw base seed). */
@@ -153,6 +162,40 @@ export function statsOf(values: SeedSlot[]): BuildStats {
 
 /** Seed slot position cap (verify lists slice below this). */
 const SEED_LIST_SIZE = 20000;
+
+/** Paired diff over two slot arrays (§6.2, shared with synthetic evaluators). */
+export function pairedOf(a: SeedSlot[], b: SeedSlot[], pick: (v: SeedValue) => number | null): PairedDiff | null {
+	const d: number[] = [];
+	const n = Math.min(a.length, b.length);
+	for (let i = 0; i < n; i++) {
+		const x = a[i], y = b[i];
+		if (x == null || x === 'err' || y == null || y === 'err') continue;
+		const px = pick(x), py = pick(y);
+		if (px == null || py == null) continue;
+		d.push(px - py);
+	}
+	if (!d.length) return null;
+	const ms = meanSem(d);
+	// metrics.ci95 takes the STANDARD DEVIATION (it divides by √n itself).
+	const sd = ms.sem * Math.sqrt(ms.n);
+	return { mean: ms.mean, sem: ms.sem, n: ms.n, ci95: ci95(ms.mean, sd, ms.n) };
+}
+
+/** §6.1 objective from measured stats (bigger = better everywhere);
+ *  gainVsCurrent needs the caller's paired diff vs the reference build. */
+export function objectiveOf(st: BuildStats, obj: ObjectiveKind, gain: PairedDiff | null): MeanSem | null {
+	switch (obj) {
+		case 'p1': return st.win;
+		case 'meanLead': return st.lead;
+		case 'pTop3': return st.top3;
+		// LOWER placing is better ⇒ sign-flip so bigger objective = better.
+		case 'meanPlacing':
+			return { mean: isFinite(st.placing.mean) ? -st.placing.mean : NaN, sem: st.placing.sem, n: st.placing.n };
+		case 'gainVsCurrent':
+			return gain ? { mean: gain.mean, sem: gain.sem, n: gain.n } : { mean: NaN, sem: NaN, n: 0 };
+		default: return null;
+	}
+}
 
 export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	const cache = new EvalCache(o.cacheCapBytes ?? CACHE_CAP_BYTES);
@@ -224,21 +267,8 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	}
 
 	function pairedFor(ns: string, si: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null): PairedDiff | null {
-		const ea = cache.peek(ns, sid(si), a.id);
-		const eb = cache.peek(ns, sid(si), b.id);
-		if (!ea || !eb) return null;
-		const d: number[] = [];
-		const n = Math.min(ea.values.length, eb.values.length);
-		for (let i = 0; i < n; i++) {
-			const x = ea.values[i], y = eb.values[i];
-			if (x == null || x === 'err' || y == null || y === 'err') continue;
-			const px = pick(x), py = pick(y);
-			if (px == null || py == null) continue;
-			d.push(px - py);
-		}
-		if (!d.length) return null;
-		const ms = meanSem(d);
-		return { mean: ms.mean, sem: ms.sem, n: ms.n, ci95: ci95(ms.mean, ms.sem, ms.n) };
+		// shared implementation (synthetic evaluators reuse pairedOf verbatim)
+		return pairedOf(cache.peek(ns, sid(si), a.id)?.values ?? [], cache.peek(ns, sid(si), b.id)?.values ?? [], pick);
 	}
 
 	return {
@@ -330,20 +360,8 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 		objective(ns, si, build, obj, vs) {
 			const st = statsFor(ns, si, build);
 			if (!st) return null;
-			switch (obj) {
-				case 'p1': return st.win;
-				case 'meanLead': return st.lead;
-				case 'pTop3': return st.top3;
-				// LOWER placing is better ⇒ sign-flip so bigger objective = better.
-				case 'meanPlacing':
-					return { mean: isFinite(st.placing.mean) ? -st.placing.mean : NaN, sem: st.placing.sem, n: st.placing.n };
-				case 'gainVsCurrent': {
-					if (!vs) return null;
-					const p = pairedFor(ns, si, build, vs, v => v.lead);
-					return p ? { mean: p.mean, sem: p.sem, n: p.n } : { mean: NaN, sem: NaN, n: 0 };
-				}
-				default: return null;
-			}
+			const gain = obj === 'gainVsCurrent' && vs ? pairedFor(ns, si, build, vs, v => v.lead) : null;
+			return objectiveOf(st, obj, gain);
 		},
 		abort() { if (pool) { pool.abort(); pool = null; } }, // terminal for the pool; cache survives
 		dispose() { if (pool) { pool.dispose(); pool = null; } },
@@ -357,7 +375,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
  * reuses these seeds from cache (never wasted).
  */
 export async function calibrateNoise(
-	ev: Evaluator, cfg: EffortConfig, si: number,
+	ev: SearchEvaluator, cfg: EffortConfig, si: number,
 	base: BuildRefLite, variants: BuildRefLite[],
 ): Promise<NoiseInfo> {
 	const n = Math.min(cfg.noiseSeeds, SEED_LIST_SIZE);

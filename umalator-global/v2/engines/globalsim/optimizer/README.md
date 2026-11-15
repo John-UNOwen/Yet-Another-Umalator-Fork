@@ -16,10 +16,15 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
 - `cache.ts` — transposition table, position-indexed seed slots, LRU + pins
 - `evaluator.ts` — the only engine path: seed lists (search ∩ verify = ∅),
   missing-seed scheduling through `pool.ts`, SeedValue folding, paired stats
-- `bandit.ts` — successive-halving / LUCB seed allocation (§9)
-- `surrogate.ts` — ridge+pair-feature model for move ordering (§8 E)
-- `search.ts` — Stages A–G orchestration (anytime)
-- `book.ts` — opening book (localStorage `umalator_v2_optimizer_book`)
+- `bandit.ts` — successive-halving seed allocation vs the incumbent (§9):
+  every candidate's last Δ (eliminated included) is returned for the Stage D
+  re-solve; LUCB plugs in behind the same result shape (Phase 3)
+- `surrogate.ts` — ridge+pair-feature model for move ordering (§8 E) — Phase 4, not yet present
+- `search.ts` — Stages B–D + G orchestration (anytime): chart-parity screening,
+  MCKP restarts, in-context drop/add/replace/pair moves with bandit allocation
+  and knapsack re-solve (ℓ is the search currency, §6.1), fresh-seed Stage G
+  verification with honest ties
+- `book.ts` — opening book (localStorage `umalator_v2_optimizer_book`) — Phase 5, not yet present
 
 Outside this directory only three things changed: `workerCore.ts` compact
 records carry `bestRivalFinishTimeRaw` (both the JS and the wasm
@@ -52,8 +57,12 @@ fresh numbers).
 ## Tests
 
 - `npm run test:optimizer` — pure units (space/knapsack/cache/stats) + the
-  live-engine evaluator integration (40 seeds; seconds).
-- `npm run test:optimizer:slow` — Phase-3 real-engine exhaustive check: 3
+  live-engine evaluator integration (40 seeds; seconds) + the synthetic
+  oracle (`search.oracle.test.ts`: 100 small instances fully enumerated,
+  recommendation must be the optimum, within δ_min, or a statistical tie —
+  gate ≥95%; Gaussian noise calibrated to the σ table above, CRN shared field
+  noise + per-build term).
+- `npm run test:optimizer:slow` — Phase-3 real-engine exhaustive check (planned, not yet wired): 3
   setups × ~12 options fully enumerated (minutes, node).
 - `npm run test:globalsim-compact` — the record the optimizer reads is
   bit-identical between the wasm and JS extraction paths.
