@@ -1649,7 +1649,8 @@ function App() {
               </NotificationBanner>
             )}
 
-            {/* HEADER BAR - Track selection + conditions + run */}
+            {/* HEADER BAR - two rows via CSS grid: presets/track + mode/run/settings
+                on top, race conditions and GlobalSim field controls below. */}
             <header class="v2-header">
               <div class="v2-header-left">
                 <CustomSelect
