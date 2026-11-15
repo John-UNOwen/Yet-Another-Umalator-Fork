@@ -103,7 +103,9 @@ interface Session {
 }
 
 function masterMain(): void {
-	const port = Math.max(0, Math.min(65535, Number(flag('port', '8765')) || 8765));
+	// Number(x) || fallback would turn the ephemeral `--port=0` into 8765.
+	const portArg = Number(flag('port', '8765'));
+	const port = Math.max(0, Math.min(65535, Number.isFinite(portArg) ? portArg : 8765));
 	const token = flag('token');
 	const lan = argv.includes('--lan');
 	const host = lan ? '0.0.0.0' : '127.0.0.1';
