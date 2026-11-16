@@ -471,7 +471,10 @@ async function runSingleScenario(
 		// §6.1 debug log: ℓ-rank vs P(1st)-rank agreement over the shortlist.
 		const lens = rows.map(r => ev.stats(NS_SEARCH, si, r.build)?.lead.mean ?? NaN);
 		const wins = rows.map(r => ev.stats(NS_SEARCH, si, r.build)?.win.mean ?? NaN);
-		const orderingCorrelation = spearman(lens.filter(Number.isFinite), wins.filter(Number.isFinite));
+		// Keep only rows with BOTH numbers: filtering each array on its own
+		// paired one build's lead with another build's win rate.
+		const both = lens.map((l, i) => [l, wins[i]] as const).filter(([l, w]) => Number.isFinite(l) && Number.isFinite(w));
+		const orderingCorrelation = spearman(both.map(([l]) => l), both.map(([, w]) => w));
 		emit('done');
 		let maxSearchFilled = 0;
 		for (const b of evaluated.values()) maxSearchFilled = Math.max(maxSearchFilled, filled(ev, NS_SEARCH, si, b));
