@@ -64,7 +64,7 @@ function formatMeanCell(info: any) {
 	if (!gs) return formatBasinn(info);
 	const mean = info.getValue() as number;
 	const half = Number.isFinite(gs.ci95[0]) && Number.isFinite(gs.ci95[1]) ? (gs.ci95[1] - gs.ci95[0]) / 2 : NaN;
-	const title = `GlobalSim margin: mean ± 95% CI · ${gs.n} paired seeds · win ${(gs.winRate * 100).toFixed(1)}% / loss ${(gs.lossRate * 100).toFixed(1)}% / tie ${(gs.tieRate * 100).toFixed(1)}%`;
+	const title = `GlobalSim margin: mean ± 95% CI · ${gs.n} paired seeds · ahead ${(gs.winRate * 100).toFixed(1)}% / behind ${(gs.lossRate * 100).toFixed(1)}% / tie ${(gs.tieRate * 100).toFixed(1)}%`;
 	return (
 		<span class="v2-gs-chart-mean" title={title}>
 			{Number.isFinite(mean) ? `${mean.toFixed(2).replace('-0.00', '0.00')} ±${Number.isFinite(half) ? half.toFixed(2) : '—'} L` : '—'}
@@ -291,20 +291,26 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 		},
 		sortDescFirst: true,
 	}, {
-		header: (c: any) => <span onClick={c.header.column.getToggleSortingHandler()}>Win %</span>,
-		id: 'gswin',
+		header: (c: any) => <span onClick={c.header.column.getToggleSortingHandler()} title="pts vs the 50% neutral point; not a race win rate">vs Base</span>,
+		id: 'gsbase',
+		// Sorting on winRate is monotone in (winRate - 0.5), so the accessor can
+		// stay the raw rate and keep the existing NaN-to-bottom ordering.
 		accessorFn: (row: SkillChartResult) => row.globalsim?.winRate ?? NaN,
 		cell: (info: any) => {
 			const gs = info.row.original.globalsim;
 			if (!gs) return <span>—</span>;
+			if (!Number.isFinite(gs.winRate)) return <span>—</span>;
+			const pts = gs.winRate * 100 - 50;
+			// Same -0 guard as formatBasinn: -0.4 pts shows as "0", not "-0".
+			const shown = Math.abs(pts) < 0.5 ? '0' : `${pts > 0 ? '+' : '-'}${Math.abs(pts).toFixed(0)}`;
 			return (
-				<span title={`Win ${(gs.winRate * 100).toFixed(1)}% · Loss ${(gs.lossRate * 100).toFixed(1)}% · Tie ${(gs.tieRate * 100).toFixed(1)}% (paired seeds, margin > 0 = skill ahead)`}>
-					{Number.isFinite(gs.winRate) ? `${(gs.winRate * 100).toFixed(0)}%` : '—'}
+				<span title={`${pts >= 0 ? '+' : '-'}${Math.abs(pts).toFixed(1)} pts · ahead ${(gs.winRate * 100).toFixed(1)}% · behind ${(gs.lossRate * 100).toFixed(1)}% · tie ${(gs.tieRate * 100).toFixed(1)}%`}>
+					{shown}
 				</span>
 			);
 		},
 		sortingFn: (a: any, b: any) => {
-			const x = a.getValue('gswin'); const y = b.getValue('gswin');
+			const x = a.getValue('gsbase'); const y = b.getValue('gsbase');
 			const xf = Number.isFinite(x); const yf = Number.isFinite(y);
 			return xf && yf ? +(y < x) - +(x < y) : +xf - +yf;
 		},
