@@ -1,7 +1,7 @@
 /**
  * Hachimi career-dump import tests: the field mapping (aptitude collapse, running
  * style, mood, star level, unique level), the owned/offered split, hint levels from
- * both sources, budget, and the warnings for everything the dump cannot give.
+ * the per-skill sources, budget, and the warnings for everything the dump cannot give.
  *
  * Run via: npm run test:career-import
  */
@@ -19,7 +19,7 @@ const OUTFIT = '101002';
 const UNIQUE = '110101';      // a character unique skill, group 11010
 const SILVER = '200161';      // group 20016, base cost 110
 const GOLD = '200162';        // same group, base cost 90
-const OTHER_GROUP = '200331'; // group 20033, reachable only through the hint table
+const OTHER_GROUP = '200331'; // group 20033, hinted only by the group table
 
 const row = (id: string, over: Record<string, unknown> = {}) => ({
 	SkillId: Number(id), Level: 1, IsGet: 0, HintLv: 0,
@@ -92,14 +92,25 @@ test('splits owned from offered and reads the unique level', (t) => {
 	t.end();
 });
 
-test('hint levels come from the rows and from the group table', (t) => {
+test('hint levels are read per skill, never spread over a group', (t) => {
 	const imp = convertCareerDump(dump())!;
 	t.equal(imp.hints.get(SILVER), 2, 'row HintLv used for a row skill');
 	t.equal(imp.hints.get(GOLD), 2, 'and for its pair');
-	for (const id of ['200331', '200332']) {
-		t.equal(imp.hints.get(id), 5, `group 20033 expanded to ${id} at level 5`);
-	}
-	t.notOk(imp.hints.has(UNIQUE), 'a zero hint level is not recorded');
+	t.notOk(imp.hints.has(OTHER_GROUP), 'a row reading hint level 0 records nothing');
+	t.notOk(imp.hints.has('200332'), 'the group table entry does not stamp the group’s other skills');
+
+	// The per-skill tip discount is the game's own number, so it outranks a row.
+	const fromTips = convertCareerDump(dump({
+		skillTipsObserved: { [GOLD]: { tipsDiscount: 30 } },
+	}))!;
+	t.equal(fromTips.hints.get(GOLD), 3, 'tipsDiscount 30 = hint level 3');
+	t.ok(fromTips.warnings.some((w) => /discount; the discount was used/.test(w)), 'the row disagreement is reported');
+
+	// A hint level the group table knows but no per-skill source does: not invented.
+	const noRow = convertCareerDump(dump({
+		skillRowsObserved: { count: 1, rows: [row(SILVER)] },
+	}))!;
+	t.notOk(noRow.hints.has('200331'), 'the group table alone does not set a level');
 	t.end();
 });
 
@@ -118,7 +129,15 @@ test('warns about what the dump cannot give', (t) => {
 	const truncated = convertCareerDump(dump({
 		skillHints: { count: 50, shown: 48, items: [] },
 	}))!;
-	t.ok(truncated.warnings.some((w) => /48/.test(w)), 'the 48-item hint cap is reported');
+	t.ok(truncated.warnings.some((w) => /48.*no hint level was lost/.test(w)),
+		'the 48-item cap is reported, and the per-skill discounts say nothing was lost');
+
+	const truncatedBlind = convertCareerDump(dump({
+		skillRowsObserved: { count: 2, rows: [row(SILVER), row(OTHER_GROUP, { HintLv: undefined })] },
+		skillHints: { count: 50, shown: 48, items: [] },
+	}))!;
+	t.ok(truncatedBlind.warnings.some((w) => /have no hint level from any source/.test(w)),
+		'and a real hole is called out as a hole');
 
 	const noSp = convertCareerDump(dump({ skillPoint: '<unreadable>' }))!;
 	t.equal(noSp.budget, null, 'unreadable SP leaves the budget alone');
@@ -127,8 +146,14 @@ test('warns about what the dump cannot give', (t) => {
 	const mismatch = convertCareerDump(dump({
 		skillTipsObserved: { [SILVER]: { tipsDiscount: 40 } },
 	}))!;
-	t.ok(mismatch.warnings.some((w) => /does not match their hint level/.test(w)), 'discount/hint-level disagreement reported');
-	t.equal(mismatch.hints.get(SILVER), 2, 'the hint level still wins');
+	t.ok(mismatch.warnings.some((w) => /disagrees with their own hint discount/.test(w)), 'row/discount disagreement reported');
+	t.equal(mismatch.hints.get(SILVER), 5, 'the per-skill discount wins (40% is level 5)');
+
+	const offLadder = convertCareerDump(dump({
+		skillTipsObserved: { [GOLD]: { tipsDiscount: 15 } },
+	}))!;
+	t.ok(offLadder.warnings.some((w) => /not on the 0\/10\/20\/30\/35\/40 ladder/.test(w)), 'an impossible discount is called out');
+	t.equal(offLadder.hints.get(GOLD), 2, 'and the row hint level is used instead');
 
 	const badOutfit = convertCareerDump(dump({
 		character: { charaId: 999999, cardId: 99999900, motivation: 5, limitBreakCount: 0 },

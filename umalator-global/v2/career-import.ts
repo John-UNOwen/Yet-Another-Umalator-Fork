@@ -23,6 +23,13 @@
  *     discount ladder 10/20/30/35/40% is exactly `scaleBaseCost()` in
  *     `skill-chart-utils.ts`, so hint levels port directly and the app recomputes
  *     chain costs its own way (buying a gold skill still has to pay its silver).
+ *   - Hint levels come from per-skill sources only: `skillTipsObserved[id]
+ *     .tipsDiscount` (what the game actually charges for that skill, uncapped) and
+ *     the rows' own `HintLv`. The `skillHints` table is keyed per (group, rarity)
+ *     and its list walk caps at 48 items, so it is used only to report truncation -
+ *     spreading one group entry over all its ids would invent levels for the other
+ *     rarity tier (which the game tracks separately) and for skills the career
+ *     cannot buy at all.
  *
  * Deliberately NOT imported: `raceEvaluations` (bond entries, `ObscuredBool` fields
  * serialized as "<obscured …>"), `acquiredSkills` (contentless), `skillMasterNames`
@@ -32,7 +39,6 @@
 
 import umas from '../../umas.json';
 import skilldata from '../skill_data.json';
-import { skillGroups } from './skill-chart-utils';
 import type { UmaState } from './uma-panel';
 
 /** The dump's tag. `version` is a literal 1 with no versioning logic behind it. */
@@ -110,39 +116,58 @@ function collectRows(dump: any): { rows: CareerRow[]; sources: string[] } {
 	return { rows: [...byId.values()], sources };
 }
 
-/** id → hint level, from the row walk first and the live hint table second. */
-function collectHints(rows: CareerRow[], hintItems: any[], warnings: string[]): Map<string, number> {
-	const hints = new Map<string, number>();
-	for (const r of rows) {
-		if (!isNum(r.SkillId) || !isNum(r.HintLv) || r.HintLv <= 0) continue;
-		const id = String(r.SkillId);
-		if (!(skilldata as Record<string, any>)[id]) continue;
-		hints.set(id, clamp(Math.round(r.HintLv), 0, 5));
-	}
-	// The hint table is authoritative for skills the row walk never reached (its
-	// lists are capped at 48 items, and it holds whole groups by GroupId).
-	for (const item of hintItems) {
-		if (!isNum(item?.GroupId) || !isNum(item.Level)) continue;
-		const level = clamp(Math.round(item.Level), 0, 5);
-		// skillGroups is keyed by skill_meta's groupId, which is stored as a string;
-		// the dump's GroupId is a number. Same value, so bridge the type.
-		for (const id of skillGroups.get(String(item.GroupId)) ?? []) {
-			if (!hints.has(id)) hints.set(id, level);
-		}
-	}
-	return hints;
+/** Discount % → hint count on the shared ladder, or -1 when it is off the ladder. */
+const ladderOf = (pct: number): number => HINT_DISCOUNT.indexOf(pct);
+
+interface HintResult {
+	/** skillId → hint level, only where a level above 0 is known. */
+	hints: Map<string, number>;
+	/** Every skill whose hint state is known, including a known "no hint". */
+	sourced: Set<string>;
 }
 
-/** Count rows whose per-skill discount disagrees with their HintLv ladder. */
-function checkDiscounts(rows: CareerRow[], tips: Record<string, any> | undefined, warnings: string[]) {
-	if (!tips) return;
-	let bad = 0;
+/**
+ * Hint levels, per skill: `skillTipsObserved[id].tipsDiscount` first (it is exactly
+ * what the game charges for that skill, and this door is not subject to the writer's
+ * 48-item list cap), the rows' own `HintLv` for any skill that door never reported.
+ * Nothing is spread across a group - see the module header.
+ */
+function collectHints(rows: CareerRow[], tips: Record<string, any> | undefined, warnings: string[]): HintResult {
+	const hints = new Map<string, number>();
+	const sourced = new Set<string>();
+	const known = (id: string) => !!(skilldata as Record<string, any>)[id];
+	let offLadder = 0;
+	let disagree = 0;
+
+	for (const [id, t] of Object.entries(tips ?? {})) {
+		if (!isNum(t?.tipsDiscount) || !known(id)) continue;
+		const level = ladderOf(t.tipsDiscount);
+		if (level < 0) { offLadder++; continue; }
+		sourced.add(id);
+		if (level > 0) hints.set(id, level);
+	}
 	for (const r of rows) {
 		if (!isNum(r.SkillId) || !isNum(r.HintLv)) continue;
-		const t = tips[String(r.SkillId)];
-		if (t && isNum(t.tipsDiscount) && t.tipsDiscount !== HINT_DISCOUNT[clamp(Math.round(r.HintLv), 0, 5)]) bad++;
+		const id = String(r.SkillId);
+		if (!known(id)) continue;
+		// Both sources speak the same ladder; where they disagree the per-skill
+		// discount (already applied above) is the one the game is using. Only a
+		// discount that is on the ladder can disagree with anything.
+		const t = tips?.[id];
+		const tipLevel = t && isNum(t.tipsDiscount) ? ladderOf(t.tipsDiscount) : -1;
+		if (tipLevel >= 0 && HINT_DISCOUNT[tipLevel] !== HINT_DISCOUNT[clamp(Math.round(r.HintLv), 0, 5)]) disagree++;
+		if (sourced.has(id)) continue;
+		sourced.add(id);
+		const level = clamp(Math.round(r.HintLv), 0, 5);
+		if (level > 0) hints.set(id, level);
 	}
-	if (bad) warnings.push(`${bad} skill(s) have a hint discount that does not match their hint level; the hint level was used.`);
+	if (disagree) {
+		warnings.push(`${disagree} skill(s) have a row hint level that disagrees with their own hint discount; the discount was used.`);
+	}
+	if (offLadder) {
+		warnings.push(`${offLadder} skill(s) report a hint discount that is not on the 0/10/20/30/35/40 ladder; their hint level was left unset.`);
+	}
+	return { hints, sourced };
 }
 
 function displayName(dump: any): string {
@@ -261,12 +286,18 @@ export function convertCareerDump(obj: any, file = 'career dump'): CareerImport 
 	if (uniqueLv) uma.uniqueLv = uniqueLv;
 	if (dropped) warnings.push(`${dropped} skill id(s) in the dump are not in the local skill table and were skipped.`);
 
-	const hints = collectHints(rows, Array.isArray(obj.skillHints?.items) ? obj.skillHints.items : [], warnings);
-	checkDiscounts(rows, obj.skillTipsObserved, warnings);
+	const { hints, sourced } = collectHints(rows, obj.skillTipsObserved, warnings);
 
+	// The writer caps every list walk at 48 items, so the hint TABLE can arrive short.
+	// Whether that costs anything depends on the per-skill sources: a skill whose own
+	// discount was read needs nothing from the table.
 	const hintsTable = obj.skillHints;
 	if (hintsTable && isNum(hintsTable.count) && isNum(hintsTable.shown) && hintsTable.count > hintsTable.shown) {
-		warnings.push(`The dump could only read ${hintsTable.shown} of ${hintsTable.count} hint entries (its list walk caps at 48); hint levels for the rest are missing.`);
+		const blind = [...offered, ...owned].filter((id) => !sourced.has(id));
+		const head = `The dump's hint table arrived truncated (${hintsTable.shown} of ${hintsTable.count} entries; the writer caps its list walks at 48)`;
+		warnings.push(blind.length
+			? `${head}, and ${blind.length} skill(s) have no hint level from any source.`
+			: `${head}, but every skill the career carries reported its own discount, so no hint level was lost.`);
 	}
 
 	// ── SP budget ────────────────────────────────────────────────────────────

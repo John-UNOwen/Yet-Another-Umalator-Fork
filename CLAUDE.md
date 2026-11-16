@@ -349,18 +349,24 @@ What it applies: outfit (`character.cardId`), star level (`limitBreakCount + 1`)
 (the owned `11xxxx` row's `Level`), the five stats (`wiz` → wisdom), aptitudes (distance = best of
 the four, surface = turf, strategy aptitude = the *actual* running style's own grade), strategy
 (`runningStyle` 1-4), mood (`motivation - 3`, game 0-5 → app -2..2), learned skills (rows with
-`IsGet=1`), hint levels (`HintLv`, whose 10/20/30/35/40% ladder is exactly `scaleBaseCost()`'s, so
-costs match the game), the SP budget (`skillPoint`), and the candidate pool (rows with `IsGet≠1`,
+`IsGet=1`), hint levels, the SP budget (`skillPoint`), and the candidate pool (rows with `IsGet≠1`,
 intersected with what the app can actually offer). Aptitude numbers are the game's `ProperGrade`
 enum, 1=G … 8=S. The merged uma goes back through `validateAndParseUmaJson`, so a bad value cannot
 reach the sim.
+
+Hint levels are read **per skill**: `skillTipsObserved[id].tipsDiscount` first (it is the discount
+the game applies to that skill, and this door is not subject to the writer's list cap), the rows'
+`HintLv` second. The two ladders are identical (`scaleBaseCost()`), so imported levels reproduce
+in-game prices and the app still charges its own group-chain costs. The `skillHints` table is keyed
+per (group, rarity) and its walk caps at 48 items, so it is only used to report truncation:
+spreading one entry over a whole group would invent levels for the other rarity tier (which the
+game tracks separately) and for skills that career cannot buy.
 
 Ignored on purpose: `acquiredSkills.items` (the writer's walk of that runtime class yields empty
 objects; `IsGet=1` rows are the real list), `raceEvaluations` (per-NPC bond entries whose
 `ObscuredBool` fields serialize as `"<obscured …>"`), `skillMasterNames` (only filled by a
 different capture door), and `scenarioId`/`routeId`/`entryProgramId` (career context with no
-verified mapping onto an app course). Note the writer caps every list walk at 48 items, so a long
-hint table arrives truncated — the importer reports that as an import note.
+verified mapping onto an app course).
 
 ### URL State Features (V2)
 
