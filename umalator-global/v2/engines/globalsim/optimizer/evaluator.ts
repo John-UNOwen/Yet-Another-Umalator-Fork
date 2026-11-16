@@ -479,21 +479,38 @@ export async function calibrateNoise(
 		return Math.sqrt(xs.reduce((a, x) => a + (x - m) * (x - m), 0) / (xs.length - 1));
 	};
 	const leads: number[] = [];
+	// Each variant's deltas are centred on that variant's own mean before
+	// pooling: the variants are different skills with different true effects,
+	// and pooling raw deltas counted the spread of those effects as noise.
 	const deltas: number[] = [];
+	let nVar = 0; // variants that contributed centred deltas
 	for (const v of all) {
 		const vals = ev.slots(NS_SEARCH, si, v.id);
 		const isBase = v.id === base.id;
+		const own: number[] = [];
 		for (let i = 0; i < n; i++) {
 			const a = vals[i];
 			if (a == null || a === 'err' || a.lead == null) continue;
 			if (isBase) { leads.push(a.lead); continue; }
 			const b = baseVals[i];
 			if (b == null || b === 'err' || b.lead == null) continue;
-			deltas.push(a.lead - b.lead);
+			own.push(a.lead - b.lead);
 		}
+		if (isBase) continue;
+		if (own.length < 2) continue;
+		const m = own.reduce((x, y) => x + y, 0) / own.length;
+		for (const d of own) deltas.push(d - m);
+		nVar++;
 	}
 	const st = statsOf(baseVals);
-	const sigmaDelta = sd(deltas) || sd(leads) || NaN;
+	// Centred deltas have zero mean per variant: the pooled SD divides by
+	// (count − #variants) for the means it spent.
+	const sdCentred = (xs: number[]) => {
+		const dof = xs.length - nVar;
+		if (dof < 1) return NaN;
+		return Math.sqrt(xs.reduce((a, x) => a + x * x, 0) / dof);
+	};
+	const sigmaDelta = sdCentred(deltas) || sd(leads) || NaN;
 	// The 95% band half-width a paired comparison resolves at gSeedsMin seeds:
 	const resolvedDeltaL = (2 * 1.96 * sigmaDelta) / Math.sqrt(Math.max(1, cfg.gSeedsMin));
 	return { sigmaLead: sd(leads), sigmaDeltaLead: sigmaDelta, baseP1: st.win.mean, nSeeds: n, resolvedDeltaL };
