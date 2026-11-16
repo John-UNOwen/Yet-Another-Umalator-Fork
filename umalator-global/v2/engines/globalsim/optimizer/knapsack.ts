@@ -142,13 +142,24 @@ export function mckpTopK(groups: readonly KnapGroup[], budget: number, k: number
 	let level = nodes([first]);
 	const seen = new Set<string>([key(first)]);
 	let reSolvesLeft = TOPK_RESOLVE_CAP;
+	// Exclusions are single picks, so the same pick excluded from different
+	// nodes is the same DP: memoize it and charge the cap only for new ones
+	// (repeats used to spend re-solves re-deriving already-seen solutions).
+	const memo = new Map<string, KnapSolution | null>();
 	while (out.length < k && level.length && reSolvesLeft > 0) {
 		const cands: ReturnType<typeof nodes> = [];
 		for (const node of level) {
 			for (const [gid, id] of node.sol.selection) {
-				if (forcedIds.has(id) || reSolvesLeft <= 0) continue;
-				reSolvesLeft--;
-				const sol = mckpSolve(groups, budget, new Set([pairKey(gid, id)]));
+				if (forcedIds.has(id)) continue;
+				const pk = pairKey(gid, id);
+				let sol: KnapSolution | null;
+				if (memo.has(pk)) sol = memo.get(pk)!;
+				else {
+					if (reSolvesLeft <= 0) continue;
+					reSolvesLeft--;
+					sol = mckpSolve(groups, budget, new Set([pk]));
+					memo.set(pk, sol);
+				}
 				if (!sol || !sol.ids.length) continue; // nothing left to start from
 				const ck = key(sol);
 				if (seen.has(ck)) continue;
