@@ -32,7 +32,7 @@ import { CACHE_CAP_BYTES, EffortConfig, VERIFY_SALT } from './config';
 import { EvalCache, NS_SEARCH, NS_VERIFY, nsWithMode } from './cache';
 import { BuildSpace, forcedOptions } from './space';
 import {
-	BuildStats, MeanSem, NoiseInfo, ObjectiveKind, ScenarioSpec, SeedSlot, SeedValue,
+	ActivationTelemetry, BuildStats, MeanSem, NoiseInfo, ObjectiveKind, ScenarioSpec, SeedSlot, SeedValue,
 } from './types';
 
 const metaGroup = (id: string): string | undefined => (skillmeta as Record<string, { groupId?: string }>)[id]?.groupId;
@@ -101,6 +101,13 @@ export interface SearchEvaluator {
 	/** Objective value + CI of one build (§6.1; meanPlacing sign-flipped;
 	 *  gainVsCurrent pairs against `vs`). */
 	objective(ns: string, scenarioIdx: number, build: BuildRefLite, obj: ObjectiveKind, vs?: BuildRefLite): MeanSem | null;
+	/**
+	 * §E per-build activation telemetry folded from the compact records
+	 * (cache.ts); null while no measured seed of this build carried
+	 * activation counts. Synthetic evaluators may omit the method: the
+	 * search's §E rules then stand down (no telemetry, no claims).
+	 */
+	activations?(ns: string, scenarioIdx: number, identity: string): ActivationTelemetry | null;
 	/** Release anything external (pool/threads). Cache semantics end here. */
 	dispose(): void;
 }
@@ -356,9 +363,16 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 					const rec = raw as SeedCompactRecord;
 					const pos = idx.get(rec.seed);
 					if (pos === undefined) continue;
+					const wasMissing = entry.values[pos] === null;
 					const v = seedValueOf(rec, distance);
-					if (entry.values[pos] === null) races++;
+					if (wasMissing) races++;
 					cache.set(cns(req.ns), sid(req.scenarioIdx), req.build.id, pos, v);
+					// §E: fold the seed's per-skill activation counts once, on
+					// first fill of the slot, never on a re-delivered chunk and
+					// never for an errored seed.
+					if (wasMissing && v !== 'err' && rec.skillActivations) {
+						cache.foldActivations(cns(req.ns), sid(req.scenarioIdx), req.build.id, rec.skillActivations);
+					}
 				}
 			};
 			let res: { errors: Array<{ jobId: string; error: string }> };
@@ -387,6 +401,9 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 		},
 		slots(ns, si, identity) {
 			return cache.peek(cns(ns), sid(si), identity)?.values ?? [];
+		},
+		activations(ns, si, identity) {
+			return cache.activationOf(cns(ns), sid(si), identity);
 		},
 		racesRun() { return races; },
 		cacheStats: () => cache.stats(),

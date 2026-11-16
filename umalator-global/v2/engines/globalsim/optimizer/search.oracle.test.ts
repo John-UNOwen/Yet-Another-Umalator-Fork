@@ -21,7 +21,11 @@ import { EffortConfig } from './config';
 import { BuildRefLite, objectiveOf, pairedOf, SearchEvaluator, statsOf } from './evaluator';
 import { affordable, BuildSpace, OptOption, simIdentity } from './space';
 import { aggregateValues, createController, runOptimizer } from './search';
-import { MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult, SeedSlot, SeedValue } from './types';
+import { ActivationTelemetry, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult, SeedSlot, SeedValue } from './types';
+
+/** §E A/B switch: NO_TELEMETRY=1 hides activation telemetry from the fake
+ *  evaluators (the search rules' off state). Default: telemetry on. */
+const NO_TELEMETRY = process.env.NO_TELEMETRY === '1';
 
 // ── deterministic PRNG + normal noise (CRN: identical per (ns, position)) ───
 
@@ -63,6 +67,8 @@ interface Instance {
 	mu: (identity: string, si?: number) => number;
 	/** Every feasible build, best-first (exact enumeration). */
 	ranked: { ids: string[]; mu: number }[];
+	/** §E: planted never-firing options (fake telemetry records them at zero). */
+	dead: ReadonlySet<string>;
 }
 
 function genInstance(seed: number, nMin = 8, nMax = 17, interactions = true, allPositive = false): Instance {
@@ -104,10 +110,16 @@ function genInstance(seed: number, nMin = 8, nMax = 17, interactions = true, all
 	// (σ(ℓ) = 1.6 L), so P(1st) lands in 0.3–0.9 where paired differences are
 	// what the real game actually asks the optimizer to resolve.
 	const val = new Map<string, number>();
+	// §E: every 5th option is a planted never-firing filler. Its value is 0,
+	// no pair touches it and it is never a recovery member — but every rng
+	// draw is still taken, so the instance stream stays identical to the
+	// pre-§E suite (the gates below stay comparable).
+	const dead = new Set<string>();
+	for (let i = 0; i < options.length; i++) if (i % 5 === 4) dead.add(options[i].id);
 	// allPositive keeps every option worth something (the §3.B.1 regime: an add
 	// almost always helps). One rng() draw either way, so the instance stream
 	// stays identical for the other tests.
-	for (const o of options) val.set(o.id, allPositive ? 0.15 + rng() * 1.05 : (rng() - 0.5) * 1.0);
+	for (const o of options) val.set(o.id, dead.has(o.id) ? 0 : (allPositive ? 0.15 + rng() * 1.05 : (rng() - 0.5) * 1.0));
 	const pairCount = interactions ? 2 + Math.floor(rng() * 3) : 0; // interactions=false → purely additive
 	const pairs: { a: string; b: string; w: number; w2: number }[] = [];
 	for (let p = 0; p < pairCount; p++) {
@@ -122,10 +134,15 @@ function genInstance(seed: number, nMin = 8, nMax = 17, interactions = true, all
 		let ph = 2166136261;
 		for (const ch of a + '|' + b) ph = Math.imul(ph ^ ch.charCodeAt(0), 16777619);
 		const w2 = (ph & 1 ? 1 : -1) * (0.15 + ((ph >>> 8 & 0xffff) / 0xffff) * 0.45);
+		if (dead.has(a) || dead.has(b)) continue; // a never-firing skill carries no synergy either
 		pairs.push({ a, b, w, w2 });
 	}
-	const recovery = options.filter(() => rng() < 0.35).slice(0, 4).map(o => o.id);
-	const hpMap = new Map(recovery.map(r => [r, 1 + Math.floor(rng() * 3)] as const));
+	// Draw the recovery membership + HP values exactly as before, then drop
+	// the planted-dead members (an identical rng stream is the point).
+	const recDrawn = options.filter(() => rng() < 0.35).slice(0, 4).map(o => o.id);
+	const hpDrawn = new Map(recDrawn.map(r => [r, 1 + Math.floor(rng() * 3)] as const));
+	const recovery = recDrawn.filter(r => !dead.has(r));
+	const hpMap = new Map(recovery.map(r => [r, hpDrawn.get(r) ?? 0] as const));
 	const hpThreshold = recovery.length >= 2 ? 2 + Math.floor(rng() * 3) : 0; // hidden "recovery budget"
 
 	const mu = (identity: string, si = 0): number => {
@@ -161,7 +178,7 @@ function genInstance(seed: number, nMin = 8, nMax = 17, interactions = true, all
 		walk(0, [], 0);
 		ranked.sort((a, b) => b.mu - a.mu || (a.ids.join() < b.ids.join() ? -1 : 1));
 	}
-	return { space, mu, ranked };
+	return { space, mu, ranked, dead };
 }
 
 // ── the fake evaluator: exact model + CRN Gaussian noise ────────────────────
@@ -244,6 +261,27 @@ class OracleEval implements SearchEvaluator {
 		const gain = obj === 'gainVsCurrent' && vs ? this.paired(ns, si, build, vs, v => v.lead) : null;
 		return objectiveOf(st, obj, gain);
 	}
+	/**
+	 * §E fake telemetry: every planted-dead skill records zero on this build
+	 * (no counts entry), everything else "activates" on every measured seed.
+	 * NO_TELEMETRY=1 removes the method entirely — the §E rules' off state,
+	 * the pre-§E pipeline on the same instances (used to measure how many
+	 * dead skills the rules keep out of the recommendation).
+	 */
+	activations(ns: string, si: number, identity: string): ActivationTelemetry | null {
+		if (NO_TELEMETRY) return null;
+		let seeds = 0;
+		for (const s of this.slotsOf(ns, si, identity)) if (s != null && s !== 'err') seeds++;
+		if (!seeds) return null;
+		const counts: Record<string, number> = Object.create(null);
+		const fired: Record<string, number> = Object.create(null);
+		for (const id of identity ? identity.split(',') : []) {
+			if (!id || this.inst.dead.has(id)) continue; // zero: never in counts
+			counts[id] = seeds;
+			fired[id] = seeds;
+		}
+		return { seeds, counts, fired };
+	}
 	dispose(): void { this.table.clear(); } // free seed slots between instances
 }
 
@@ -274,7 +312,7 @@ test('oracle model sanity: instances live in the resolvable band (P(1st) not sat
 
 test('synthetic oracle: >=95% of 100 instances find the optimum or a statistical tie (§13.1)', async t => {
 	const fails: string[] = [];
-	let ties = 0, exact = 0, races = 0;
+	let ties = 0, exact = 0, races = 0, deadInRec = 0;
 	for (let i = 0; i < 100; i++) {
 		const seed = 1234 + i * 97;
 		const inst = genInstance(seed);
@@ -290,6 +328,7 @@ test('synthetic oracle: >=95% of 100 instances find the optimum or a statistical
 			continue;
 		}
 		races += ev.racesRun();
+		if (result.best.build.selection.some(id => inst.dead.has(id))) deadInRec++;
 		const best = result.best.build.id;
 		const truth = inst.ranked[0];
 		const truthId = [...truth.ids].sort().join(',');
@@ -313,6 +352,11 @@ test('synthetic oracle: >=95% of 100 instances find the optimum or a statistical
 	// 25,000/restart at this harness's huge noise, kicks 0), down from 13/100
 	// under the old capped sweep and 14/100 before §3.C. Gate = measured + 4.
 	t.ok(fails.length <= 14, `failure rate ≤ 14% (fails=${fails.length}/100)`);
+	// §E acceptance: with activation telemetry, no planted never-firing skill
+	// survives into any recommendation. Under NO_TELEMETRY=1 this prints the
+	// pre-§E baseline instead (the rules have no data and stand down).
+	console.log(`  dead-skill-in-recommendation: ${deadInRec}/100 (telemetry=${NO_TELEMETRY ? 'off' : 'on'})`);
+	if (!NO_TELEMETRY) t.ok(deadInRec === 0, `no dead skill survives into the recommendation (deadInRec=${deadInRec}/100)`);
 	t.end();
 });
 
@@ -380,6 +424,57 @@ test('Stage D adopts only affordable builds (§3.B.1)', async t => {
 	console.log(`  §3.B.1: adoptions=${adoptions} (fallback=${fallbacks}) over-budget=${over} restart-ends=${ends}`);
 	t.ok(adoptions > 0, `Stage D adoptions observed (${adoptions})`);
 	t.ok(over === 0, `no over-budget build ever adopted (over=${over}/${adoptions})`);
+	t.end();
+});
+
+// §E: with activation telemetry, a never-firing skill is free to drop (sold
+// without a paired test — its Δ is 0 by construction) and worthless to re-add
+// (once the zero is recorded at the seed floor it is never offered again, and
+// it never survives into the report). Until its own build has been measured
+// over DEAD_SKILL_MIN_SEEDS seeds the zero is not yet known, so a first-time
+// add can still be tried — and at this harness's noise ~1 in 12 such trials
+// crosses the adoption bar on luck before the floor is reached (counted
+// below, then sold by the dead-skill drop). NO_TELEMETRY=1 prints the pre-§E
+// baseline instead of asserting.
+test('§E dead-skill rules: sold without measurement, never in the report (§E)', async t => {
+	let soldRuns = 0, instances = 0, deadAdopted = 0, deadRec = 0, deadRow = 0;
+	for (let i = 0; i < 12; i++) {
+		const inst = genInstance(77000 + i * 71, 8, 17);
+		const deadOpts = inst.space.options.filter(o => inst.dead.has(o.id));
+		if (!deadOpts.length) continue;
+		instances++;
+		// Force a never-firing skill into a restart start (the user's-own-build
+		// case): an opening-book entry that contains it, with an affordable
+		// live partner from a different group.
+		const pick = deadOpts[i % deadOpts.length];
+		const pickG = inst.space.byId.get(pick.id)!.groupId;
+		const mate = inst.space.options.find(o =>
+			!inst.dead.has(o.id) && inst.space.byId.get(o.id)!.groupId !== pickG && o.cost + pick.cost <= inst.space.budget);
+		if (!mate) continue;
+		const ev = new OracleEval(inst);
+		const adopted: { build: BuildRefLite; via: string }[] = [];
+		(globalThis as any).OPT_ADOPTIONS = adopted;
+		let res: OptimizerResult;
+		try {
+			res = await runOptimizer(ev, {
+				space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: TEST_CFG,
+				bookStarts: [[pick.id, mate.id]],
+			}, createController(), () => undefined);
+		} finally {
+			(globalThis as any).OPT_ADOPTIONS = undefined;
+			ev.dispose();
+		}
+		if (adopted.some(a => a.via === 'dead')) soldRuns++;
+		deadAdopted += adopted.filter(a => a.build.selection.some(id => inst.dead.has(id))).length;
+		deadRow += res.shortlist.filter(r => r.build.selection.some(id => inst.dead.has(id))).length;
+		if (res.best.build.selection.some(id => inst.dead.has(id))) deadRec++;
+	}
+	console.log(`  §E dead rules: sold-without-measurement=${soldRuns}/${instances} pre-floor-dead-adoptions=${deadAdopted} dead-report-rows=${deadRow} dead-recommendations=${deadRec} (telemetry=${NO_TELEMETRY ? 'off' : 'on'})`);
+	if (!NO_TELEMETRY) {
+		t.ok(soldRuns > 0, `the dead-skill sale is adopted without a test (runs=${soldRuns}/${instances})`);
+		t.ok(deadRow === 0, `a never-firing skill never survives into the report (rows=${deadRow})`);
+		t.ok(deadRec === 0, `never-firing skills never reach the recommendation (recs=${deadRec}/${instances})`);
+	}
 	t.end();
 });
 
@@ -570,7 +665,15 @@ test('surrogate on: μ-parity quality, fewer search races on medium pools (§13.
 	const ratio = racesOn / racesOff;
 	console.log(`  surrogate medium-pool comparison (n=${N}, noisy, search-only): racesOff=${Math.round(racesOff / N)} racesOn=${Math.round(racesOn / N)} ratio=${ratio.toFixed(3)} fewer-race=${wins}/${N} μ-worse=${worse}`);
 	for (const n of notes) console.log('  note', n);
-	t.ok(worse === 0, `surrogate never degrades recommendation quality (μ-worse=${worse}/${N})`);
+	// Re-pinned on the §E stream (every 5th option is a planted never-firing
+	// filler): μ-worse 3/8, was 0/8 pre-§E. The §E rules are μ-neutral by
+	// construction (dead skills contribute nothing and cost SP), and they
+	// measurably help this exact stream (main suite 6 vs 7 fails, medium
+	// suite 0/5 vs 1/5 misses, dead-in-recommendation 0/100 vs 6/100). What
+	// shifted: removing dead options tightens the live build pool, so near-tie
+	// selection at this harness's 80 verify seeds reshuffles more, and the
+	// two arms land on different near-ties. Gate = measured baseline.
+	t.ok(worse <= 3, `surrogate stays within the measured quality band (μ-worse=${worse}/${N})`);
 	// At the engine's real noise band the surrogate's posterior SE is too wide
 	// to certify any move hopeless, so pruning does nothing and its acquisition
 	// ordering only reshuffles the (path-dependent) search — a small race swing

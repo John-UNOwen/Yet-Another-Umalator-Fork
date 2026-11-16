@@ -13,13 +13,13 @@
 import { h } from 'preact';
 import { useState, useRef, useEffect, useMemo } from 'preact/hooks';
 
-import { buildSpace, BuildSpace, simIdentity } from './engines/globalsim/optimizer/space';
+import { buildSpace, BuildSpace, activationCountSkill, simIdentity } from './engines/globalsim/optimizer/space';
 import { BuildRefLite, createEvaluator, Evaluator } from './engines/globalsim/optimizer/evaluator';
 import { createController, runOptimizer, SearchController } from './engines/globalsim/optimizer/search';
 import { bookKey, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
 import { effortConfig } from './engines/globalsim/optimizer/config';
 import type {
-	AggregationKind, EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
+	ActivationTelemetry, AggregationKind, EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
 	ScenarioSpec, ScoredBuild,
 } from './engines/globalsim/optimizer/types';
 import type { ChartRaceConditions } from './engines/globalsim/chart';
@@ -79,6 +79,31 @@ const fmtN = (x: number | undefined | null, d = 2): string =>
 	x != null && Number.isFinite(x) ? x.toFixed(d).replace('-0.00', '0.00') : '—';
 const fmtPct = (x: number | undefined | null): string =>
 	x != null && Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : '—';
+
+/** §E: an activation rate under this share of the races already run gets
+ *  flagged (same amber as the stopped-early note). */
+const LOW_ACTIVATION = 0.05;
+
+/**
+ * §E one skill's activation cell in the recommended-build table: the share
+ * of the already-run (search) races it activated in (fired/seed, the same
+ * rule as the skill chart). Zero reads "never fired", under 5% is flagged
+ * amber, and no engine counts renders "—".
+ */
+function activationCell(id: string, act: ActivationTelemetry | undefined) {
+	if (!act || act.seeds <= 0) {
+		return <span style={{ opacity: 0.5 }} title="The engine reported no activation counts for these races">—</span>;
+	}
+	const fired = act.fired[id] ?? 0;
+	const races = act.seeds.toLocaleString();
+	if (fired === 0) {
+		return <span style={{ color: '#d0a030' }} title={`Never activated in ${races} measured races`}>never fired</span>;
+	}
+	const rate = fired / act.seeds;
+	return rate < LOW_ACTIVATION
+		? <span style={{ color: '#d0a030' }} title={`Low activation: fired in only ${fmtPct(rate)} of ${races} measured races, under 5%`}>{fmtPct(rate)}</span>
+		: <span title={`Fired in ${fmtPct(rate)} of ${races} measured races`}>{fmtPct(rate)}</span>;
+}
 
 /** mean ± 95% CI half-width from a MeanSem: ci95 takes the STANDARD DEVIATION,
  *  so reconstruct it from the SEM (sd = sem·√n) — same math as search.ts pairedOf. */
@@ -668,17 +693,30 @@ function OptimizerResults(props: {
 					</summary>
 					<table style={{ marginTop: 6, borderCollapse: 'collapse' }}>
 						<thead>
-							<tr><th style={thStyle}>Skill</th><th style={{ ...thStyle, textAlign: 'right' }}>SP</th></tr>
+							<tr>
+								<th style={thStyle}>Skill</th>
+								<th style={{ ...thStyle, textAlign: 'right' }}>SP</th>
+								<th style={{ ...thStyle, textAlign: 'right' }} title="Share of the races the optimizer already ran in which this skill activated (search seeds, no extra races). Under 5% is flagged.">Activation</th>
+							</tr>
 						</thead>
 						<tbody>
 							{best.build.selection.map((id) => (
 								<tr key={id}>
-									<td style={tdStyle}>{skillName(id)}</td>
+									<td style={tdStyle}>
+										{skillName(id)}
+										{activationCountSkill(id) && <span title="Its condition reads an activate_count_* condition: it can only fire after other skills have, so the pipeline can only judge it from measured rates">*</span>}
+									</td>
 									<td style={{ ...tdStyle, textAlign: 'right' }}>{calculateSkillCost(id, hints, ownedByGroup)} SP</td>
+									<td style={{ ...tdStyle, textAlign: 'right' }}>{activationCell(id, result.bestActivations)}</td>
 								</tr>
 							))}
 						</tbody>
 					</table>
+					{best.build.selection.some(activationCountSkill) && (
+						<div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+							* activation depends on earlier activations (activate_count condition): the rate shown is measured from races, not predicted
+						</div>
+					)}
 					{multi && best.perScenario && (
 						<div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
 							per scenario: {best.perScenario.map(ps => `${ps.id} ${fmtN(ps.obj.mean, objDigits)}`).join(' · ')}

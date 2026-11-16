@@ -203,6 +203,13 @@ export const SURROGATE_PAIR_CAP = 300;
 export const SURROGATE_MIN_R2 = 0.3;
 /** Verification-seed disjointness margin check (P3) — overlap assert helper. */
 export const VERIFY_SALT = 0x51ed27e1;
+/**
+ * §E: telemetry seeds needed before "this skill never activated" is read as
+ * never (handoff §E: a 0/200 activation counts as never; a skill that fires
+ * on 1 in 200+ seeds must not be declared dead on a short read). Below this
+ * many measured seeds the dead-skill rules simply do not fire.
+ */
+export const DEAD_SKILL_MIN_SEEDS = 200;
 /** localStorage key: opening book (Stage A). */
 export const BOOK_STORAGE_KEY = 'umalator_v2_optimizer_book';
 

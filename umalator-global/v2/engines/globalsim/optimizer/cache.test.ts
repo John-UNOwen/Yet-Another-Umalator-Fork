@@ -76,3 +76,33 @@ test('nsWithMode: the random-stream mode namespaces the transposition table', t 
 	t.deepEqual(c.identities(nsWithMode(NS_SEARCH, false), 'sc0'), [], 'the retail mode lists nothing');
 	return t.end();
 });
+
+test('foldActivations: per-seed counts, the zero is the missing id, bytes are accounted (§E)', t => {
+	const c = new EvalCache(1 << 20);
+	c.set(NS_SEARCH, 'sc0', 'idA', 0, v(1));
+	c.set(NS_SEARCH, 'sc0', 'idA', 1, v(2));
+	t.equal(c.activationOf(NS_SEARCH, 'sc0', 'idA'), null, 'no counts reported yet → null (the rules stand down)');
+	// The caller folds only first-time-filled non-error slots: seed 0 fired s1
+	// (count 2), seed 1 measured every skill at zero (empty map).
+	c.foldActivations(NS_SEARCH, 'sc0', 'idA', { s1: 2 });
+	c.foldActivations(NS_SEARCH, 'sc0', 'idA', {});
+	const a = c.activationOf(NS_SEARCH, 'sc0', 'idA')!;
+	t.equal(a.seeds, 2, 'seeds = measured seeds folded');
+	t.equal(a.counts.s1, 2, 'counts accumulate over seeds');
+	t.equal(a.fired.s1, 1, 'fired = seeds the skill fired in, not total activations');
+	t.ok(!('s2' in a.counts), 'a never-activated skill has no entry: the zero is the missing id');
+	t.equal(Object.getPrototypeOf(a.counts), null, 'prototype-free map: a skill id can never collide with Object.prototype');
+	t.equal(c.activationOf(NS_VERIFY, 'sc0', 'idA'), null, 'the verify namespace keeps no activation fold (P3 stays clean)');
+	// Byte accounting: the fold grows the entry and evict subtracts it again,
+	// so the cap never leaks the activation maps.
+	const probe = new EvalCache(1 << 20);
+	const c2 = new EvalCache(estimateBytes(probe.keyFor(NS_SEARCH, 'x', 'K'), 2));
+	c2.set(NS_SEARCH, 'x', 'K', 1, v(1));
+	c2.foldActivations(NS_SEARCH, 'x', 'K', { s1: 1 });
+	c2.foldActivations(NS_SEARCH, 'x', 'K', { s1: 1 });
+	t.ok(c2.stats().estimatedBytes > c2.capBytes, 'the fold pushed the entry over the cap');
+	const evicted = c2.evict(new Set());
+	t.equal(evicted, 1, 'the folded entry evicted');
+	t.equal(c2.stats().estimatedBytes, 0, 'fold bytes leave with the entry (no cap leak)');
+	return t.end();
+});

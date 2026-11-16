@@ -124,6 +124,13 @@ test('mob layout: wasm run_compact records deepStrictEqual JS extractCompact', a
 	t.equal(viaWasm.length, seeds.length, 'one record per seed');
 	t.ok(viaWasm.every(r => typeof (r as any).finishTimeRaw === 'number'), 'records carry finish metadata');
 	t.ok(viaWasm.some(r => Array.isArray(r.tail) && r.tail.length === 41), 'tail grid (41 samples) sampled in both paths');
+	// §E: the per-skill activation map (drives the optimizer's dead-skill
+	// rules and the recommendation's activation rates). deepStrictEqual above
+	// already pins wasm == JS; here: present on every record and non-empty
+	// somewhere (the field skills do fire).
+	t.ok(viaWasm.every(r => r.skillActivations && typeof r.skillActivations === 'object'), 'skillActivations map on every record');
+	t.ok(viaWasm.some(r => Object.keys(r.skillActivations!).length > 0), 'at least one seed recorded activations');
+	t.ok(viaWasm.every(r => Object.values(r.skillActivations!).every(n => Number.isInteger(n) && n > 0)), 'map values are positive integer counts');
 	// Lead-margin proxy field: must be PRESENT (both paths) and usable, not
 	// silently skipped — otherwise the optimizer screens on all-null ℓ.
 	const leadable = viaWasm.filter(r => !r.error);
@@ -151,6 +158,10 @@ test('trackSkillId: activation counts match, and the skill really activates', as
 	t.ok(viaWasm.every(r => typeof (r as any).activations === 'number'), 'activations present on every record');
 	const total = viaWasm.reduce((n, r) => n + ((r as any).activations || 0), 0);
 	t.ok(total > 0, `skill 200011 actually activated (total ${total}) — count path exercised`);
+	// §E: the per-skill map must carry exactly the same count for the tracked
+	// skill (one source of truth, not two counting rules).
+	const mapTotal = viaWasm.reduce((n, r) => n + (r.skillActivations?.['200011'] ?? 0), 0);
+	t.equal(mapTotal, total, 'skillActivations["200011"] totals the tracked activations');
 	t.end();
 });
 

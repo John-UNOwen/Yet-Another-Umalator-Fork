@@ -431,7 +431,7 @@ test('realistic regime: §C acceptance — gap vs the exact reference optimum + 
 		overBudget: number; races: number[];
 	}
 	const summary = new Map<string, Acc>();
-	let feasible = true, onePerGroup = true;
+	let feasible = true, onePerGroup = true, teleAbsent = true;
 	// The preset-derived race budget for one run: noise calibration + Stage B
 	// screening + per restart (Stage D ladders at the full alive cap × batch
 	// cap, the §C climbRaces budget with one-wave overshoot slack, the
@@ -461,6 +461,9 @@ test('realistic regime: §C acceptance — gap vs the exact reference optimum + 
 				acc.races.push(ev.racesRun());
 			}
 			const rec = res.best.build;
+			// §E: this evaluator reports no activation counts — the dead-skill
+			// rules stand down and the result carries no activation report.
+			if (res.bestActivations !== undefined) teleAbsent = false;
 			if (res.best.leftover < 0) feasible = false;
 			{
 				const gs = new Set<string>();
@@ -504,6 +507,7 @@ test('realistic regime: §C acceptance — gap vs the exact reference optimum + 
 	// §13.3 invariants must hold in this regime too.
 	t.ok(feasible, 'recommendation never over budget');
 	t.ok(onePerGroup, 'recommendation never repeats a group');
+	t.ok(teleAbsent, '§E: without reported activation counts the rules stand down (no activation report on the result)');
 
 	for (const setting of SETTINGS) {
 		const acc = summary.get(setting.label)!;

@@ -187,6 +187,21 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			};
 			if (!rec.opp.tail?.length) rec.opp.tail = null;
 		}
+		// §E per-skill activation counts for the player runner, folded by the
+		// optimizer cache into a per-build activation report (activation rates
+		// from the races already run). Counted from the reply's skillEvents
+		// (player runner only), for every skill id it sees.
+		if (Array.isArray(reply.skillEvents)) {
+			const bySkill: Record<string, number> = {};
+			for (const ev of reply.skillEvents) {
+				if (!ev || ev.horseIndex !== pi) continue;
+				const raw = ev.skillId ?? ev.id;
+				if (raw == null) continue;
+				const k = String(raw);
+				bySkill[k] = (bySkill[k] ?? 0) + 1;
+			}
+			rec.skillActivations = bySkill;
+		}
 		// Phase 5 chart: the worker-side activation count of the ONE tracked
 		// skill (player runner only). Numeric + string skillIds both match —
 		// write_json emits numeric ids, tests may feed strings.

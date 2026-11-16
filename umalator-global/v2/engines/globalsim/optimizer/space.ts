@@ -23,9 +23,27 @@
  */
 
 import skillmeta from '../../../../../skill_meta.json';
+import skilldata from '../../../../skill_data.json';
 import { calculateSkillCost, isPurpleSkill, skillGroups } from '../../../skill-chart-utils';
 
 const metaOf = skillmeta as Record<string, { groupId?: string }>;
+
+/**
+ * The engine's activation-count conditions (optimizer README): their truth
+ * depends on how many skills already fired in the race (gate passes count,
+ * so static condition analysis cannot verify them), and the engine itself
+ * reads them faithfully per its own condition table. Options with such a
+ * condition carry a static flag (§E) instead of a statically evaluated
+ * (mis)reading: the pipeline never reasons about them ahead of the race,
+ * only from what the races show.
+ */
+const ACTIVATION_COUNT_RE = /activate_count_(start|middle|end_after|all|heal|later_half)\b/;
+
+/** True when any alternative of this skill has an activate_count_* condition. */
+export function activationCountSkill(id: string): boolean {
+	const alt = (skilldata as Record<string, { alternatives?: { condition?: string; precondition?: string }[] }>)[id]?.alternatives;
+	return !!alt?.some(a => ACTIVATION_COUNT_RE.test(a.condition ?? '') || ACTIVATION_COUNT_RE.test(a.precondition ?? ''));
+}
 
 export interface OptOption {
 	/** Skill id simulated when this option is picked. */
@@ -37,6 +55,12 @@ export interface OptOption {
 	tierIndex: number;
 	/** True for "must include" locked options (always in every build). */
 	forced: boolean;
+	/**
+	 * §E static flag: the skill's condition reads an activate_count_*
+	 * condition, so the pipeline cannot know ahead of the race whether it
+	 * fires — only the measured activation rate speaks (activationCountSkill).
+	 */
+	activationCount?: boolean;
 }
 
 export interface BuildSpace {
@@ -108,7 +132,7 @@ export function buildSpace(input: SpaceInput): BuildSpace {
 		const cost = calculateSkillCost(id, input.hints, ownedByGroup);
 		if (cost <= 0) { warnings.push(`skill ${id}: computed SP cost ${cost} (skipped)`); continue; }
 		seen.add(id);
-		options.push({ id, groupId: gid, cost, tierIndex, forced: include.has(id) });
+		options.push({ id, groupId: gid, cost, tierIndex, forced: include.has(id), activationCount: activationCountSkill(id) });
 		if (include.has(id)) forcedCosts.push(cost);
 	}
 	for (const locked of include) {

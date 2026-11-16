@@ -198,6 +198,31 @@ test('paired diff is antisymmetric and matches objective values (§6.2)', async 
 	t.end();
 });
 
+// §E: the activation telemetry folded from the compact records of the races
+// the optimizer already ran (no extra races). Real wasm run_compact → the
+// evaluator's chunk fold → ev.activations. Determinism (§13.4) applies to
+// the counts exactly as it does to the seed values.
+test('activations: the compact races already run carry per-skill counts (§E)', async t => {
+	await ev.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: add1, positions }]);
+	const tel = ev.activations?.(NS_SEARCH, 0, add1.id);
+	t.ok(tel, 'telemetry exists after the compact fill');
+	t.equal(tel!.seeds, SEEDS, 'every measured seed folded exactly once');
+	t.ok(Object.keys(tel!.counts).length > 0, 'the races reported activation counts (non-empty fold)');
+	for (const id of Object.keys(tel!.counts)) {
+		t.ok(tel!.fired[id] <= tel!.seeds, `fired[${id}] ≤ seeds (fired counts seeds, not activations)`);
+		t.ok(tel!.counts[id] >= tel!.fired[id], `counts[${id}] ≥ fired[${id}] (a fired seed activated ≥ 1 time)`);
+	}
+	// The verify namespace folds nothing (P3): the search telemetry must not
+	// leak into a verify-namespace read of the same identity.
+	t.equal(ev.activations?.(NS_VERIFY, 0, add1.id), null, 'verify namespace carries no activation fold');
+	// Same engine, fresh evaluator → byte-identical telemetry.
+	const ev3 = mkEval();
+	await ev3.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: add1, positions }]);
+	t.deepEqual(ev3.activations?.(NS_SEARCH, 0, add1.id), tel, 'telemetry is deterministic across evaluators (§13.4)');
+	ev3.dispose();
+	t.end();
+});
+
 test('noise calibration runs on the live engine (§7.3)', async t => {
 	const cfg: EffortConfig = { ...STANDARD, noiseSeeds: 40, noiseVariants: 2, gSeedsMin: 100 };
 	const noise = await calibrateNoise(ev, cfg, 0, base, [add1, add2]);

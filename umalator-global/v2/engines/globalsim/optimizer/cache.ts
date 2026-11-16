@@ -13,7 +13,7 @@
  * - Eviction: LRU, exempting the pinned top-N keys (§14 Phase-1 memory cap).
  */
 
-import type { SeedSlot } from './types';
+import type { ActivationTelemetry, SeedSlot } from './types';
 
 export const NS_SEARCH = 's';
 export const NS_VERIFY = 'v';
@@ -33,6 +33,12 @@ export interface CacheEntry {
 	values: SeedSlot[];
 	/** Count of measured (non-null, non-'err') slots (maintained). */
 	filled: number;
+	/**
+	 * §E per-skill activation fold, null until the engine's compact records
+	 * carry skillActivations. The maps are prototype-free so a skill id can
+	 * never collide with an Object.prototype key.
+	 */
+	activations: ActivationTelemetry | null;
 }
 
 export interface CacheStats {
@@ -42,9 +48,16 @@ export interface CacheStats {
 	evictions: number;
 }
 
-/** Rough per-entry byte estimate: slot array + key + object overhead. */
+/** Rough per-entry byte estimate: slot array + key + object overhead. The §E
+ *  activation fold is accounted separately (actBytes), not in this formula. */
 export function estimateBytes(key: string, slots: number): number {
 	return 128 + key.length * 2 + slots * 32;
+}
+
+/** Bytes booked for a folded activation report (skeleton + one bucket per id). */
+function actBytes(a: ActivationTelemetry | null): number {
+	if (!a) return 0;
+	return 96 + 40 * (Object.keys(a.counts).length + Object.keys(a.fired).length);
 }
 
 export class EvalCache {
@@ -84,7 +97,7 @@ export class EvalCache {
 			}
 			this.map.set(k, e);
 		} else {
-			e = { values: new Array<SeedSlot>(slots).fill(null), filled: 0 };
+			e = { values: new Array<SeedSlot>(slots).fill(null), filled: 0, activations: null };
 			this.bytes += estimateBytes(k, slots);
 			this.map.set(k, e);
 		}
@@ -103,6 +116,35 @@ export class EvalCache {
 	}
 
 	/**
+	 * §E: fold one measured seed's per-skill activation counts (the compact
+	 * record's skillActivations map) into the entry. The caller folds only
+	 * first-time-filled, non-error slots, so seeds counts measured seeds; a
+	 * skill id absent from counts has recorded zero activations there.
+	 */
+	foldActivations(ns: string, scenarioId: string, identity: string, counts: Record<string, number>): void {
+		const k = this.key(ns, scenarioId, identity);
+		const e = this.map.get(k);
+		if (!e) return; // set() creates the entry first; folding without one is a caller bug
+		const before = actBytes(e.activations);
+		const a = e.activations ?? (e.activations = {
+			seeds: 0,
+			counts: Object.create(null) as Record<string, number>,
+			fired: Object.create(null) as Record<string, number>,
+		});
+		a.seeds++;
+		for (const id in counts) {
+			a.counts[id] = (a.counts[id] ?? 0) + counts[id];
+			a.fired[id] = (a.fired[id] ?? 0) + 1;
+		}
+		this.bytes += actBytes(a) - before;
+	}
+
+	/** §E folded activation report, null while the engine never reported counts. */
+	activationOf(ns: string, scenarioId: string, identity: string): ActivationTelemetry | null {
+		return this.peek(ns, scenarioId, identity)?.activations ?? null;
+	}
+
+	/**
 	 * Evict LRU entries outside `pinKeys` until under cap. Returns evicted key
 	 * count. Pinned entries are NEVER evicted (the cap can be temporarily
 	 * exceeded by pinned data alone — search keeps its top builds on purpose).
@@ -114,7 +156,7 @@ export class EvalCache {
 			if (this.bytes <= this.capBytes) break;
 			if (pinKeys.has(k)) continue;
 			const e = this.map.get(k)!;
-			this.bytes -= estimateBytes(k, e.values.length);
+			this.bytes -= estimateBytes(k, e.values.length) + actBytes(e.activations);
 			this.map.delete(k);
 			n++; this.evictions++;
 		}

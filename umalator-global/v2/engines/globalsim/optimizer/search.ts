@@ -10,6 +10,7 @@
 import { banditVsIncumbent, BanditOutcome, betaOf } from './bandit';
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
+	DEAD_SKILL_MIN_SEEDS,
 	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
@@ -19,7 +20,7 @@ import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
 import { affordable, affordableAdds, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
 import { fitSurrogate, SurrogateModel, SurrogateSample } from './surrogate';
 import {
-	AggregationKind, MeanSem, NoiseInfo, ObjectiveKind, OptimizerProgress,
+	ActivationTelemetry, AggregationKind, MeanSem, NoiseInfo, ObjectiveKind, OptimizerProgress,
 	OptimizerResult, ScoredBuild, SeedValue,
 } from './types';
 
@@ -52,6 +53,32 @@ export function aggregateValues(values: readonly number[], aggregation: Aggregat
 	const min = Math.min(...v);
 	if (aggregation === 'maximin') return min;
 	return (1 - lambda) * mean + lambda * min;
+}
+
+/**
+ * §E dead skills: purchased options of this build whose recorded activation
+ * count is zero over ≥ DEAD_SKILL_MIN_SEEDS measured seeds of the very same
+ * build (telemetry folded from the compact records, cache.ts). Such a skill
+ * never switched on, so the build minus it performs identically (paired
+ * draws: only the skill's own draws differ and were never taken) while
+ * costing SP. Returns [] when the build has no telemetry yet, so the rule
+ * simply stands down on engines/pipelines that never report counts.
+ */
+function deadSkills(ev: SearchEvaluator, si: number, b: BuildRefLite): string[] {
+	const t = ev.activations?.(NS_SEARCH, si, b.id);
+	if (!t || t.seeds < DEAD_SKILL_MIN_SEEDS) return [];
+	return b.selection.filter(id => !t.counts[id]);
+}
+
+/**
+ * §E never-add: adding `id` to `b` is pointless when b itself (the build the
+ * add would create) already has telemetry showing id never activated — the
+ * zero is measured in that context, so a prerequisite-gated skill that fires
+ * in richer builds stays a legal add there.
+ */
+function addKnownDead(ev: SearchEvaluator, si: number, b: BuildRefLite, id: string): boolean {
+	const t = ev.activations?.(NS_SEARCH, si, b.id);
+	return !!t && t.seeds >= DEAD_SKILL_MIN_SEEDS && !t.counts[id];
 }
 
 export interface SearchInput {
@@ -90,9 +117,9 @@ const isTie = (ci: [number, number]) => ci[0] <= 0 && ci[1] >= 0;
 const dbg = (...a: unknown[]) => { if ((globalThis as any).OPT_DBG) console.error('[opt]', ...a); };
 
 /** Harness-gated traces for the oracle tests (like OPT_DBG): every adoption
- *  (with its path: Stage D resolve/fallback, or the §C climb) and every
- *  restart's final build. */
-const traceAdopt = (b: BuildRefLite, via: 'resolve' | 'fallback' | 'climb'): void => {
+ *  (with its path: Stage D resolve/fallback, the §C climb, or a §E dead-skill
+ *  sale, which is adopted without a test) and every restart's final build. */
+const traceAdopt = (b: BuildRefLite, via: 'resolve' | 'fallback' | 'climb' | 'dead'): void => {
 	const a = (globalThis as any).OPT_ADOPTIONS as { build: BuildRefLite; via: string }[] | undefined;
 	if (a) a.push({ build: b, via });
 };
@@ -159,6 +186,29 @@ async function runSingleScenario(
 
 	const evaluated = new Map<string, BuildRefLite>();
 	const remember = (b: BuildRefLite): BuildRefLite => { if (!evaluated.has(b.id)) evaluated.set(b.id, b); return b; };
+
+	// §E activation telemetry, folded from the compact records of the races
+	// this pipeline already ran (cache.ts). Two rules read it: a purchased
+	// skill that recorded zero activations on ≥ DEAD_SKILL_MIN_SEEDS seeds of
+	// its own build is sold without a test and without spending races (its Δ
+	// vs the leaner build is 0 by construction under paired draws), and an
+	// add is never offered when the build it would create already shows the
+	// skill recorded zero. Both zeros are measured in that exact build, so a
+	// skill gated on activate_count_* conditions that does fire in richer
+	// builds stays a legal add there. Without telemetry (no counts reported),
+	// both rules stand down.
+	const tele = (b: BuildRefLite): ActivationTelemetry | null => ev.activations?.(NS_SEARCH, si, b.id) ?? null;
+	const addDead = (b: BuildRefLite, id: string): boolean => addKnownDead(ev, si, b, id);
+	/** Sell every known-dead skill of b (free: no test, no new races). */
+	const sellDead = (b: BuildRefLite): BuildRefLite => {
+		const dead = deadSkills(ev, si, b);
+		if (!dead.length) return b;
+		const leaner = remember(refOf(b.selection.filter(id => !dead.includes(id))));
+		assertFeasible(space, leaner.selection);
+		traceAdopt(leaner, 'dead');
+		dbg('  §E dead-skill sale', dead.join('+'), '→', leaner.id || '(base)');
+		return leaner;
+	};
 
 	const planned = cfg.noiseSeeds * (1 + cfg.noiseVariants)
 		+ space.options.length * (cfg.screenRound1Seeds + cfg.screenRound2Seeds)
@@ -261,6 +311,10 @@ async function runSingleScenario(
 			certified1MovePeak: cert?.p1 === true,
 			certified2MovePeak: cert?.p2 === true,
 			orderingCorrelation: Number.isFinite(orderingCorrelation) ? orderingCorrelation : undefined,
+			// §E: per-skill activation report of the recommendation, from the
+			// search races already run (the pane shows the rate next to each
+			// skill and flags one under 5%).
+			bestActivations: tele(best.build) ?? undefined,
 		};
 	};
 
@@ -429,6 +483,8 @@ async function runSingleScenario(
 		};
 		for (let it = 0; it < cfg.dMaxIters; it++) {
 			if (Date.now() - t0 > cfg.timeBudgetMs) break;
+			// §E: sell known-dead skills before weighing the round (free).
+			X = sellDead(X);
 			emit('incontext', `restart ${s + 1}/${startBuilds.length} round ${it + 1}/${cfg.dMaxIters}`, provisional(X));
 			// Neighbourhood: drop each owned pick, add each uncovered option
 			// (over-budget adds evaluated too — the number feeds the re-solve).
@@ -446,6 +502,7 @@ async function runSingleScenario(
 				// evaluate X − i + j — §8D "X + j (with tier replacement)", the
 				// in-context number the knapsack re-solve needs to flip a group.
 				const b = remember(withOption(X.selection, o));
+				if (addDead(b, o.id)) continue; // §E never-add: recorded never to fire in this build
 				const covering = X.selection.find(x => space.byId.get(x)?.groupId === o.groupId);
 				addedOf.set(b.id, covering ? { opt: o.id, replaced: covering } : { opt: o.id });
 				cands.push(b);
@@ -468,6 +525,7 @@ async function runSingleScenario(
 					pairSet.add(key);
 					const [A, C] = a.id < c.id ? [a, c] : [c, a];
 					const b = remember(withOption(withOption(X.selection, A).selection, C));
+					if (addDead(b, A.id) || addDead(b, C.id)) return; // §E never-add
 					addedOf.set(b.id, { opt: A.id, pairWith: C.id });
 					cands.push(b);
 				};
@@ -542,7 +600,10 @@ async function runSingleScenario(
 			}
 			dbg('  adopt test Δ', d ? d.mean.toFixed(3) : 'null', 'ci', d ? JSON.stringify(d.ci95.map(x => +x.toFixed(3))) : '');
 			let adoptedNow = false;
-			if (d && d.ci95[0] > 0) {
+			// §E never-add: a build whose own telemetry already shows one of
+			// its skills recorded zero is not adopted, significant or not (a
+			// dead skill only ever "wins" on noise).
+			if (d && d.ci95[0] > 0 && !deadSkills(ev, si, Y).length) {
 				X = Y;
 				assertFeasible(space, X.selection); // §3.B.1: an over-budget build can never be X
 				traceAdopt(X, 'resolve');
@@ -555,7 +616,7 @@ async function runSingleScenario(
 				// candidates are measured for their knapsack numbers, never
 				// adopted (they walked X out of budget and lost the restart).
 				const sure = outcomes.filter(out => out.survived && out.diff.n >= 2 && out.diff.ci95[0] > 0
-					&& affordable(space, out.build.selection))
+					&& affordable(space, out.build.selection) && !deadSkills(ev, si, out.build).length)
 					.sort((a, b) => b.diff.mean - a.diff.mean);
 				if (sure.length) {
 					X = sure[0].build;
@@ -649,7 +710,10 @@ async function runSingleScenario(
 				const asc = [...owned].sort((a, b) => valOf(a) - valOf(b) || (a < b ? -1 : 1));
 				const drop = asc[Math.floor(asc.length * rng() * rng())]; // squared rng: low-value skew
 				const afterDrop = sel.filter(id => id !== drop);
-				const free = affordableAdds(space, afterDrop);
+				// §E never-add: skip a refill whose add is recorded never to
+				// fire in the build it would create.
+				const free = affordableAdds(space, afterDrop)
+					.filter(o => !addDead(refOf(applyMove(space, afterDrop, [], [o.id])), o.id));
 				if (!free.length) { sel = afterDrop; moved++; continue; } // nothing affordable: a pure sell
 				const desc = [...free].sort((a, b) => valOf(b.id) - valOf(a.id) || (a.id < b.id ? -1 : 1));
 				const take = desc[Math.floor(desc.length * rng() * rng())]; // random, better end weighted
@@ -727,8 +791,19 @@ async function runSingleScenario(
 				traceAdopt(Xc, 'climb');
 			};
 			for (;;) {
+				// §E dead-skill drops come first: adopted without a test and
+				// without spending races. The top-up (the only thing this can
+				// cost, cached seeds free) is spent just to READ the floor: a
+				// build measured thinner than DEAD_SKILL_MIN_SEEDS must not be
+				// judged on its first handful of seeds.
+				Xc = sellDead(Xc);
+				const t = tele(Xc);
+				if (t && t.seeds < DEAD_SKILL_MIN_SEEDS && Xc.selection.some(id => !t.counts[id]) && !climbOut()) {
+					await ev.ensure([{ ns: NS_SEARCH, scenarioIdx: si, build: Xc, positions: Array.from({ length: DEAD_SKILL_MIN_SEEDS }, (_, i) => i) }]);
+					Xc = sellDead(Xc);
+				}
 				if (climbOut()) return { X: Xc, p1: false, p2: false };
-				const moves = n1Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted, surrScore(Xc));
+				const moves = n1Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted, surrScore(Xc), addDead);
 				if (!moves.length) return { X: Xc, p1: true, p2: true }; // degenerate space: X is the only build
 				const r = await screenWaves(Xc, moves, tag);
 				if (r.best) { adopt(r.best); continue; }
@@ -737,7 +812,7 @@ async function runSingleScenario(
 					return { X: Xc, p1: false, p2: false };
 				}
 				// Certified N1 peak (§C). Screen the recommendation against N2.
-				const n2 = n2Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted);
+				const n2 = n2Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted, addDead);
 				if (!n2.length) return { X: Xc, p1: true, p2: true };
 				if (climbOut()) return { X: Xc, p1: true, p2: false };
 				const r2 = await screenWaves(Xc, n2, `${tag} N2`);
@@ -890,6 +965,19 @@ async function verifyAcross(
 	// with different peaks certifies nothing).
 	const certsOf = (key: 'p1' | 'p2'): boolean =>
 		per.every(r => r.best.build.id === best.build.id && (key === 'p1' ? r.certified1MovePeak : r.certified2MovePeak));
+	// §E: merge the per-scenario activation reports of the winning build.
+	let bestActivations: ActivationTelemetry | undefined;
+	{
+		const merged: ActivationTelemetry = { seeds: 0, counts: Object.create(null) as Record<string, number>, fired: Object.create(null) as Record<string, number> };
+		for (const r of per) {
+			const a = r.bestActivations;
+			if (!a || r.best.build.id !== best.build.id) continue;
+			merged.seeds += a.seeds;
+			for (const id in a.counts) merged.counts[id] = (merged.counts[id] ?? 0) + a.counts[id];
+			for (const id in a.fired) merged.fired[id] = (merged.fired[id] ?? 0) + a.fired[id];
+		}
+		if (merged.seeds > 0) bestActivations = merged;
+	}
 	return {
 		best, shortlist: rows, noise: per[0].noise,
 		verificationSeeds: n,
@@ -898,6 +986,7 @@ async function verifyAcross(
 		certified1MovePeak: certsOf('p1'),
 		certified2MovePeak: certsOf('p2'),
 		orderingCorrelation: per[0].orderingCorrelation,
+		bestActivations,
 	};
 }
 
@@ -923,10 +1012,15 @@ function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, Bui
 	const measured = [...evaluated.values()]
 		.filter(b => affordable(space, b.selection))
 		.map(b => ({ b, obj: ev.objective(NS_SEARCH, si, b, objective, vs) }))
-		.filter(x => x.obj && x.obj.n > 0 && Number.isFinite(x.obj!.mean));
+		.filter(x => x.obj && x.obj.n > 0 && Number.isFinite(x.obj!.mean))
+		// §E: a build carrying a skill its own telemetry shows never fired is
+		// dominated by the same build minus it (identical races, less SP), so
+		// it never enters the report. (The empty build has no skill to fail —
+		// the list can never empty out this way.)
+		.filter(x => !deadSkills(ev, si, x.b).length);
 	const out: BuildRefLite[] = [];
 	const take = (b: BuildRefLite) => { if (!out.some(o => o.id === b.id)) out.push(b); };
-	for (const e of restartEnds) if (affordable(space, e.selection)) take(e);
+	for (const e of restartEnds) if (affordable(space, e.selection) && !deadSkills(ev, si, e).length) take(e);
 	// The global incumbent (the best search objective measured so far) keeps a
 	// slot even below the seed floor; it is one raw-mean pick, not a ranking.
 	const incumbent = measured.sort((x, y) => y.obj!.mean - x.obj!.mean || (x.b.id < y.b.id ? -1 : 1))[0];
@@ -982,6 +1076,7 @@ function movesFrom(
 	deltaMinL: number,
 	hist: ReadonlySet<string>,
 	surr?: { model: SurrogateModel; xL: number },
+	addDead?: (b: BuildRefLite, id: string) => boolean,
 ): FMove[] {
 	const Xsel = X.selection;
 	const seen = new Set<string>([X.id]);
@@ -995,6 +1090,10 @@ function movesFrom(
 		seen.add(b.id);
 		const added = sel.filter(s => !Xsel.includes(s));
 		const removed = Xsel.filter(s => !sel.includes(s));
+		// §E never-add: the resulting build already has telemetry showing this
+		// add never activated in it, so the move can only waste budget; never
+		// offered.
+		if (addDead && added.some((id: string) => addDead(b, id))) continue;
 		let est: number;
 		if (surr && predX) {
 			const pred = surr.model.predict(sel);
@@ -1028,6 +1127,7 @@ function n1Moves(
 	deltaMinL: number,
 	hist: ReadonlySet<string>,
 	surr?: { model: SurrogateModel; xL: number },
+	addDead?: (b: BuildRefLite, id: string) => boolean,
 ): FMove[] {
 	const Xsel = X.selection;
 	const free = space.options.filter(o => !o.forced && !Xsel.includes(o.id));
@@ -1049,7 +1149,7 @@ function n1Moves(
 		for (let a = 0; a < free.length; a++) for (let c = a + 1; c < free.length; c++)
 			if (free[a].groupId !== free[c].groupId)
 				raw.push({ drops: [i], adds: [free[a].id, free[c].id] });
-	return movesFrom(space, X, raw, ctxVal, deltaMinL, hist, surr);
+	return movesFrom(space, X, raw, ctxVal, deltaMinL, hist, surr, addDead);
 }
 
 /** The §C final-recommendation screen: every feasible 2-for-2 swap among the 8
@@ -1061,6 +1161,7 @@ function n2Moves(
 	ctxVal: (id: string) => number,
 	deltaMinL: number,
 	hist: ReadonlySet<string>,
+	addDead?: (b: BuildRefLite, id: string) => boolean,
 ): FMove[] {
 	const Xsel = X.selection;
 	const owned = Xsel.filter(id => !space.byId.get(id)?.forced);
@@ -1072,7 +1173,7 @@ function n2Moves(
 		for (let x = 0; x < best.length; x++) for (let y = x + 1; y < best.length; y++)
 			if (space.byId.get(best[x].id)?.groupId !== space.byId.get(best[y].id)?.groupId)
 				raw.push({ drops: [low[a], low[c]], adds: [best[x].id, best[y].id] });
-	return movesFrom(space, X, raw, ctxVal, deltaMinL, hist);
+	return movesFrom(space, X, raw, ctxVal, deltaMinL, hist, undefined, addDead);
 }
 
 /** Deterministic PRNG for ILS kicks (P6): FNV-1a over the build identity +

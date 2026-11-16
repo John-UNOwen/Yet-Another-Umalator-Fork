@@ -65,6 +65,23 @@ export interface MeanSem {
  */
 export type SeedSlot = SeedValue | 'err' | null;
 
+/**
+ * §E per-build activation telemetry, folded from the compact records'
+ * per-seed skillActivations maps (cache.ts). A skill's activation rate is
+ * known from the races already run, not from extra ones. A skill id absent
+ * from counts recorded zero activations over those seeds; that zero is what
+ * the search's dead-skill rules read (search.ts).
+ */
+export interface ActivationTelemetry {
+	/** Seeds of this build whose records carried per-skill counts. */
+	seeds: number;
+	/** Skill id → total activations over those seeds. */
+	counts: Record<string, number>;
+	/** Skill id → seeds on which it activated at least once. The rate shown
+	 *  in the report is fired[id] / seeds (same rule as the skill chart). */
+	fired: Record<string, number>;
+}
+
 export interface BuildStats {
 	n: number;
 	lead: MeanSem;
@@ -138,6 +155,11 @@ export interface OptimizerResult {
 	certified2MovePeak: boolean;
 	/** ℓ-rank vs P(1st)-rank agreement on the shortlist (plan §6.1 debug log). */
 	orderingCorrelation?: number;
+	/** §E: activation telemetry of the recommended build, folded from the
+	 *  search races already run (no extra races). The pane shows each skill's
+	 *  rate fired/seed next to it and flags one under 5%. Absent when the
+	 *  engine reported no activation counts. */
+	bestActivations?: ActivationTelemetry;
 }
 
 /** §7.3 noise calibration output. */

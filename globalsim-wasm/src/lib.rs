@@ -7,8 +7,9 @@
 //!   run_compact() — per-seed sampling reply (~1-2 KB): the compact record
 //!                  metrics.ts/workerCore.ts extractCompact() would build from
 //!                  the full reply — finish metadata, the 41×0.25 s tail grid,
-//!                  optional h2h `opp` block and one-skill activation count —
-//!                  computed HERE so the multi-MB frames JSON is never
+//!                  optional h2h `opp` block, one-skill activation count and
+//!                  the per-skill `skillActivations` map — computed HERE so the
+//!                  multi-MB frames JSON is never
 //!                  serialized at all (compare/skill-chart hot path).
 //!                  Byte-parity with extractCompact is asserted by
 //!                  compact-parity.test.ts against the real engine.
@@ -287,24 +288,39 @@ fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, se
         out.insert("opp".into(), serde_json::Value::Object(opp));
     }
 
-    if !track_skill_id.is_empty() {
-        if let Some(events) = v.get("skillEvents").and_then(|x| x.as_array()) {
-            let mut n = 0usize;
-            for ev in events {
-                let horse_index_matches = ev.get("horseIndex").and_then(|x| x.as_f64()).map(|x| x as usize) == Some(pi);
-                if !horse_index_matches { continue; }
-                // JS: String(ev.skillId ?? ev.id) === trackSkillId — numeric or string,
-                // falling back to `id` when skillId is absent/null.
-                let id = |key: &str| -> Option<String> {
-                    let v = ev.get(key)?;
-                    if v.is_null() { return None; }
-                    match v.as_number() { Some(num) => Some(num_to_js_string(num)), None => v.as_str().map(|s| s.to_string()) }
-                };
-                let id = match id("skillId") { Some(s) => s, None => match id("id") { Some(s) => s, None => continue } };
-                if id == track_skill_id { n += 1; }
+    // Player skill activations from the metadata reply's skill events.
+    // `skillActivations` counts every skill the player activated this race,
+    // per skill id (a skill that never activated gets no entry). The
+    // optimizer cache folds these into a per-build activation report (§E),
+    // so a skill's activation rate comes from the races already run instead
+    // of costing extra ones. `activations` keeps the skill-chart column-4
+    // count of the one tracked id. Key presence and id text mirror the JS
+    // extractCompact fallback exactly (compact-parity pins the two paths).
+    if let Some(events) = v.get("skillEvents").and_then(|x| x.as_array()) {
+        let mut per_skill: Vec<(String, usize)> = Vec::new();
+        let mut n = 0usize;
+        for ev in events {
+            let horse_index_matches = ev.get("horseIndex").and_then(|x| x.as_f64()).map(|x| x as usize) == Some(pi);
+            if !horse_index_matches { continue; }
+            // JS: String(ev.skillId ?? ev.id) — numeric or string,
+            // falling back to `id` when skillId is absent/null.
+            let id = |key: &str| -> Option<String> {
+                let v = ev.get(key)?;
+                if v.is_null() { return None; }
+                match v.as_number() { Some(num) => Some(num_to_js_string(num)), None => v.as_str().map(|s| s.to_string()) }
+            };
+            let id = match id("skillId") { Some(s) => s, None => match id("id") { Some(s) => s, None => continue } };
+            if !track_skill_id.is_empty() && id == track_skill_id { n += 1; }
+            match per_skill.iter_mut().find(|(k, _)| *k == id) {
+                Some((_, c)) => *c += 1,
+                None => per_skill.push((id, 1)),
             }
-            out.insert("activations".into(), serde_json::json!(n));
         }
+        per_skill.sort(); // sorted keys: stable output regardless of event order
+        let mut map = serde_json::Map::new();
+        for (k, c) in per_skill { map.insert(k, serde_json::json!(c)); }
+        out.insert("skillActivations".into(), serde_json::Value::Object(map));
+        if !track_skill_id.is_empty() { out.insert("activations".into(), serde_json::json!(n)); }
     }
 
     Ok(serde_json::to_string(&serde_json::Value::Object(out)).unwrap_or_else(|_| format!(r#"{{"seed":{},"error":"compact: serialize failed"}}"#, seed)))

@@ -73,6 +73,14 @@ export interface SeedCompactRecord {
 	 */
 	activations?: number;
 	/**
+	 * §E: per-skill activation counts for the player runner of THIS race
+	 * (workerCore extractCompact / wasm run_compact, both paths). Skill id →
+	 * times activated; a skill with no entry never activated. The optimizer
+	 * cache folds the stream into a per-build ActivationTelemetry, so
+	 * activation rates come from the races already run.
+	 */
+	skillActivations?: Record<string, number>;
+	/**
 	 * Fixed grid sampled backwards from the player's own finish:
 	 * [dtBeforeFinish, pos, speed] for dtBeforeFinish = k * TAIL_STEP,
 	 * k = 0 … TAIL_SAMPLES-1 (clamped at t = 0). Null when the reply had no
