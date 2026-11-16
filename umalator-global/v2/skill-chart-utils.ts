@@ -53,9 +53,14 @@ export const skillGroups = Object.keys(skilldata).sort((a, b) =>
  * Scale base SP cost by hint level
  * Hint levels 1-3: 10% reduction per level
  * Hint levels 4-5: 30% + 5% per level above 3
+ *
+ * Integer percentages: the float form (1 - 0.1 * 3 = 0.6999…) floored one SP
+ * low at hint 3 for base costs 90/170/180/360.
  */
+const HINT_PERCENT = [100, 90, 80, 70, 65, 60];
 function scaleBaseCost(baseCost: number, hint: number): number {
-	return Math.floor(baseCost * (1 - (hint <= 3 ? 0.1 * hint : 0.3 + 0.05 * (hint - 3))));
+	const h = Math.max(0, Math.min(5, Math.round(hint) || 0));
+	return Math.floor(baseCost * HINT_PERCENT[h] / 100);
 }
 
 /**
@@ -76,7 +81,14 @@ export function calculateSkillCost(
 	const existing = ownedSkills.get(groupId);
 	let cost = 0;
 
-	for (let i = 0; i < group.length; ++i) {
+	// An owned lower tier was paid for together with every link below it, so
+	// the walk starts just above it (crediting only the owned id re-charged
+	// the cheaper links: owning ◎ priced the gold at ○ + gold, not gold).
+	const ownedIdx = existing != null ? group.indexOf(existing) : -1;
+	const targetIdx = group.indexOf(id);
+	const start = ownedIdx >= 0 && targetIdx > ownedIdx ? ownedIdx + 1 : 0;
+
+	for (let i = start; i < group.length; ++i) {
 		// Don't count cost of already-owned skill in same group
 		if (group[i] !== existing) {
 			const hint = hints.get(group[i]) || 0;
