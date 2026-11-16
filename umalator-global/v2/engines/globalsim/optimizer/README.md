@@ -172,8 +172,15 @@ runner's draws. Measured on the native binary,
 300 seeds, course 10504, a 15-skill base: median ρ 0.103 to 0.974, median paired σΔ(ℓ) 1.10
 to 0.18 L, and skills that never fire score Δ exactly 0 (13/13, against 6/6 in retail mode).
 Requests without the flag stay byte-identical to upstream v77, checked against a build of the
-pinned commit. On the 3000 m course (10810) ρ reaches 0.909 but σΔ stays near 1 L; the length
-conversion there is still the mile one, so that figure is in the wrong units.
+pinned commit.
+
+σΔ is not a course constant, it tracks how large the effects being measured are. Re-measured at
+600 seeds on a 15-skill base, a 12-candidate slice gives 0.162 L at course 10504 and 0.320 L at
+10810, where an earlier 24-candidate slice at 300 seeds gave 0.971 L at 10810. Units are not the
+explanation: the field's average finish speed is 20.72 m/s at 2000 m and 19.75 m/s at 3000 m, so
+the fixed 20 m/s conversion is a few percent off either way (0.316 L against 0.320 L at 10810).
+The 0.25 L target is a mile number; on the long course, adding skills that actually bite, expect
+a few times it.
 
 Paired mode does not move the outcome distribution: on 20 000 races per arm (course 10504,
 15-skill base, seeds disjoint from retail) every runner's finish-rank marginal, finish-time
