@@ -192,7 +192,7 @@ export function SimAdvancedControls({
 			)}
 
 			<span class="v2-globalsim-notice">
-				Compare, skill chart and the optimizer run the GlobalSim full-field engine (9-runner mob field, margin in lengths, win rate).
+				Compare, skill chart and the optimizer run the GlobalSim full-field engine (9-runner mob field, margin in lengths, vs Base points).
 				{typeof globalsimUncoveredCount === 'number' && (
 					` ${globalsimUncoveredCount} skills not yet supported by GlobalSim.`
 				)}
