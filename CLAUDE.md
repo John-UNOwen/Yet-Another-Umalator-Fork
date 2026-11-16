@@ -8,47 +8,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Yet Another Umalator** is a modern Uma Musume race simulator with bilingual JP/EN support, forked from TheCing/uma-tools (Moomoolator), itself a hybrid fork of alpha123/umalator and kachi-dev/umalator.
+**Yet Another Umalator** is a Uma Musume race simulator built on **GlobalSim**, a full-field Rust race engine compiled to wasm and run in browser Web Workers. Forked from TheCing/uma-tools (Moomoolator), itself a hybrid fork of alpha123/umalator and kachi-dev/umalator.
+
+This fork is **Global/English only, GlobalSim only**: the JP app, the classic TypeScript engine and the HP calculator have been removed. It deploys to **GitHub Pages at <https://john-unowen.github.io/Yet-Another-Umalator-Fork/>** — see [Deployment](#deployment); the upstream `umalator.app` domain, Cloudflare Pages project and Functions belong to upstream and are not what this repo runs.
 
 ### Live Applications
 
-| Application | URL | Description |
+This fork deploys **one** application. `.github/workflows/pages.yml` builds the v2 app and publishes `_site` (the Vite `dist/` plus `icons/`, `fonts/`, `globalsim/` and the og image) to <https://john-unowen.github.io/Yet-Another-Umalator-Fork/> on every push to `master`.
+
+| Application | Where | Description |
 |------------|-----|-------------|
-| **V2 simulator (default landing)** | [umalator.app](https://umalator.app/) | The simulator — GlobalSim (wasm) engine, Compare / Skill / Optimizer modes. Served at the root. Old `/umalator-global/v2` and `/v2` paths 301 here, as do the retired `/umalator`, `/umalator-global` and `/hp-calculator` roots (`_redirects`; exact paths only, so `/umalator-global/` sub-apps below stay reachable). |
-| **Skill visualizer (v2 — primary)** | [/skill-visualizer](https://umalator.app/skill-visualizer) | Modern Global v2 skill activation visualizer. Rewrite (URL stays) to `/umalator-global/skill-visualizer/v2/` via `_redirects`. |
-| **Skill visualizer (JP — legacy)** | [/skill-visualizer-jp](https://umalator.app/skill-visualizer-jp) | Original JP-data visualizer (was at `/skill-visualizer/` before the v2 reshuffle). |
-| **Skill visualizer (Global v1 — legacy)** | [/umalator-global/skill-visualizer](https://umalator.app/umalator-global/skill-visualizer) | Original Global-data visualizer; unchanged path. |
-| **Mechanics Explorer** | [/mechanics-explorer](https://umalator.app/mechanics-explorer) | Stat → race-mechanics formula explorer (live readout + stat-sweep charts). Rewrite to `/umalator-global/mechanics-explorer/` via `_redirects`. |
-| **Events** | [/events](https://umalator.app/events) | Upcoming race tracker with gacha banners |
-| **Team Trials planner** | [/team-trials](https://umalator.app/team-trials) | Team Stadium lineup planner (5 teams × 3 runners) |
-| **Release timeline** | [/release-timeline](https://umalator.app/release-timeline) | JP support card + uma release timeline browser |
-| **Canva guides** | [canva.umalator.app](https://canva.umalator.app/) | Dynamic Canva guide registry by numbered slug (e.g. `/14-yasuda`) on its own subdomain. Routing + registry in `functions/[[catchall]].ts`. |
+| **Simulator (the whole site)** | <https://john-unowen.github.io/Yet-Another-Umalator-Fork/> | The v2 app — GlobalSim (wasm) engine, Compare / Skill / Optimizer modes, served at the Pages project root. |
+| Events, skill visualizers, mechanics explorer, team trials, release timeline | source tree only | Not deployed: `pages.yml` copies none of them into `_site`. Building one locally works (`cd events && node build.mjs`), but a link to `/events/` on Pages 404s. Upstream hosts its own set at `umalator.app`. |
+
+GitHub Pages has no server components: `_redirects` and `functions/` are Cloudflare Pages artifacts that never execute here, the OCR proxy and Turnstile build empty (screenshot OCR needs the user's own Gemini key), and the feedback drawer is switched off (`VITE_ENABLE_FEEDBACK=false` in `umalator-global/v2/.env`, plus no webhook).
 
 ### Project Structure
 
 ```
-├── umalator-global/             # Global simulator app (v2)
-│   ├── v2/                      # The app (served at the site root)
+├── umalator-global/             # Global simulator app (v2) — the deployed site
+│   ├── v2/                      # The app
 │   │   ├── app-v2.tsx          # Main application
-│   │   ├── engines/globalsim/  # GlobalSim engine layer (worker, wasm bridge, modes)
+│   │   ├── engines/globalsim/  # GlobalSim engine layer (worker, wasm bridge, modes, optimizer)
 │   │   ├── components/         # V2-specific components
 │   │   ├── velocity-overlay.tsx
 │   │   ├── results-pane.tsx
-│   │   └── vite.config.ts      # V2 uses Vite
-│   ├── mechanics-explorer/      # Stat → mechanics formula explorer (standalone sub-app)
-│   ├── build.mjs               # Builds the v2 app + generates its data files
+│   │   └── vite.config.ts      # Vite: dev server + the deployed dist/ build
+│   ├── mechanics-explorer/      # Stat → mechanics formula explorer (source only, not deployed)
+│   ├── skill-visualizer/        # Global skill visualizer (source only, not deployed)
+│   ├── build.mjs               # esbuild bundles + generates the app's data files
 │   ├── skill_data.json         # English game data
 │   └── course_data.json
-├── events/                      # Events page
+├── globalsim-wasm/              # wasm-bindgen wrapper around the engine
+├── vendor/GlobalSim/            # the engine, unmodified submodule (pinned by VERSION)
+├── globalsim/                   # deploy assets: wasm/, geometry/, skills.json generated; supplement committed
+├── events/                      # Events page (source only, not deployed)
 ├── uma-skill-tools/             # Shared library (enums, course data, skill parsing, cost calc)
-├── tools/                       # Utility scripts
-│   └── pull-master-mdb.sh      # Pull latest Global master.mdb from MEGA
-├── docs/                        # Documentation and reference data
-│   └── master.mdb              # Global master.mdb (source of truth for in-game data)
-├── uma-tools-worker/            # Cloudflare Worker for webhooks
-├── components/                  # Shared UI components
-│   └── RaceTrack.tsx
-└── skill-visualizer/            # Skill visualization tool
+├── tools/                       # Utility scripts (coverage gate, master.mdb pull, fast-forward)
+├── docs/                        # Documentation, guides and master.mdb
+├── .github/workflows/           # pages.yml (deploy), ci.yml, sync-upstream-data.yml
+├── uma-tools-worker/            # upstream Cloudflare Worker (webhook + OCR proxy) — not deployed here
+└── components/                  # Shared UI components (RaceTrack.tsx, base-path.ts, GeminiOCR.ts)
 ```
 
 ## Development Commands
@@ -72,12 +72,17 @@ The dev server:
 - Auto-rebuilds on source changes
 - Strips `/uma-tools/` prefix from asset requests
 
-**Other Applications:**
+**Other Applications** (none of these are deployed by `pages.yml`; they build standalone):
 ```bash
 cd events && node build.mjs
-cd skill-visualizer && npm run build  # or build.bat on Windows
-cd build-planner && npm run build
+cd umalator-global/skill-visualizer && node build.mjs      # Global visualizer
+cd skill-visualizer-jp && node build.mjs                   # JP visualizer
+cd umalator-global/mechanics-explorer && node build.mjs    # or: npm run build:mechanics
+cd team-trials && node build.mjs                           # or: npm run build:team-trials
+cd release-timeline && node build.mjs                      # or: npm run build:release-timeline
 ```
+`build-planner/` and `courseimages/` have only a `build.bat` (no `package.json`), and their
+committed bundles assume the upstream `/uma-tools/` asset prefix.
 
 ### V2 Development with Vite
 
@@ -276,6 +281,13 @@ v2/
 
 ### OCR Pipeline (screenshot → uma)
 
+> **On this fork**: Pages builds with `OCR_PROXY_URL` and `TURNSTILE_SITEKEY` unset, so
+> `CC_OCR_PROXY` is empty, the proxy path is skipped and the modal always asks for the
+> user's own Gemini key. The `uma-tools-worker/` proxy and its origin allowlist
+> (`umalator.app`, `dev.umalator.app`, `localhost`) belong to upstream and are not deployed
+> here — reviving them means deploying your own worker and adding this fork's Pages origin to
+> that allowlist. The mechanism below is kept as the reference for that.
+
 Imports a uma from a game screenshot via Google Gemini. Three consumers share the
 flow across two environments:
 
@@ -326,17 +338,41 @@ test pair (sitekey `1x00000000000000000000AA`, secret `1x00000000000000000000000
 **To change the model:** edit the `MODEL` constant in the two files above (and confirm
 the new model has a free tier if you rely on the proxy).
 
+### Career dump import (Skill Optimizer)
+
+The Optimizer pane's **Import career dump…** button reads a Hachimi-Edge career dump
+(`career_<charaId>_<epoch>.json`, `"kind": "hachimi-career-dump"`, `"version": 1`) that
+Hachimi writes from the running game (menu "Dump career data"; it lands in `<exe dir>\hachimi\`).
+Reader: `umalator-global/v2/career-import.ts`; tests: `npm run test:career-import`.
+
+What it applies: outfit (`character.cardId`), star level (`limitBreakCount + 1`), unique level
+(the owned `11xxxx` row's `Level`), the five stats (`wiz` → wisdom), aptitudes (distance = best of
+the four, surface = turf, strategy aptitude = the *actual* running style's own grade), strategy
+(`runningStyle` 1-4), mood (`motivation - 3`, game 0-5 → app -2..2), learned skills (rows with
+`IsGet=1`), hint levels (`HintLv`, whose 10/20/30/35/40% ladder is exactly `scaleBaseCost()`'s, so
+costs match the game), the SP budget (`skillPoint`), and the candidate pool (rows with `IsGet≠1`,
+intersected with what the app can actually offer). Aptitude numbers are the game's `ProperGrade`
+enum, 1=G … 8=S. The merged uma goes back through `validateAndParseUmaJson`, so a bad value cannot
+reach the sim.
+
+Ignored on purpose: `acquiredSkills.items` (the writer's walk of that runtime class yields empty
+objects; `IsGet=1` rows are the real list), `raceEvaluations` (per-NPC bond entries whose
+`ObscuredBool` fields serialize as `"<obscured …>"`), `skillMasterNames` (only filled by a
+different capture door), and `scenarioId`/`routeId`/`entryProgramId` (career context with no
+verified mapping onto an app course). Note the writer caps every list walk at 48 items, so a long
+hint table arrives truncated — the importer reports that as an import note.
+
 ### URL State Features (V2)
 
 **Hash-based State Serialization:**
 - Copy Link button generates shareable URLs
 - Serializes: course, conditions, samples, uma1, uma2 configurations
 - Compressed using LZ-string for shorter URLs
-- Example: `https://umalator.app/umalator-global/v2/#H4sIAAAA...`
+- Example: `https://john-unowen.github.io/Yet-Another-Umalator-Fork/#H4sIAAAA...`
 
 **Preset Parameter:**
 - `?preset=X` parameter for quick race loading
-- Example: `https://umalator.app/umalator-global/v2/?preset=8`
+- Example: `https://john-unowen.github.io/Yet-Another-Umalator-Fork/?preset=8`
 - Loads Champions Meeting/LoH event settings
 - Takes priority over hash-based state
 
@@ -463,7 +499,7 @@ The build generates `umalator-global/not-in-game.json` listing skills and outfit
 
 **How it works** (in `umalator-global/build.mjs` → `generateNotInGame()`):
 1. **Primary**: Diffs `skill_data.json` and `umas.json` against `docs/master.mdb` via `sqlite3` CLI
-2. **Fallback**: If `master.mdb` is unavailable (e.g., on Cloudflare Pages CI), diffs against `kachi-dev/master` git remote
+2. **Fallback**: If `master.mdb` is unavailable (e.g. a CI run without the DB), diffs against the `kachi-dev/master` git remote
 
 **UI usage**: Skills filter in `v2/skills.tsx`, uma panel in `v2/uma-panel.tsx`, skill charts in `v2/skill-chart-pane.tsx`
 
@@ -576,6 +612,12 @@ So adding a future CM normally means adding its `"id": "YYYY-MM-DD"` entry to
 
 ## Security and Environment Variables
 
+Feedback is off on this fork, so nothing below is configured on Pages; the sections are kept
+as the reference for running the feedback + OCR stack somewhere. The drawer needs both
+`VITE_DISCORD_WEBHOOK` (non-empty) and `VITE_ENABLE_FEEDBACK` != `'false'`; the committed
+`umalator-global/v2/.env` pins `VITE_ENABLE_FEEDBACK=false`, so it stays hidden even with a
+webhook set, until an override flips the flag.
+
 ### Environment Variables
 
 **V2 uses environment variables for sensitive data:**
@@ -663,22 +705,25 @@ interface VelocityOverlayProps {
 
 ### Easter Eggs
 
-**Still In Love (Dev Only):**
+**Still In Love:**
 - Type "STILL" anywhere (not in an input field) to trigger yandere mode
 - Theme becomes bright red with subtle pulsing border effect
 - Type "STILL" again to toggle off
 - Reference to the "Still In Love" skill
 - Files: `v2/app-v2.tsx` (keyboard listener), `v2/v2.css` (yandere theme)
-- Dev branch only - do not merge to master
+- Gated by `CC_DEV`, so it is dead in the deployed build: the define is true only when
+  `CF_PAGES_BRANCH=dev`, `CC_DEV=true`, or a dev server is running
 
 ## Simulation Limitations
 
-The simulator intentionally only simulates one uma (not a full race with competitors) to isolate skill effects in a controlled environment. This affects:
+The app runs a **full field**: the tested uma plus eight mobs drawn from `umalator-global/v2/engines/globalsim/mob-presets.json`, so position, speed and HP traces and the finish margin come from a real race, not a solo run. Compare is paired-seed (both builds over the same seeds), the skill chart measures each skill against the baseline build, and ties count against in `vs Base`.
 
-- **Position keep**: Not fully simulated (except pace down for non-runners)
-- **Order conditions**: Assumed always fulfilled by default
-- **Lane differences**: Inner/outer lane distance differences not modeled
-- **Skills with `accumulatetime` + probability distributions**: May activate earlier than expected
+The caveats below are inherited from the removed single-uma solver. They have **not** been re-validated against GlobalSim, so treat them as open questions rather than current facts:
+
+- **Position keep**: not fully modeled in the classic solver (pace-down for non-runners only)
+- **Order conditions**: assumed always fulfilled in the classic solver
+- **Lane differences**: inner/outer lane distance differences not modeled by the classic solver
+- **Skills with `accumulatetime` + probability distributions**: may activate earlier than expected
 
 ## Important Notes
 
@@ -686,7 +731,7 @@ The simulator intentionally only simulates one uma (not a full race with competi
 - Skill IDs can be found using `skillgrep.ts -d` or from GameTora (with "Show skill IDs" enabled)
 - The project uses "バ身" (bashin/horse lengths, 1 = 2.5m) as the unit for measuring distance gain
 - Frontend apps use `CC_GLOBAL` flag (esbuild define) to toggle JP/Global variants
-- Shared assets (`icons/`, `fonts/`) are at project root, referenced as `/uma-tools/` in production
+- Shared assets (`icons/`, `fonts/`) sit at the project root and are published alongside the app; the app builds their URLs with `resolveBase()` in `components/base-path.ts`, from `CC_BASE_PATH` (the Pages workflow sets it from the repo name; local builds default to `/uma-tools`)
 - V2 is experimental and may have breaking changes
 
 ## Japanese-to-English Terminology
@@ -708,10 +753,9 @@ Essential for working with skill conditions, race parameters, and understanding 
 ### Production Build
 
 ```bash
-# Build all applications
-npm run build:all  # = build:global (the v2 app); the retired v1 / HP-calculator apps have no build step
-node umalator-global/build.mjs  # Builds the v2 app (+ regenerates its data files)
-node events/build.mjs
+npm run build:all                   # = build:global (the v2 app)
+node umalator-global/build.mjs      # esbuild bundles + regenerates the app's data files
+npm run build:v2                    # Vite production build → umalator-global/v2/dist (what Pages deploys)
 ```
 
 ### Cache Busting
@@ -721,36 +765,42 @@ content-hashed filenames (`assets/index-<hash>.js`, `assets/index-<hash>.css`) a
 `index.html` references them. Nothing to bump by hand.
 
 The one fixed-name output is the engine worker: `worker.rollupOptions` in `v2/vite.config.ts`
-sets `entryFileNames: '[name].js'`, so `globalsim.worker.js` is copied to the site root by
-`build-all.sh` (the main bundle resolves it as `../globalsim.worker.js`).
+sets `entryFileNames: '[name].js'`, so `globalsim.worker.js` lands at the root of `dist/` and
+reaches `_site` with the rest of the dist (the main bundle resolves it as `../globalsim.worker.js`).
 
 The old v1 scheme — hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js` /
 `bundle.css` / `simulator.worker.js` — is gone along with the classic app.
 
-### Cloudflare Pages
+### GitHub Pages
 
-**Project**: `uma-tools`
+**Workflow**: `.github/workflows/pages.yml`, on push to `master` or manual dispatch.
 
-**Build Configuration:**
-- Build command: `./build-all.sh` (builds all apps)
-- Build output directory: `/`
-- Root directory: `/`
+- Builds the wasm (`wasm-pack 0.15.1`, `--target web`), the Vite app, and the
+  runtime assets, then assembles `_site` = `umalator-global/v2/dist/.` + `icons/` + `fonts/` +
+  `globalsim/` + `og-image-v2.png` + `.nojekyll`.
+- `CC_BASE_PATH=/${{ github.event.repository.name }}` sets the asset prefix from the repo name,
+  so a rename or a root-domain deploy needs no code change (`CC_BASE_PATH=''` = site root).
+- Cloudflare-only features build inert: `OCR_PROXY_URL` and `TURNSTILE_SITEKEY` are unset.
+- No Pages env vars are configured; `VITE_DISCORD_WEBHOOK` stays empty, so the feedback drawer
+  is hidden.
 
-**Environment Variables:**
-- `VITE_DISCORD_WEBHOOK`: Cloudflare Worker URL for feedback
+`ci.yml` runs on push and pull request: the engine's own `cargo test`, the wasm-vs-native byte
+parity check, and the GlobalSim suites. `sync-upstream-data.yml` runs daily, pulls the upstream
+game data, and opens a PR against `master`; merging is what deploys it.
 
-**Custom Domains:**
-- `umalator.app` (primary)
-- `dev.umalator.app` (dev branch)
-- `canva.umalator.app` (Canva guides — see below)
-- `www.umalator.app` (301s to apex via the Pages Function)
+`build-all.sh`, `_redirects` and `functions/` are upstream Cloudflare Pages machinery. GitHub
+Pages ignores all three, and the Pages workflow never calls `build-all.sh`.
 
 ### Branch Deployment
 
-- **master**: Production (`umalator.app`)
-- **dev**: Development preview (`dev.umalator.app`)
+- **master**: deploys to GitHub Pages (the URL above)
+- **dev**: no deployment on this fork; upstream's `dev.umalator.app` preview is upstream's
 
 ### Canva guides — `canva.umalator.app`
+
+> Upstream-only. This fork does not host that subdomain, and `pages.yml` copies no `canva/`
+> directory into `_site`, so none of these paths exist on the Pages URL. The registry and the
+> generator are kept for `functions/[[catchall]].ts`, which reads the same `canva-embeds.json`.
 
 Community guides are Canva embeds addressed by a numbered slug, reachable at both
 `canva.umalator.app/<slug>` and `umalator.app/canva/<slug>`:

@@ -6,27 +6,27 @@
 
 Live: **https://john-unowen.github.io/Yet-Another-Umalator-Fork/**
 
-A personal fork of [TheCing/uma-tools](https://github.com/TheCing/uma-tools) (Moomoolator), which itself is a hybrid fork of [alpha123/umalator](https://github.com/alpha123/umalator) and [kachi-dev/umalator](https://github.com/kachi-dev/umalator). The fork exists for one change: Compare and Skill modes in the v2 Global simulator run [GlobalSim](https://github.com/daftuyda/GlobalSim), a full-field Rust race engine, instead of the idealized single-uma solver. GlobalSim is vendored as an unmodified git submodule (currently v77) and compiled to WebAssembly that runs in browser Web Workers. The original engines are still selectable.
+A personal fork of [TheCing/uma-tools](https://github.com/TheCing/uma-tools) (Moomoolator), which itself is a hybrid fork of [alpha123/umalator](https://github.com/alpha123/umalator) and [kachi-dev/umalator](https://github.com/kachi-dev/umalator). All three modes — Compare, Skill and Optimizer — run [GlobalSim](https://github.com/daftuyda/GlobalSim), a full-field Rust race engine, in place of the idealized single-uma solver; the classic TypeScript engine and the JP and HP-calculator apps are gone. GlobalSim is vendored as an unmodified git submodule (currently v77) and compiled to WebAssembly that runs in browser Web Workers.
 
 ![Umalator interface](docs/screenshot.png)
 
 ## The live site
 
-The Pages deployment serves the v2 Global simulator at the site root. The repository's other tools (the JP simulator, HP calculator, event tracker and so on) are present in the source tree but not deployed here; the upstream project hosts those at [umalator.app](https://umalator.app/).
+The Pages deployment serves the v2 Global simulator at the site root. The repository's other tools (event tracker, skill visualizers, mechanics explorer, team trials, release timeline) are present in the source tree but not deployed here; the JP simulator and HP calculator were removed. The upstream project hosts its own set of tools at [umalator.app](https://umalator.app/).
 
 GitHub Pages has no server components, so two upstream features change. Screenshot OCR import needs your own Gemini API key (the shared proxy does not exist here), and the feedback form is hidden. Everything else runs client-side.
 
 ## What runs where
 
-The engine selector sits in the header settings: GlobalSim (the default), classic v2, and classic v1. Your choice persists between visits, and a Copy Link share restores the engine the author was using; links made before the fork open classic v2.
+There is one engine and no engine selector: GlobalSim runs every mode. The classic v1/v2 engines this fork descended from are gone.
 
 GlobalSim mode changes what Compare and the skill chart measure:
 
 - Every simulated race carries nine runners: the tested uma plus eight mobs from a fixed preset (`umalator-global/v2/engines/globalsim/mob-presets.json`). Compare races both builds over paired seeds and reports the full-field finish difference, win rate, ties, HP-out and rushing rates, and min/max/mean/median snapshots with representative replays.
-- The skill chart reports, per skill, the mean margin with a 95% CI against the baseline build, how often the skill fired, and the resulting win rate.
+- The skill chart reports, per skill, the mean margin with a 95% CI against the baseline build, how often the skill fired, and `vs Base` — the paired ahead-share as signed points around the 50% neutral point (ties counted against).
 - Race outcomes come from the engine's own frame data, so position, speed and HP curves in the track overlay are real full-field traces.
 - Skills are gated to the engine's skill table: 751 entries (730 validated against engine v70 plus 21 supplemented, see `globalsim/skills-supplement.json`). Uncovered skills, outfits and awakenings are hidden in GlobalSim mode, and the settings panel shows how many of your skills are not yet covered.
-- The Simulation threads setting sizes the worker pool. Auto uses one fewer core than your machine reports, between 1 and 8.
+- The Simulation threads setting sizes the worker pool (1-32, or auto). Auto uses one fewer core than your machine reports, capped at 32.
 
 ## Reading the numbers
 
