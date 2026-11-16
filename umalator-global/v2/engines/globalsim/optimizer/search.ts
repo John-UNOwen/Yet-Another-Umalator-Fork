@@ -11,10 +11,10 @@ import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf } from './bandit';
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
 	DEAD_SKILL_MIN_SEEDS,
-	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
+	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA, SEQ_ADOPT_Z,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
-import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
+import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, SEED_LIST_SIZE, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
 import { affordable, affordableAdds, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
@@ -189,7 +189,14 @@ export function createController(): SearchController {
 	return { stop: () => { isStopped = true; }, stopped: () => isStopped };
 }
 
-const isTie = (ci: [number, number]) => ci[0] <= 0 && ci[1] >= 0;
+// A non-finite CI (one common seed: SEM undefined) proves nothing, so it is a
+// tie — the same honest answer as no common seeds at all.
+const isTie = (ci: [number, number]) => !(Number.isFinite(ci[0]) && Number.isFinite(ci[1])) || (ci[0] <= 0 && ci[1] >= 0);
+/** §D.3 sequential-test bounds at SEQ_ADOPT_Z (config.ts): the adoption tests
+ *  peek at a growing sample, so they use the corrected boundary, not 1.96. A
+ *  diff under two common seeds has no SEM and never counts as significant. */
+const seqLo = (d: PairedDiff): number => (d.n >= 2 && Number.isFinite(d.sem) ? d.mean - SEQ_ADOPT_Z * d.sem : -Infinity);
+const seqHi = (d: PairedDiff): number => (d.n >= 2 && Number.isFinite(d.sem) ? d.mean + SEQ_ADOPT_Z * d.sem : Infinity);
 
 /** Harness-gated trace (the oracle test toggles it for one instance). */
 const dbg = (...a: unknown[]) => { if ((globalThis as any).OPT_DBG) console.error('[opt]', ...a); };
@@ -803,12 +810,13 @@ async function runSingleScenario(
 			dbg('  re-solve Y', Y.id || '(base)');
 			// Adopt only on a significant improvement (lower CI bound > 0, §8D).
 			// §D.3: sequential test, one candidate. Grow Y vs X in rungs and
-			// stop as soon as the CI excludes 0 either way or Y's 95% upper
-			// bound falls under δ_min (indifference zone: the best case is
-			// below what is worth chasing, so no more races). The 150-seed
-			// first rung already rejects a dead candidate on the paired record:
-			// 1.96·0.16/√150 = 0.026 L under the Standard δ_min of 0.03 L, so
-			// seeds only grow on real close calls.
+			// stop as soon as the SEQ_ADOPT_Z band excludes 0 either way or Y's
+			// 95% upper bound falls under δ_min (indifference zone: the best case
+			// is below what is worth chasing, so no more races). On the app's
+			// own ℓ unit (finish speed, σΔ ≈ 0.20 L live) the 150-seed first
+			// rung resolves to 1.96·0.20/√150 ≈ 0.032 L — just above the
+			// Standard δ_min of 0.03 L, so a dead candidate usually takes one
+			// more rung before the zone drops it.
 			let d: PairedDiff | null = null;
 			let held = Math.min(cfg.batchCap, Math.max(150, filled(ev, NS_SEARCH, si, X)));
 			for (;;) {
@@ -819,7 +827,7 @@ async function runSingleScenario(
 				]);
 				d = ev.paired(NS_SEARCH, si, Y, X, searchPick);
 				if (!d || held >= cfg.batchCap) break;
-				if (d.ci95[0] > 0 || d.ci95[1] < 0) break; // significant either way, §8D
+				if (seqLo(d) > 0 || seqHi(d) < 0) break; // significant either way, §8D (sequential bound)
 				if (d.ci95[1] < cfg.deltaMinL) break; // Y cannot show an improvement worth having
 				held = Math.min(cfg.batchCap, Math.max(held + BANDIT_RUNG_MIN_SEEDS, Math.ceil(held * 1.5)));
 			}
@@ -828,7 +836,7 @@ async function runSingleScenario(
 			// §E never-add: a build whose own telemetry already shows one of
 			// its skills recorded zero is not adopted, significant or not (a
 			// dead skill only ever "wins" on noise).
-			if (d && d.ci95[0] > 0 && !deadSkills(ev, si, Y).length) {
+			if (d && seqLo(d) > 0 && !deadSkills(ev, si, Y).length) {
 				X = Y;
 				assertFeasible(space, X.selection); // §3.B.1: an over-budget build can never be X
 				traceAdopt(X, 'resolve');
@@ -920,11 +928,11 @@ async function runSingleScenario(
 				]);
 				d = ev.paired(NS_SEARCH, si, better, against, searchPick);
 				if (!d || held >= cfg.batchCap) break;
-				if (d.ci95[0] > 0 || d.ci95[1] < 0) break; // significant either way, §8D
+				if (seqLo(d) > 0 || seqHi(d) < 0) break; // significant either way, §8D (sequential bound)
 				if (d.ci95[1] < cfg.deltaMinL) break; // cannot show an improvement worth having
 				held = Math.min(cfg.batchCap, Math.max(held + BANDIT_RUNG_MIN_SEEDS, Math.ceil(held * 1.5)));
 			}
-			return !!d && d.ci95[0] > 0;
+			return !!d && seqLo(d) > 0;
 		};
 		const makeKick = (Xc: BuildRefLite, kickIdx: number): BuildRefLite => {
 			// k = 2–4 random feasible swaps (§C), drop side skewed toward low

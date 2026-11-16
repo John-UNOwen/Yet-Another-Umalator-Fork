@@ -177,6 +177,13 @@ export const CLIMB_WAVE = 128;
  *  so a growth batch hands every worker at least one full chunk even with a
  *  single survivor. */
 export const BANDIT_RUNG_MIN_SEEDS = 8 * CHUNK_SIZE;
+/** Sequential adoption boundary (§D.3): Stage D's adoption test and the ILS
+ *  acceptance test look at a growing sample up to ~3 times and stop at the
+ *  first significant look, so a fixed 1.96 adopted a zero-gain build ~5–6% of
+ *  the time instead of 2.5%. 2.4 (a Pocock-style constant boundary, Monte
+ *  Carlo on the real rung schedule 150 → 350 → 550 → 825 → batchCap with
+ *  σΔ 0.17–0.205 L) brings it back to 1.9–2.4%, power at δ_min ≈ 94%. */
+export const SEQ_ADOPT_Z = 2.4;
 /** Successive-halving ladder inside bandit batches (§9). */
 export const BANDIT_LADDER = [50, 100, 200, 400, 800, 1600, 3200];
 /** Stage E acquisition κ (predicted gain + κ·SE). */
