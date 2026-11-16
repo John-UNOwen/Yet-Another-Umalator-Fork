@@ -445,6 +445,13 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			// once the component is gone; the finally still releases the pool.
 			if (mountedRef.current) setMessage(e instanceof Error ? e.message : String(e));
 		} finally {
+			// Engine/worker job failures the search worked around (retried seeds,
+			// or seeds dropped after repeated failures) — never silent.
+			const jobErrors = ev?.jobErrorLog() ?? [];
+			if (jobErrors.length && mountedRef.current) {
+				setWarnings((prev) => [...prev, ...jobErrors.map(({ error, count }) =>
+					`Engine job failed ${count}× (seeds retried, then dropped after 3 failures): ${error}`)]);
+			}
 			// Dispose the evaluator this run owns (its possibly-respawned pool) even
 			// if the pane unmounted mid-run — the leak was releasing through the
 			// (nulled) evRef.current instead. dispose() is idempotent on a dead pool.
@@ -599,7 +606,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			{/* ── Space warnings (collapsed) ── */}
 			{warnings.length > 0 && (
 				<details class="v2-optimizer-warnings" style={{ fontSize: 12 }}>
-					<summary style={{ cursor: 'pointer', opacity: 0.8 }}>{warnings.length} space warning(s)</summary>
+					<summary style={{ cursor: 'pointer', opacity: 0.8 }}>{warnings.length} warning(s)</summary>
 					<ul style={{ margin: '4px 0', paddingLeft: 20, opacity: 0.7 }}>
 						{warnings.map((wmsg) => <li>{wmsg}</li>)}
 					</ul>
