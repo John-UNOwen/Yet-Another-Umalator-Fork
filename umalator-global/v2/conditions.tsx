@@ -44,6 +44,11 @@ interface CompactConditionsProps {
 		layout?: 'mob' | 'h2h';
 		setLayout?: (v: 'mob' | 'h2h') => void;
 		showLayout?: boolean;
+		/** Paired random streams (engine pairedRandomStreams); shown only in
+		 *  Compare mode. Off = retail (official parity), on = lower-noise deltas. */
+		paired?: boolean;
+		setPaired?: (v: boolean) => void;
+		showPaired?: boolean;
 	};
 }
 
@@ -137,7 +142,7 @@ export function ConditionGroups({
 	);
 }
 
-/** GlobalSim mob-field controls (mob preset, gate, compare layout toggle). */
+/** GlobalSim mob-field controls (mob preset, gate, compare layout + paired-seeds toggles). */
 export function GlobalsimFieldControls({
 	globalsimField,
 }: {
@@ -177,6 +182,22 @@ export function GlobalsimFieldControls({
 						Head-to-head
 					</button>
 				</div>
+			)}
+			{globalsimField.showPaired && globalsimField.setPaired && (
+				<Tooltip
+					content="Both builds draw from the same random streams (keyed by race seed, gate and skill), so a one-skill change keeps its activations: the paired margin noise drops ~10× while the distributions stay the same. Off keeps the retail official-parity draws. The Skill Chart always runs paired."
+					position="bottom"
+				>
+					<label class="v2-switch v2-field-paired-toggle">
+						<input
+							type="checkbox"
+							checked={globalsimField.paired === true}
+							onChange={() => globalsimField.setPaired(!(globalsimField.paired === true))}
+						/>
+						<span class="v2-switch-slider" />
+						<span class="v2-switch-label">Paired seeds (lower noise)</span>
+					</label>
+				</Tooltip>
 			)}
 		</div>
 	);

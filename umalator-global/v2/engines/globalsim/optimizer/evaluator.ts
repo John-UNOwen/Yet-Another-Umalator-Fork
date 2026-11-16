@@ -29,7 +29,7 @@ import { globalsimSeedList } from '../compare';
 import { ci95, leadMarginL, SeedCompactRecord } from '../metrics';
 import { createGlobalsimPool, GlobalsimPool, PoolJob, resolveThreadCount, WorkerFactory } from '../pool';
 import { CACHE_CAP_BYTES, EffortConfig, VERIFY_SALT } from './config';
-import { EvalCache, NS_SEARCH, NS_VERIFY } from './cache';
+import { EvalCache, NS_SEARCH, NS_VERIFY, nsWithMode } from './cache';
 import { BuildSpace, forcedOptions } from './space';
 import {
 	BuildStats, MeanSem, NoiseInfo, ObjectiveKind, ScenarioSpec, SeedSlot, SeedValue,
@@ -59,12 +59,21 @@ export interface EvaluatorOptions {
 	baseSeed: number;
 	/** Merged skill table (engine skillData) — one table for the whole run. */
 	skillData?: unknown;
+	/**
+	 * Random-stream mode for EVERY race this evaluator runs (Stages A–G).
+	 * Default TRUE (paired): the optimizer is a chain of paired comparisons,
+	 * and paired draws cut σΔ(ℓ) ~10× at zero cost (see AdapterConfig.paired).
+	 * The value also namespaces the transposition table (nsWithMode), so a
+	 * slot measured in one mode can never fold into a statistic of the other.
+	 */
+	paired?: boolean;
 	/** Transposition-table budget (defaults to config CACHE_CAP_BYTES). */
 	cacheCapBytes?: number;
 }
 
 export interface EnsureReq {
-	/** NS_SEARCH / NS_VERIFY. */
+	/** NS_SEARCH / NS_VERIFY (the evaluator adds the stream-mode namespace
+	 *  internally — callers pass the plain namespace). */
 	ns: string;
 	scenarioIdx: number;
 	build: BuildRefLite;
@@ -206,6 +215,12 @@ export function objectiveOf(st: BuildStats, obj: ObjectiveKind, gain: PairedDiff
 
 export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	const cache = new EvalCache(o.cacheCapBytes ?? CACHE_CAP_BYTES);
+	// Stream mode for every race (default paired — see EvaluatorOptions.paired).
+	// It pins the request flag AND namespaces the cache: measurements from the
+	// two modes never share a key. Seed LISTS are mode-independent (pure seed
+	// arithmetic), so only cache keys carry the mode.
+	const paired = o.paired !== false;
+	const cns = (ns: string): string => nsWithMode(ns, paired);
 	// "Must include" locks (space.ts): implicit in every identity, never in a
 	// selection — the horse must carry them regardless of what is searched.
 	const lockedIds = forcedOptions(o.space).map((f) => f.id);
@@ -279,14 +294,14 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	}
 
 	function statsFor(ns: string, si: number, build: BuildRefLite): BuildStats | null {
-		const e = cache.peek(ns, sid(si), build.id);
+		const e = cache.peek(cns(ns), sid(si), build.id);
 		if (!e || e.filled === 0) return null;
 		return statsOf(e.values);
 	}
 
 	function pairedFor(ns: string, si: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null): PairedDiff | null {
 		// shared implementation (synthetic evaluators reuse pairedOf verbatim)
-		return pairedOf(cache.peek(ns, sid(si), a.id)?.values ?? [], cache.peek(ns, sid(si), b.id)?.values ?? [], pick);
+		return pairedOf(cache.peek(cns(ns), sid(si), a.id)?.values ?? [], cache.peek(cns(ns), sid(si), b.id)?.values ?? [], pick);
 	}
 
 	return {
@@ -308,7 +323,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 				let maxPos = -1;
 				for (const p of req.positions) if (p > maxPos) maxPos = p;
 				if (maxPos >= list.length) throw new Error(`optimizer: position ${maxPos} beyond ${req.ns} list`);
-				const entry = cache.ensure(req.ns, sid(req.scenarioIdx), req.build.id, maxPos + 1);
+				const entry = cache.ensure(cns(req.ns), sid(req.scenarioIdx), req.build.id, maxPos + 1);
 				const missing = req.positions.filter(p => entry.values[p] === null);
 				if (!missing.length) continue;
 				let horse = horses.get(req.build.id);
@@ -317,7 +332,9 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 				// Job ids must be unique per (ns, scenario, identity, gate, chunk):
 				// variantKey carries ns + scenario; the builder appends gate/chunk.
 				const variantKey = `${req.ns}${req.scenarioIdx}|${req.build.id}`;
-				const built = buildGlobalsimChartJobs(o.scenarios[req.scenarioIdx].conds, variantKey, horse, seeds);
+				// The evaluator's stream mode pins the request flag on every race
+				// (its setupKey also carries the mode tag — no cross-mode reuse).
+				const built = buildGlobalsimChartJobs({ ...o.scenarios[req.scenarioIdx].conds, paired }, variantKey, horse, seeds);
 				if (built.errors.length) throw new Error(`optimizer job build failed: ${built.errors.join('; ')}`);
 				for (const job of built.jobs) {
 					jobs.push(job);
@@ -332,7 +349,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 				const m = jobReq.get(job.id);
 				if (!m) return;
 				const { req } = m;
-				const entry = cache.ensure(req.ns, sid(req.scenarioIdx), req.build.id, 0);
+				const entry = cache.ensure(cns(req.ns), sid(req.scenarioIdx), req.build.id, 0);
 				const idx = indexes.get(listKey(req.ns, req.scenarioIdx))!;
 				const distance = o.scenarios[req.scenarioIdx].conds.distance;
 				for (const raw of records) {
@@ -341,7 +358,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 					if (pos === undefined) continue;
 					const v = seedValueOf(rec, distance);
 					if (entry.values[pos] === null) races++;
-					cache.set(req.ns, sid(req.scenarioIdx), req.build.id, pos, v);
+					cache.set(cns(req.ns), sid(req.scenarioIdx), req.build.id, pos, v);
 				}
 			};
 			let res: { errors: Array<{ jobId: string; error: string }> };
@@ -359,8 +376,8 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 				for (const s of m.seeds) {
 					const pos = idx.get(s);
 					if (pos === undefined) continue;
-					if (cache.peek(m.req.ns, sid(m.req.scenarioIdx), m.req.build.id)?.values[pos] === null) {
-						cache.set(m.req.ns, sid(m.req.scenarioIdx), m.req.build.id, pos, 'err');
+					if (cache.peek(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id)?.values[pos] === null) {
+						cache.set(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id, pos, 'err');
 					}
 				}
 			}
@@ -369,7 +386,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 			return { jobErrors: res.errors };
 		},
 		slots(ns, si, identity) {
-			return cache.peek(ns, sid(si), identity)?.values ?? [];
+			return cache.peek(cns(ns), sid(si), identity)?.values ?? [];
 		},
 		racesRun() { return races; },
 		cacheStats: () => cache.stats(),

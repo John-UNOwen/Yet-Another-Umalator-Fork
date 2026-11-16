@@ -352,6 +352,26 @@ test('job topology: baseline covers all seeds once; variant jobs grouped per ski
 	t.end();
 });
 
+// ── stream mode: paired draws vs retail draws ────────────────────────────────
+
+test('stream mode: chart defaults to paired; retail mode gets different setupKeys and no flag', t => {
+	const seeds = [1, 2, 3, 4, 5, 6, 7, 8];
+	const mk = (over: Partial<GlobalsimSkillChartInput> = {}) =>
+		buildGlobalsimChartJobs(chartInput(over), 'base', horseWithSkills(PLAIN_BUILD), seeds);
+	const def = mk();
+	const off = mk({ paired: false });
+	t.deepEqual(def.errors, [], 'default builds');
+	t.ok(def.jobs.length > 0, 'jobs built');
+	t.ok(def.jobs.every(j => (j.request as any).pairedRandomStreams === true), 'Skill Chart default request carries the paired flag');
+	t.ok(def.jobs.every(j => j.setupKey.includes('|pair|')), 'default setupKey carries the pair mode tag');
+	t.ok(off.jobs.every(j => !('pairedRandomStreams' in (j.request as any))), 'paired:false omits the flag (byte-identical retail request)');
+	t.ok(off.jobs.every(j => j.setupKey.includes('|retail|')), 'retail setupKey carries the retail mode tag');
+	const defKeys = new Set(def.jobs.map(j => j.setupKey));
+	const offKeys = new Set(off.jobs.map(j => j.setupKey));
+	t.equal([...defKeys].filter(k => offKeys.has(k)).length, 0, 'the same setup in the two modes never shares a setupKey');
+	t.end();
+});
+
 // ── seed-count cap: the Samples field (up to 10000) must not size the chart ──
 // The chart's per-skill seed count comes from the shared compare Samples field
 // (app-v2 sampleCount → chart.ts total). The classic chart ignores Samples

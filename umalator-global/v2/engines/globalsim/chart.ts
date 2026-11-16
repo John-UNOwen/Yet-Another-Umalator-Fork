@@ -51,7 +51,7 @@ import skillmeta from '../../../../skill_meta.json';
 import { buildGlobalSimRequest, AdapterConfig } from './adapter';
 import { buildMobField, deriveGate, MobPreset, MobError } from './mobs';
 import { createGlobalsimPool, GlobalsimPool, PoolJob, WorkerFactory, resolveThreadCount } from './pool';
-import { DEFAULT_CHUNK_SIZE, globalsimSeedList, hashString64, mergeCanonicalField } from './compare';
+import { DEFAULT_CHUNK_SIZE, globalsimSeedList, hashString64, mergeCanonicalField, streamModeTag } from './compare';
 import { SeedCompactRecord, CompareAggregate, newAggregate, addPair, summarizeAggregate } from './metrics';
 import type { SkillChartResult, SkillChartGlobalsim } from '../../skill-chart-types';
 
@@ -100,6 +100,12 @@ export interface ChartRaceConditions {
 	mobPreset: MobPreset;
 	fixedGate?: number;
 	chunkSize?: number;
+	/**
+	 * Paired random streams (engine pairedRandomStreams — see AdapterConfig.paired).
+	 * The chart resolves this per call: default TRUE (Skill Chart mode), and
+	 * the optimizer evaluator pins it explicitly for its own runs.
+	 */
+	paired?: boolean;
 }
 
 export interface GlobalsimSkillChartInput extends ChartRaceConditions {
@@ -152,6 +158,10 @@ export function buildGlobalsimChartJobs(
 	options: { trackSkillId?: string; idTag?: string } = {},
 ): { jobs: PoolJob[]; errors: string[] } {
 	const chunkSize = conds.chunkSize ?? DEFAULT_CHUNK_SIZE;
+	// Skill Chart mode is paired: a caller that wants retail draws must pass
+	// paired: false explicitly (the optimizer evaluator pins its own mode).
+	const paired = conds.paired !== false;
+	const modeTag = streamModeTag(paired);
 	const groups = new Map<number, number[]>();
 	for (const s of seeds) {
 		const g = conds.fixedGate ?? deriveGate(s);
@@ -160,7 +170,7 @@ export function buildGlobalsimChartJobs(
 	}
 	const jobs: PoolJob[] = [];
 	const errors: string[] = [];
-	const config: AdapterConfig = { courseIds: conds.courseIds, knownSkillIds: conds.knownSkillIds, skillData: conds.skillData ? null : undefined };
+	const config: AdapterConfig = { courseIds: conds.courseIds, knownSkillIds: conds.knownSkillIds, skillData: conds.skillData ? null : undefined, paired };
 	for (const [gate, groupSeeds] of groups) {
 		const { mobs, errors: mobErrors } = buildMobField(conds.mobPreset, 0, { fixedGate: gate });
 		if (mobErrors.length) {
@@ -181,7 +191,7 @@ export function buildGlobalsimChartJobs(
 		const player = (res.value as any).horses[0];
 		const merged = mergeCanonicalField(player, gate, mobs);
 		const request = { ...(res.value as any), horses: merged.horses, playerHorseIndex: merged.playerIndex };
-		const setupKey = `gs|chart|${variantKey}|c${conds.courseId}|g${gate}|${hashString64(JSON.stringify({ g: conds.ground, w: conds.weather, s: conds.season, t: conds.time, gr: conds.grade ?? null, h: request.horses }))}`;
+		const setupKey = `gs|chart|${variantKey}|c${conds.courseId}|g${gate}|${modeTag}|${hashString64(JSON.stringify({ g: conds.ground, w: conds.weather, s: conds.season, t: conds.time, gr: conds.grade ?? null, h: request.horses }))}`;
 		for (let c = 0; c < groupSeeds.length; c += chunkSize) {
 			jobs.push({
 				id: `${variantKey}|g${gate}|${options.idTag ?? ''}${c}`,

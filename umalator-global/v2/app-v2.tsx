@@ -328,6 +328,11 @@ function App() {
   // races both umas together against 7 mobs (mirrored gate pairs). Compare
   // only — the skill chart always uses the mob layout.
   const [globalsimLayout, setGlobalsimLayout] = useState<"mob" | "h2h">("mob");
+  // Paired random streams (engine pairedRandomStreams): both sides draw from
+  // position/skill-keyed streams, so a one-skill delta keeps its draws and the
+  // paired σ(lead) drops ~10×. Compare-only toggle; OFF = retail (official
+  // parity). The Skill Chart is always paired (chart.ts default) — no toggle.
+  const [globalsimPaired, setGlobalsimPaired] = useState(false);
   const globalsimFieldConfig = {
     preset: globalsimFieldPreset,
     setPreset: setGlobalsimFieldPreset,
@@ -337,6 +342,9 @@ function App() {
     layout: globalsimLayout,
     setLayout: setGlobalsimLayout,
     showLayout: mode === "compare",
+    paired: globalsimPaired,
+    setPaired: setGlobalsimPaired,
+    showPaired: mode === "compare",
   };
   useEffect(() => {
     if (globalsimSkillIds) return;
@@ -921,6 +929,8 @@ function App() {
             .set("forcedSkillPositions", ImmMap(w.forcedSkillPositions || {}));
         };
         setSkillChartProgress({ 0: { round: 1, total: chartFastMode ? 1 : 2 } });
+        // Paired draws are the chart's default (chart.ts): baseline and every
+        // variant share their (seed, position, skill) streams — no toggle.
         const rows = await runGlobalsimSkillChart({
           uma: toHorseState(uma1),
           // Coverage filter by the awaited table (the one at the top of this
@@ -1089,6 +1099,8 @@ function App() {
             mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
             fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
             fieldLayout: globalsimLayout,
+            // Off = retail (official parity); on = paired draws (lower noise).
+            paired: globalsimPaired,
             seedBase: seed,
             sampleCount: samples,
             threads: serverAwareThreadCount(globalsimThreads, simServerOnline),
@@ -1130,6 +1142,7 @@ function App() {
     globalsimFieldPreset,
     globalsimGate,
     globalsimLayout,
+    globalsimPaired,
     globalsimThreads,
     simServerOnline,
     globalsimWorkerFactory,

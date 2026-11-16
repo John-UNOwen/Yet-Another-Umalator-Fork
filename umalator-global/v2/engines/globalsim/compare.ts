@@ -128,6 +128,12 @@ export interface GlobalsimCompareInput {
 	 * initialize in the engine (profile-v77's own skillData is v70-only).
 	 */
 	skillData?: Record<string, unknown>;
+	/**
+	 * Paired random streams (engine pairedRandomStreams — see AdapterConfig.paired).
+	 * Default FALSE: Compare stays in retail/official-parity mode; the UI
+	 * toggle opts into paired draws for lower-noise deltas.
+	 */
+	paired?: boolean;
 	/** Valid engine course ids (courses.ts loader). */
 	courseIds: ReadonlySet<string> | readonly string[];
 	mobPreset: MobPreset;
@@ -187,6 +193,17 @@ export interface BuiltJobs { jobs: PoolJob[]; errors: string[] }
 export type GlobalsimFieldLayout = 'mob' | 'h2h';
 
 /**
+ * Stream-mode tag segment for setupKeys. pool.ts reuses a worker's live
+ * preparation on setupKey equality alone, so a preparation built with
+ * pairedRandomStreams must never serve retail jobs (or vice versa) — both
+ * modes get an explicit segment, so a key from one can never collide with
+ * the other.
+ */
+export function streamModeTag(paired: boolean): string {
+	return paired ? 'pair' : 'retail';
+}
+
+/**
  * Gate pair for one seed under the head-to-head layout: the base gate from
  * the seed (or the fixed gate) plus the adjacent gate. fixedGate semantics:
  * with a fixed gate g, race A always starts UMA 1 at g and UMA 2 at g+1
@@ -236,7 +253,9 @@ export function buildCompareJobs(
 	}
 	const jobs: PoolJob[] = [];
 	const errors: string[] = [];
-	const config: AdapterConfig = { courseIds: input.courseIds, knownSkillIds: input.knownSkillIds, skillData: input.skillData ? null : undefined };
+	const paired = input.paired === true;
+	const modeTag = streamModeTag(paired);
+	const config: AdapterConfig = { courseIds: input.courseIds, knownSkillIds: input.knownSkillIds, skillData: input.skillData ? null : undefined, paired };
 	for (const variant of [0, 1] as const) {
 		for (const [gate, groupSeeds] of groups) {
 			if (layout === 'h2h') {
@@ -275,7 +294,7 @@ export function buildCompareJobs(
 					horses: merged.horses,
 					playerHorseIndex: merged.playerIndex,
 				};
-				const setupKey = `gs|${mode}|h2h|v${variant}|c${input.courseId}|g${gA}+${gB}|${hashString64(JSON.stringify({ g: input.ground, w: input.weather, s: input.season, t: input.time, gr: input.grade ?? null, h: request.horses }))}`;
+				const setupKey = `gs|${mode}|h2h|v${variant}|c${input.courseId}|g${gA}+${gB}|${modeTag}|${hashString64(JSON.stringify({ g: input.ground, w: input.weather, s: input.season, t: input.time, gr: input.grade ?? null, h: request.horses }))}`;
 				for (let c = 0; c < groupSeeds.length; c += chunkSize) {
 					jobs.push({
 						id: `${variant}|${gate}|${c}`,
@@ -317,7 +336,7 @@ export function buildCompareJobs(
 			const player = (res.value as any).horses[0];
 			const merged = mergeCanonicalField(player, gate, mobs);
 			const request = { ...(res.value as any), horses: merged.horses, playerHorseIndex: merged.playerIndex };
-			const setupKey = `gs|${mode}|v${variant}|c${input.courseId}|g${gate}|${hashString64(JSON.stringify({ g: input.ground, w: input.weather, s: input.season, t: input.time, gr: input.grade ?? null, h: request.horses }))}`;
+			const setupKey = `gs|${mode}|v${variant}|c${input.courseId}|g${gate}|${modeTag}|${hashString64(JSON.stringify({ g: input.ground, w: input.weather, s: input.season, t: input.time, gr: input.grade ?? null, h: request.horses }))}`;
 			for (let c = 0; c < groupSeeds.length; c += chunkSize) {
 				jobs.push({
 					id: `${variant}|${gate}|${c}`,

@@ -195,6 +195,26 @@ test('runners emitted in canonical order; playerHorseIndex follows the tested um
 
 // ── 3. validation failures (typed results, never exceptions) ─────────────────
 
+test('pairedRandomStreams: emitted only when paired; default request byte-identical', t => {
+	const input = {
+		courseId: 10504, groundCondition: GroundCondition.Good, weather: Weather.Sunny,
+		season: Season.Spring, time: Time.Midday, seed: 1,
+		runners: [{ horse: horse(), gateIndex: 0, isPlayer: true }],
+	};
+	const retail = buildGlobalSimRequest(input, CONFIG);
+	const explicitOff = buildGlobalSimRequest(input, { ...CONFIG, paired: false });
+	const on = buildGlobalSimRequest(input, { ...CONFIG, paired: true });
+	t.ok(retail.ok && explicitOff.ok && on.ok, 'all three requests valid');
+	if (!retail.ok || !explicitOff.ok || !on.ok) return t.end();
+	t.notOk('pairedRandomStreams' in retail.value, 'default config omits the key entirely');
+	t.notOk('pairedRandomStreams' in explicitOff.value, 'paired:false also omits it (never emitted as false)');
+	t.equal(on.value.pairedRandomStreams, true, 'paired:true emits the flag');
+	// The whole point of omitting the key: default traffic is untouched.
+	t.equal(JSON.stringify(retail.value), JSON.stringify(explicitOff.value), 'off-request byte-identical to today\'s');
+	t.notEqual(JSON.stringify(on.value), JSON.stringify(retail.value), 'paired request differs from retail');
+	t.end();
+});
+
 test('validation: unknown / malformed course', t => {
 	const base = {
 		courseId: 10504, groundCondition: GroundCondition.Good, weather: Weather.Sunny,

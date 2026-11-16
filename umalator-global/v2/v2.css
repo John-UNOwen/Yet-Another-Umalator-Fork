@@ -926,6 +926,14 @@ body {
   padding: 0 var(--space-sm);
   font-size: var(--font-sm);
 }
+/* Compare paired-seeds switch: the v2-switch pattern sized to fit the
+   conditions strip next to the field/gate selects. */
+.v2-field-paired-toggle {
+  flex-shrink: 0;
+}
+.v2-field-paired-toggle .v2-switch-label {
+  font-size: var(--font-sm);
+}
 .v2-sim-input[type=number] {
   -moz-appearance: textfield;
 }

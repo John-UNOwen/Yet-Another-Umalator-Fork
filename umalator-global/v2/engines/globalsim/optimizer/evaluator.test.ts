@@ -238,6 +238,10 @@ test('locked (include) skills are simulated for EVERY build, empty selection inc
 	await evLock.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: lockBase, positions: [0, 1] }]);
 	const prepares = spyMsgs.filter(m => m.type === 'prepare');
 	t.ok(prepares.length > 0, 'engine received prepare messages');
+	t.ok(prepares.every(m => m.request.pairedRandomStreams === true),
+		'EVERY optimizer race runs paired (default mode): the flag is on every request');
+	t.ok(prepares.every(m => String(m.setupKey).includes('|pair|')),
+		'optimizer setupKeys carry the pair mode tag (no cross-mode preparation reuse)');
 	const playerSkills = (m: any): string[] => {
 		const req = m.request;
 		const h = req.horses[req.playerHorseIndex ?? 0];

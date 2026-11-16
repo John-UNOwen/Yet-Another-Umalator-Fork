@@ -371,6 +371,43 @@ test('buildCompareJobs: auto gate groups seeds by derived gate (≤9 setups per 
 	t.end();
 });
 
+test('buildCompareJobs: stream mode is part of the setupKey — paired and retail never share a preparation', t => {
+	// pool.ts reuses a live preparation on setupKey equality alone, so the
+	// same setup measured in the two stream modes must never fold into it.
+	const seeds = globalsimSeedList(20261114, 30);
+	const mk = (over: Partial<GlobalsimCompareInput>) => compareInput({ fixedGate: 3, ...over });
+	const retail = buildCompareJobs(mk({}), seeds, 'compact');
+	const off = buildCompareJobs(mk({ paired: false }), seeds, 'compact');
+	const paired = buildCompareJobs(mk({ paired: true }), seeds, 'compact');
+	t.deepEqual(retail.errors, []);
+	t.deepEqual(paired.errors, []);
+	const retailKeys = new Set(retail.jobs.map(j => j.setupKey));
+	const offKeys = new Set(off.jobs.map(j => j.setupKey));
+	const pairedKeys = new Set(paired.jobs.map(j => j.setupKey));
+	t.deepEqual([...retailKeys], [...offKeys], 'explicit false == default (retail): identical keys');
+	// The mode-tagged keys sit where the old bare keys were: same segment count,
+	// every retail key has exactly one paired counterpart and none are shared.
+	t.equal(retailKeys.size, 2, 'one preparation per variant');
+	t.equal(pairedKeys.size, 2);
+	t.equal([...retailKeys].filter(k => pairedKeys.has(k)).length, 0, 'no key appears in both modes');
+	for (const k of pairedKeys) t.ok(k.includes('|pair|'), 'paired setupKey carries the pair mode tag');
+	for (const k of retailKeys) t.ok(k.includes('|retail|'), 'retail setupKey carries the retail mode tag');
+	// Head-to-head keys carry the mode too (both mirrored variants).
+	const h2hRetail = buildCompareJobs(mk({ fieldLayout: 'h2h' }), seeds, 'compact');
+	const h2hPaired = buildCompareJobs(mk({ fieldLayout: 'h2h', paired: true }), seeds, 'compact');
+	t.equal(h2hRetail.jobs.length, 4, '2 chunks × 2 mirrored variants (30 seeds / 25 per chunk)');
+	t.equal(h2hPaired.jobs.length, 4);
+	for (let i = 0; i < h2hRetail.jobs.length; i++) {
+		t.equal(h2hRetail.jobs[i].id, h2hPaired.jobs[i].id, 'same job ids in the same order');
+		t.equal(h2hPaired.jobs[i].setupKey.replace('|pair|', '|retail|'), h2hRetail.jobs[i].setupKey,
+			'h2h keys differ ONLY in the mode segment');
+	}
+	// The request follows the key: the flag is on exactly for paired jobs.
+	t.ok(paired.jobs.every(j => (j.request as any).pairedRandomStreams === true), 'paired jobs ship the flag');
+	t.ok(retail.jobs.every(j => !('pairedRandomStreams' in (j.request as any))), 'retail jobs ship no flag');
+	t.end();
+});
+
 test('hashString64: deterministic 64-bit-equivalent setup fingerprint (setupKey identity)', t => {
 	// pool.ts trusts setupKey equality alone when reusing a preparation, so
 	// the hash must be deterministic and collision-free at chart scale

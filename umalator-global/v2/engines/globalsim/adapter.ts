@@ -128,8 +128,10 @@ export interface GlobalSimRunner {
 	skills: GlobalSimSkillEntry[];
 }
 
-/** The merged race request (profile keys + race keys), ready for PreparedRace. */
-export type GlobalSimRequest = Record<string, unknown>;
+/** The merged race request (profile keys + race keys), ready for PreparedRace.
+ *  pairedRandomStreams is the engine's paired-draws flag (see AdapterConfig.paired);
+ *  it is only ever present when true, so default requests stay byte-identical. */
+export type GlobalSimRequest = Record<string, unknown> & { pairedRandomStreams?: boolean };
 
 export interface AdapterRunnerInput {
 	/** v2 UI horse state (Immutable Record from components/HorseDefTypes). */
@@ -172,6 +174,19 @@ export interface AdapterConfig {
 	 *               message (workerCore), keeping per-prepare payloads small.
 	 */
 	skillData?: Record<string, unknown> | null;
+	/**
+	 * Engine paired random streams (request key pairedRandomStreams):
+	 *   true        → emit "pairedRandomStreams": true — per-skill / per-runner
+	 *                 draws come from streams keyed by (race seed, runner
+	 *                 position, skill), so two builds that differ by one skill
+	 *                 keep their draws: the paired σ(lead) drops from ~2.1 L to
+	 *                 <0.25 L while the single-run distributions stay the same.
+	 *                 Only active in the retail profile (always on via
+	 *                 profile-v77's experimentalRetail* flags).
+	 *   false / unset → OMIT the key: the request is byte-identical to a
+	 *                 pre-flag build, and the engine omits it from replies too.
+	 */
+	paired?: boolean;
 }
 
 export interface AdapterError {
@@ -401,6 +416,9 @@ export function buildGlobalSimRequest(input: AdapterRaceInput, config: AdapterCo
 	const request: GlobalSimRequest = { ...profileV77 };
 	if (config.skillData === null) delete (request as Partial<GlobalSimRequest>).skillData;
 	else if (config.skillData) request.skillData = config.skillData as GlobalSimRequest['skillData'];
+	// Only true emits the key — a default request stays byte-identical to
+	// pre-flag traffic (the engine omits the key from replies the same way).
+	if (config.paired === true) request.pairedRandomStreams = true;
 	request.seed = input.seed;
 	request.courseId = courseIdNum;
 	request.groundCondition = ground;

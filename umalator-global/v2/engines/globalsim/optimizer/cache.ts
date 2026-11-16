@@ -18,6 +18,16 @@ import type { SeedSlot } from './types';
 export const NS_SEARCH = 's';
 export const NS_VERIFY = 'v';
 
+/**
+ * Namespace variant for the engine's random-stream mode. pairedRandomStreams
+ * changes which draws a (seed, position, skill) gets, so a value measured in
+ * one mode must never fold into a statistic of the other: callers key the
+ * cache with nsWithMode(ns, paired) and the two modes get disjoint keys.
+ */
+export function nsWithMode(ns: string, paired: boolean): string {
+	return paired ? `${ns}+pair` : `${ns}+retail`;
+}
+
 export interface CacheEntry {
 	/** Slot per seed position; null = not evaluated yet (holes allowed). */
 	values: SeedSlot[];

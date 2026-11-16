@@ -343,6 +343,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			const scenarioIdxs = scenarios.map((_, i) => i);
 			ev = createEvaluator({
 				workerFactory, space, baseHorse, scenarios, baseSeed: seedUse, skillData,
+				// Every optimizer race (Stages A–G) runs paired: the search is a
+				// chain of paired comparisons, and paired draws cut σΔ(ℓ) ~10×.
+				paired: true,
 			});
 			evRef.current = ev;
 
