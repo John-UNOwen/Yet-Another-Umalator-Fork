@@ -106,10 +106,14 @@ stdin line, the v77 example request (course 10504, its 9-runner field and
 fixed gates). The base is 17 one-per-group options, 7 of them gold (mixed
 tiers, the shape the optimizer space actually offers); the adds are 12
 single-skill options from groups the base does not own. 1000 seeds per arm,
-the same seed list in both stream modes. The lead is in lengths on the app's
-own `leadMarginL` conversion (`distance / ownT`, the tail-free form a compact
-record gives); the fixed 20 m/s factor this block first used reads ~3.5 % low
-at 2000 m. Medians over the 10 (retail) / 6 (paired) adds that move at all:
+the same seed list in both stream modes. The lead is in lengths at the mean
+race speed (`distance / ownT`), because the native replies were read without
+the tail grid. That is NOT the app's unit: compact records always carry a tail
+and `leadMarginL` uses the finish speed `tail[0]`, which measured 1.166× the
+mean speed on course 10504 (24.14 vs 20.70 m/s, 120 paired seeds). Multiply
+every ℓ figure in this table by ~1.17 for the currency the search decides on
+(live paired σΔ in that unit: 0.205 L where this form reads 0.176 L). The fixed
+20 m/s factor this block first used reads ~3.5 % low at 2000 m. Medians over the 10 (retail) / 6 (paired) adds that move at all:
 
 | Number | Retail | Paired |
 |---|---|---|
