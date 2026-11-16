@@ -998,8 +998,8 @@ async function runSingleScenario(
 						if (!best || out.diff.mean > best.diff.mean) best = out;
 						continue;
 					}
-					// Certifiably hopeless: the ladder's own optimism β(n) — never
-					// below Z — already puts the optimistic Δ under δ_min (that is
+					// Certifiably hopeless: the ladder's own optimism β(n) — floored
+					// at Z (bandit.ts) — already puts the optimistic Δ under δ_min (that is
 					// what a δ-zone drop means). Anything else (still alive at the
 					// ceiling, or never measured) blocks certification.
 					const upb = out.diff.mean + betaOf(out.diff.n) * (out.diff.sem || 0);

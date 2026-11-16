@@ -109,10 +109,12 @@ interface Row {
 
 const Z = 1.96;
 
-/** §9's shrinking β: conservative (≈2.8) at 50 seeds, Z at ≥300. Exported so
- *  callers that classify survivors (the §C climb's δ-zone check) use exactly
- *  the ladder's own optimism, not the fixed-Z CI. */
-export const betaOf = (n: number) => Z * Math.sqrt(Math.min(2, 300 / Math.max(1, n)));
+/** §9's shrinking β: conservative (≈2.8) at 50 seeds, easing to Z at 300 and
+ *  held at Z from there (it used to keep shrinking — 0.78 at 1,882 seeds — so
+ *  a δ-zone drop or a certified peak rested on a ~60–80% bound instead of the
+ *  95% one it claims). Exported so callers that classify survivors (the §C
+ *  climb's δ-zone check) use exactly the ladder's own optimism. */
+export const betaOf = (n: number) => Z * Math.sqrt(Math.max(1, Math.min(2, 300 / Math.max(1, n))));
 
 /** Run one bandit batch. */
 export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Promise<BanditResult> {
@@ -165,9 +167,13 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 		// reach δ_min, so there is no improvement worth chasing), the LUCB
 		// rival cut (can't reach the leader's lower bound), and as a cost
 		// backstop the alive cap, whose cut is counted for the caller (§D.4).
-		const up = (r: Row) => r.mean + betaOf(r.n) * (r.sem || 0);
+		// Under two common seeds the SEM is undefined (NaN): that is unbounded
+		// uncertainty, not none — `sem || 0` turned one seed into a certainty.
+		// A genuine 0 (n ≥ 2, every Δ equal, e.g. a dead add) stays 0.
+		const semOf = (r: Row) => (r.n >= 2 && Number.isFinite(r.sem) ? r.sem : Infinity);
+		const up = (r: Row) => r.mean + betaOf(r.n) * semOf(r);
 		const leader = rows.length ? rows.reduce((a, b) => (b.mean > a.mean ? b : a)) : null;
-		const lcb = leader ? leader.mean - betaOf(leader.n) * (leader.sem || 0) : 0;
+		const lcb = leader ? leader.mean - betaOf(leader.n) * semOf(leader) : 0;
 		const ranked = [...rows].sort((a, b) => up(b) - up(a) || (a.build.id < b.build.id ? -1 : 1));
 		const kept: Row[] = [];
 		for (const r of ranked) {
@@ -180,7 +186,7 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 		// upper bound.
 		if (kept.length) {
 			const top = kept.reduce((a, b) => (b.mean > a.mean ? b : a));
-			const lo = top.mean - betaOf(top.n) * (top.sem || 0);
+			const lo = top.mean - betaOf(top.n) * semOf(top);
 			const restWorst = kept.length === 1 ? -Infinity : Math.max(...kept.filter(r => r !== top).map(up));
 			if (lo > 0 && lo >= restWorst - 1e-12) {
 				for (const r of kept) if (r !== top) r.survived = false;
