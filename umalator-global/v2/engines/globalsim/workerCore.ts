@@ -80,10 +80,15 @@ export interface PreparedRaceInstance {
  * README) against ~7–9 ms per seed, so re-preparing between the small
  * per-gate seed blocks of a search batch is pure loss; an LRU turns the
  * second and later rungs of a build into pure run time. The cap bounds
- * memory (one PreparedRace is one parsed request + init state — a handful
- * of them per worker stays well inside the pool's memory story).
+ * memory: one held PreparedRace measured ≈1.1 MB of wasm heap (real 351 KB
+ * request), so a full LRU is ≈11 MB per worker.
+ *
+ * 10 = one build's whole gate set plus one: with the gate on "auto" a build
+ * fans out over up to FIELD_SIZE = 9 gates (mobs.ts), and at 8 no worker could
+ * hold them all, so key affinity missed on every gate switch and the short
+ * rounds re-prepared ~3× as often.
  */
-export const PREPARED_LRU = 8;
+export const PREPARED_LRU = 10;
 
 /** The wasm-bindgen surface globalsim-wasm/src/lib.rs exposes. */
 export interface WasmApi {
