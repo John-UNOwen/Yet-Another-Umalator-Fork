@@ -73,8 +73,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           rm -f .sync-summary.txt globalsim/coverage-report.md   # report refresh is not part of the sync PR
-          git config user.name  'uma-tools bot'
-          git config user.email 'noreply@umalator.app'
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           # data only. bundles are rebuilt by Pages; never commit build output here.
           git add umalator-global/skill_data.json \
                   umalator-global/skillnames.json \

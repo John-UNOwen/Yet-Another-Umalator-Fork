@@ -1,7 +1,15 @@
 {
-  "name": "uma-tools",
+  "name": "yet-another-umalator-fork",
   "version": "0.0.1",
-  "description": "",
+  "description": "Uma Musume race simulator on the GlobalSim engine (fork of Moomoolator)",
+  "homepage": "https://john-unowen.github.io/Yet-Another-Umalator-Fork/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/John-UNOwen/Yet-Another-Umalator-Fork.git"
+  },
+  "bugs": {
+    "url": "https://github.com/John-UNOwen/Yet-Another-Umalator-Fork/issues"
+  },
   "main": "index.js",
   "scripts": {
     "build:global": "cd umalator-global && node build.mjs",
