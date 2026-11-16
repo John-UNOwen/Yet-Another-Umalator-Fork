@@ -49,9 +49,13 @@
 export const THREADS_STORAGE_KEY = 'umalator_v2_globalsim_threads';
 export const MAX_THREADS = 32;       // worker ceiling: user option range 1..32
 export const AUTO_THREADS_MAX = MAX_THREADS;  // Auto = every core minus the UI thread (hc−1, up to MAX_THREADS).
-	// A browser worker for the skill sim does not grow the tab's memory with worker count, so the
-	// old "cap at 6" (renderer Out of Memory at 8 workers on the ~120 MB/worker baseline field)
-	// no longer applies. Dial it back in Advanced if a machine still runs out of memory.
+	// Memory does grow with worker count, just far less than it did: a busy worker holds
+	// ≈19 MB of wasm heap (module + geometry + a full PREPARED_LRU of 10 ≈1.1 MB preparations,
+	// workerCore.ts; ≈17 MB measured at the old LRU of 8), ≈285 MB at 15 workers and ≈610 MB
+	// at 32 — none of it counted in the
+	// optimizer's CACHE_CAP_BYTES. The old "cap at 6" (renderer Out of Memory at 8 workers on
+	// the ~120 MB/worker baseline field) is gone with that baseline; dial it back in Advanced
+	// if a machine still runs out of memory.
 
 export type ThreadsOption = 'auto' | number;
 
@@ -187,6 +191,66 @@ export interface PoolTiming {
 
 interface Queued { job: PoolJob; requeues: number }
 
+/**
+ * The pool's job queue. Dispatch wants "the first queued job for any key this
+ * worker holds" on every chunk completion; a plain array answered that with a
+ * findIndex per held key (O(held × queue) per completion, superlinear in the
+ * batch). Here every job sits in a global FIFO and in its key's FIFO, both
+ * lazily cleared, and requeued chunks sit in a small `front` list served
+ * first — the same order the array gave (requeue unshift, then queue order),
+ * at amortized O(held) per take.
+ */
+interface QEntry { q: Queued; taken: boolean }
+class JobQueue {
+	private all: QEntry[] = [];
+	private head = 0;
+	private byKey = new Map<string, { items: QEntry[]; head: number }>();
+	private front: QEntry[] = [];
+	private n = 0;
+	get length(): number { return this.n; }
+	push(q: Queued): void {
+		const e: QEntry = { q, taken: false };
+		this.all.push(e);
+		let l = this.byKey.get(q.job.setupKey);
+		if (!l) { l = { items: [], head: 0 }; this.byKey.set(q.job.setupKey, l); }
+		l.items.push(e);
+		this.n++;
+	}
+	/** A requeued chunk goes ahead of everything (exactly one requeue, §4.1). */
+	unshift(q: Queued): void {
+		this.front.unshift({ q, taken: false });
+		this.n++;
+	}
+	private take(e: QEntry): Queued {
+		e.taken = true;
+		// Drained: drop the lazily-cleared arrays so finished jobs (and the
+		// requests they reference) do not live on for the rest of the run.
+		if (--this.n === 0) this.clear();
+		return e.q;
+	}
+	/** First queued job for the first key in `held` (MRU order) that has one,
+	 *  else the queue head; undefined when empty. */
+	takeFor(held: readonly string[]): Queued | undefined {
+		if (this.n === 0) return undefined;
+		for (const key of held) {
+			const fi = this.front.findIndex(e => e.q.job.setupKey === key);
+			if (fi >= 0) return this.take(this.front.splice(fi, 1)[0]);
+			const l = this.byKey.get(key);
+			if (!l) continue;
+			while (l.head < l.items.length && l.items[l.head].taken) l.head++;
+			if (l.head < l.items.length) return this.take(l.items[l.head++]);
+			this.byKey.delete(key);
+		}
+		if (this.front.length) return this.take(this.front.shift()!);
+		while (this.head < this.all.length && this.all[this.head].taken) this.head++;
+		if (this.head < this.all.length) return this.take(this.all[this.head++]);
+		return undefined;
+	}
+	clear(): void {
+		this.all = []; this.head = 0; this.byKey.clear(); this.front = []; this.n = 0;
+	}
+}
+
 interface Slot {
 	gen: number;                 // bumped on every worker (re)creation to ignore stale messages
 	worker: WorkerLike | null;
@@ -294,7 +358,7 @@ export function __testResetWorkerBudget(capacity?: number): void {
 export function __testWorkerBudgetLive(): number { return workerBudget.live; }
 export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	const threads = Math.max(1, Math.min(MAX_THREADS, opts.threads ?? resolveThreadCount()));
-	const queue: Queued[] = [];
+	const queue = new JobQueue();
 	const slots: Slot[] = [];
 	const errors: Array<{ jobId: string; error: string }> = [];
 	let running: { resolve: () => void; reject: (e: Error) => void } | null = null;
@@ -510,13 +574,8 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			// foreign job is at the queue head — the worker never waits on a
 			// preparation it cannot use. With the caller's setupKey grouping
 			// this keeps each gate block on a worker that already holds it.
-			let idx = -1;
-			for (const key of slot.held) {
-				idx = queue.findIndex(q => q.job.setupKey === key);
-				if (idx >= 0) break;
-			}
-			if (idx < 0) idx = 0;   // no affinity match: keep queue order (jobs are grouped by setupKey upstream)
-			const next = queue.splice(idx, 1)[0];
+			// No affinity match: keep queue order (jobs are grouped by setupKey upstream).
+			const next = queue.takeFor(slot.held)!;
 			slot.inflight = next;
 			if (slot.held.includes(next.job.setupKey)) {
 				slot.expecting = 'chunk';
@@ -545,7 +604,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			// runs one batch per round on the same pool and concatenates each
 			// result), so resolve ONLY the entries added during this call.
 			const errorsFrom = errors.length;
-			queue.push(...jobs.map(job => ({ job, requeues: 0 })));
+			for (const job of jobs) queue.push({ job, requeues: 0 });
 			grow();   // size from the SHARED worker budget (see the budget block)
 			return new Promise<void>((resolve, reject) => {
 				running = { resolve, reject };
@@ -557,14 +616,14 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			for (const slot of slots) { try { slot.worker?.terminate(); } catch { /* gone */ } slot.worker = null; }
 			slots.length = 0;
 			releaseBudget();
-			queue.length = 0;
+			queue.clear();
 			running?.resolve();
 			running = null;
 		},
 		abort(): void {
 			if (disposed || aborted) return;
 			aborted = true;
-			queue.length = 0;
+			queue.clear();
 			for (const slot of slots) {
 				slot.inflight = null;
 				slot.expecting = null;
