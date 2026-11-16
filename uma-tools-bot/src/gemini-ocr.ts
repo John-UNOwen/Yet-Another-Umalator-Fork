@@ -2,8 +2,9 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { GoogleGenAI, Type } from '@google/genai';
 
-// gemini-2.5-flash: free-tier GA model. Keep in sync with components/GeminiOCR.ts.
-const MODEL = 'gemini-2.5-flash';
+// gemini-3.5-flash: current GA model with a free tier. Replaced gemini-2.5-flash, retired
+// for new users ~2026-06. Keep in sync with components/GeminiOCR.ts.
+const MODEL = 'gemini-3.5-flash';
 
 const RESPONSE_SCHEMA = {
 	type: Type.OBJECT,
