@@ -163,7 +163,7 @@ export function FeedbackDrawer({ isOpen, onClose, webhookUrl }: FeedbackDrawerPr
 			description: message.trim(),
 			color: category === 'bug' ? 0xef4444 : category === 'feature' ? 0x22c55e : category === 'question' ? 0x3b82f6 : 0x6b7280,
 			fields: contact.trim() ? [{ name: 'Contact', value: contact.trim(), inline: true }] : [],
-			footer: { text: 'Umalator v2 Feedback' },
+			footer: { text: 'Yet Another Umalator Feedback' },
 			timestamp: new Date().toISOString(),
 		};
 
@@ -220,7 +220,7 @@ export function FeedbackDrawer({ isOpen, onClose, webhookUrl }: FeedbackDrawerPr
 					<div class="v2-feedback-success">
 						<CheckCircle size={48} />
 						<h3>Thanks for your feedback!</h3>
-						<p>We appreciate you taking the time to help improve Umalator.</p>
+						<p>We appreciate you taking the time to help improve Yet Another Umalator.</p>
 					</div>
 				) : (
 					<form class="v2-feedback-form" onSubmit={handleSubmit}>

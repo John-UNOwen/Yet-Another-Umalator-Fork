@@ -220,8 +220,8 @@ export const onRequest: PagesFunction = async (context) => {
   }
 
   const canonicalUrl = specificEvent
-    ? `https://umalator.app/events/${specificEvent.id}`
-    : 'https://umalator.app/events/';
+    ? `https://john-unowen.github.io/Yet-Another-Umalator-Fork/events/${specificEvent.id}`
+    : 'https://john-unowen.github.io/Yet-Another-Umalator-Fork/events/';
 
   const html = buildHtml(title, description, canonicalUrl, image);
 
