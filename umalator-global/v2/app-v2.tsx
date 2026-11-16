@@ -53,9 +53,6 @@ import {
   MessageSquare,
   Minus,
   Plus,
-  Menu,
-  Book,
-  Calendar,
   LayoutGrid,
   Wand2,
 } from "lucide-react";
@@ -1670,34 +1667,6 @@ function App() {
                     },
                   ]}
                 />
-                {/* Menu/apps dropdown: contains links to HP Calc, Docs, Events (to be added) */}
-                <Dropdown
-                  align="right"
-                  trigger={
-                    <Button
-                      variant="secondary"
-                      className="v2-settings-btn v2-apps-btn"
-                    >
-                      <Menu size={16} />
-                    </Button>
-                  }
-                  items={[
-                    {
-                      id: "events",
-                      label: "Events",
-                      icon: <Calendar size={16} />,
-                      onClick: () =>
-                        window.open("/events/", "_blank"),
-                    },
-                    {
-                      id: "docs",
-                      label: "Docs",
-                      icon: <Book size={16} />,
-                      onClick: () =>
-                        window.open("/docs/", "_blank"),
-                    },
-                  ]}
-                />
               </div>
 
               {/* Second header row: GlobalSim field + common sim params, with the
@@ -2548,36 +2517,19 @@ function App() {
                         </div>
                       </div>
                     </div>
-                    <div class="v2-mobile-settings-section">
-                      <h4>Tools</h4>
-                      <Button
-                        variant="ghost"
-                        className="v2-mobile-settings-btn"
-                        onClick={() => window.open("/events/", "_blank")}
-                        icon={<Calendar size={14} />}
-                      >
-                        Events
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="v2-mobile-settings-btn"
-                        onClick={() => window.open("/docs/", "_blank")}
-                        icon={<Book size={14} />}
-                      >
-                        Docs
-                      </Button>
-                    </div>
-                    <div class="v2-mobile-settings-section">
-                      <h4>Actions</h4>
-                      <Button
-                        variant="secondary"
-                        className="v2-mobile-settings-btn"
-                        onClick={() => setFeedbackDrawerOpen(true)}
-                        icon={<MessageSquare size={14} />}
-                      >
-                        Send Feedback
-                      </Button>
-                    </div>
+                    {FEEDBACK_ENABLED && (
+                      <div class="v2-mobile-settings-section">
+                        <h4>Actions</h4>
+                        <Button
+                          variant="secondary"
+                          className="v2-mobile-settings-btn"
+                          onClick={() => setFeedbackDrawerOpen(true)}
+                          icon={<MessageSquare size={14} />}
+                        >
+                          Send Feedback
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
