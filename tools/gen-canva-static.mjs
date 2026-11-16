@@ -5,7 +5,7 @@
  * Why static? Cloudflare Pages Functions are not currently executing on the
  * production project (the [[catchall]] canva routing never runs in prod — see the
  * Canva section in CLAUDE.md). Static HTML files are always served, so this
- * guarantees umalator.app/canva/<slug> works regardless of Functions.
+ * guarantees <site>/canva/<slug> works regardless of Functions.
  *
  * Writes (at the repo root, which is the Pages build output dir):
  *   canva/<slug>/index.html   — the embed wrapper for each guide
@@ -13,6 +13,11 @@
  *
  * Run by build-all.sh on every deploy. Single source of truth: canva-embeds.json
  * (the [[catchall]] Function reads the same file).
+ *
+ * The og:url and favicon bases follow CANVA_SITE_URL so the pages point at wherever they
+ * are actually served; the default is this fork's GitHub Pages URL. Upstream, where the
+ * app lives under a path prefix, passes CANVA_SITE_URL=https://umalator.app and
+ * CANVA_FAVICON=/uma-tools/umalator-global/favicon.svg.
  */
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +25,10 @@ import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const EMBEDS = JSON.parse(readFileSync(join(ROOT, 'canva-embeds.json'), 'utf8'));
+
+const SITE_URL = (process.env.CANVA_SITE_URL || 'https://john-unowen.github.io/Yet-Another-Umalator-Fork')
+  .replace(/\/+$/, '');
+const FAVICON = process.env.CANVA_FAVICON || `${SITE_URL}/favicon.svg`;
 
 const escapeHtml = (s) =>
   String(s)
@@ -41,7 +50,7 @@ function canvaUrls(e) {
 function renderEmbedPage(e) {
   const title = escapeHtml(e.title);
   const desc = escapeHtml(`${e.title} — Uma Musume guide, hosted on Canva.`);
-  const ogUrl = escapeHtml(`https://umalator.app/canva/${e.slug}`);
+  const ogUrl = escapeHtml(`${SITE_URL}/canva/${e.slug}`);
   const u = canvaUrls(e);
   const embedSrc = escapeHtml(u.embed);
   const shareHref = escapeHtml(u.share);
@@ -64,7 +73,7 @@ function renderEmbedPage(e) {
     <meta name="twitter:title" content="${title}" />
     <meta name="twitter:description" content="${desc}" />
 
-    <link rel="icon" type="image/svg+xml" href="/uma-tools/umalator-global/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="${escapeHtml(FAVICON)}" />
     <link rel="preconnect" href="https://www.canva.com" crossorigin />
     <link rel="dns-prefetch" href="https://www.canva.com" />
 
