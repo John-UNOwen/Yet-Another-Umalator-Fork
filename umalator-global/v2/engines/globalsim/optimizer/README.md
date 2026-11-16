@@ -72,6 +72,53 @@ Throughput (globalsim-wasm/README.md): 6.3–9.4 ms per 9-runner race in Chrome
 (§10). Recompute with `npm run test:optimizer` (the calibration test prints
 fresh numbers).
 
+## Prerequisite skills spend SP and measure as free
+
+A handful of conditions depend on earlier activations: `activate_count_start`,
+`_middle`, `_end_after`, `_all`, `_heal`, `_later_half`. The engine models them
+faithfully (`activate_count_start` checks `activate_count[0]`,
+`activation_conditions.rs:1224`, and the counter is bumped per activation per
+phase, `race_solver.rs:2663`). Groundwork (201601, `activate_count_start>=3`) is
+why the gate activation pass runs twice at t=0 (`race_solver.rs:1009-1022`).
+
+The search is not fooled by these skills: it scores whole builds, so an effect
+that never turns on earns no credit. The gap is that it earns no *penalty*
+either. With Δ = 0 and a near-saturated budget the shortlist is choosing between
+fillers, so an unfeedable skill survives into the recommendation, and nothing in
+the results table shows it.
+
+Live case, an imported career on a mile course (the build carries Mile Maven and
+Mile Corners, `distance_type==2`): the recommendation kept Groundwork at 90 SP
+while the build could feed it twice. Opening-phase activations come from skills
+already true at the gate, and here that is Pace Chaser Savvy ○ (201532,
+`running_style==2`) and, on wet ground only, Wet Conditions ○ (200162,
+`ground_condition==2@3@4`). Straightaway Adept (200362, `straight_random==1`) is
+a random-gold draw. Two certain feeds against a requirement of three.
+
+Unfixed. The options weighed: flag `activate_count_*` options whose prerequisite
+the current build cannot meet (a static check over six condition names); break
+CI-overlapping ties toward less SP and fewer skills, which drops dead filler
+without touching the search; or report per-skill activation rates, which needs
+engine work, since GlobalSim keeps per-phase aggregates only
+(`race_solver_retail.rs:226-231`); the submodule now carries this fork's paired-draws work.
+
+## Paired-draws mode (engine fork)
+
+The submodule points at the fork's `paired-draws` branch. Its `pairedRandomStreams` request
+flag takes every skill's and runner's draws from a stream keyed by (seed, runner, skill), so
+adding one skill no longer reshuffles the rest of the race. Measured on the native binary,
+300 seeds, course 10504, a 15-skill base: median ρ 0.103 to 0.974, median paired σΔ(ℓ) 1.10
+to 0.18 L, and skills that never fire score Δ exactly 0 (13/13, against 6/6 in retail mode).
+Requests without the flag stay byte-identical to upstream v77, checked against a build of the
+pinned commit. On the 3000 m course (10810) ρ reaches 0.909 but σΔ stays near 1 L.
+
+Stage A-G runs paired, and so does the Skill Chart; Compare stays retail until the "Paired
+seeds (lower noise)" switch is on. `cache.ts` namespaces search and verify per mode
+(`nsWithMode`), so a value measured one way is never folded into a stat from the other, and
+setupKeys carry the mode so a prepared worker is not reused across modes. Seed lists stay
+mode-independent, so search and verify seeds remain disjoint (P3). Config sizing still comes
+from the retail-mode noise record below and needs re-deriving from paired noise (§J.3).
+
 ## Tests
 
 - `npm run test:optimizer` — pure units (space/knapsack/cache/stats) + the
