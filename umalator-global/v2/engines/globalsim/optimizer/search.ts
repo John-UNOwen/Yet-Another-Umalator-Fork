@@ -906,8 +906,15 @@ async function runSingleScenario(
 		// lowest-value owned × the 8 best free options, §C's final-
 		// recommendation check) before Stage G.
 		const climbRaces0 = ev.racesRun();
+		// The preset climbRaces, raised per climb so it buys at least TWO full
+		// first-rung screens of the N1 the climb starts from (one adopting
+		// round + one certifying round). At Standard, 80k races is only ~1,600
+		// candidates at 50 seeds each while realistic N1s run 1,000–5,000, so
+		// every round was cut mid-screen and the peak could never certify. The
+		// preset time budget still bounds the run.
+		let climbBudget = cfg.climbRaces;
 		const climbOut = (): boolean => ctrl.stopped() || Date.now() - t0 > cfg.timeBudgetMs
-			|| ev.racesRun() - climbRaces0 >= cfg.climbRaces;
+			|| ev.racesRun() - climbRaces0 >= climbBudget;
 		// Ladder ceiling (§D.4 sizing): past ~4× the measured-σΔ δ-resolve
 		// count ((2·1.96·σΔ/δ_min)²) growth cannot flip a δ-zone verdict, so a
 		// candidate at the ceiling with UCB ≥ δ_min is reported unresolved
@@ -917,9 +924,12 @@ async function runSingleScenario(
 		// finish line the two are the same number (slope 1), and this is a
 		// ceiling on growth, not a decision — a currency with less noise simply
 		// resolves before reaching it.
-		const climbRungCeil = Number.isFinite(noise.sigmaDeltaLead)
+		// Never past the seed list: a larger ceiling made a long-lived
+		// candidate throw "position … beyond s list" instead of ending
+		// unresolved at the ceiling.
+		const climbRungCeil = Math.min(SEED_LIST_SIZE, Number.isFinite(noise.sigmaDeltaLead)
 			? Math.max(BANDIT_START_SEEDS * 2, Math.ceil(4 * Math.pow((2 * 1.96 * noise.sigmaDeltaLead) / cfg.deltaMinL, 2)))
-			: cfg.batchCap;
+			: cfg.batchCap);
 		const significantBetter = async (better: BuildRefLite, against: BuildRefLite): Promise<boolean> => {
 			// The same sequential test Stage D's adoption test runs: grow the
 			// held common prefix until the paired CI excludes 0 either way, the
@@ -980,7 +990,7 @@ async function runSingleScenario(
 				// Per-wave rung ceiling: the ladder may never outgrow the restart's
 				// remaining climb budget — the bandit cannot check races mid-ladder,
 				// so the budget is converted into a per-candidate seed cap here.
-				const remain = cfg.climbRaces - (ev.racesRun() - climbRaces0);
+				const remain = climbBudget - (ev.racesRun() - climbRaces0);
 				const rungCeil = Number.isFinite(remain)
 					? Math.min(climbRungCeil, Math.max(BANDIT_CHUNK_SIZE * 5, Math.floor(remain / (wave.length + 1))))
 					: climbRungCeil;
@@ -1039,6 +1049,7 @@ async function runSingleScenario(
 				for (const id of Xc.selection) histAdopted.add(id);
 				traceAdopt(Xc, 'climb');
 			};
+			let firstRound = true;
 			for (;;) {
 				// §E dead-skill drops come first: adopted without a test and
 				// without spending races. The top-up (the only thing this can
@@ -1055,6 +1066,11 @@ async function runSingleScenario(
 				if (climbOut()) return { X: Xc, p1: false, p2: false };
 				const moves = n1Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted, surrScore(Xc), addDead);
 				if (!moves.length) return { X: Xc, p1: true, p2: true }; // degenerate space: X is the only build
+				if (firstRound && Number.isFinite(climbBudget)) {
+					const screen = (moves.length + 1) * BANDIT_CHUNK_SIZE * 5; // bandit start rung, every candidate + X
+					climbBudget = Math.max(climbBudget, ev.racesRun() - climbRaces0 + 2 * screen);
+				}
+				firstRound = false;
 				const r = await screenWaves(Xc, moves, tag);
 				if (r.best) { adopt(r.best); continue; }
 				if (r.unresolved > 0) {
