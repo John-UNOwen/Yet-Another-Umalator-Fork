@@ -30,7 +30,9 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
   may only die to the indifference zone; the Δ-SE bound prune is §I work)
 - `search.ts` — Stages A–F + G orchestration (anytime): opening-book starts,
   chart-parity screening, MCKP restarts, in-context drop/add/replace/pair moves
-  with bandit allocation and knapsack re-solve (ℓ is the search currency, §6.1),
+  with bandit allocation and knapsack re-solve (the search currency, §6.1 + §F:
+  ℓ, clipped to ±2.5 measured σ(ℓ) for the win-rate objectives because past
+  that a bigger lead moves P(1st) by under a point),
   Stage F = §C certified local search: every round enumerates the full feasible
   N1 (drop, add, swap/tier-move, 2-for-1 incl. upgrade-and-sell, 1-for-2 — no
   caps, no estimate pruning) and screens the waves with the bandit's
@@ -44,9 +46,14 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
   owned × 8 best free). No round cap — the preset time budget and the
   per-restart climbRaces race budget bound it, and the result carries
   `certified1MovePeak` / `certified2MovePeak`. Then fresh-seed Stage G
-  verification with honest ties. Across a scenario set (§6.3) it searches each
-  scenario independently then re-verifies the merged shortlist across all of
-  them, ranked by mean / maximin / blend (aggregateValues, §6.4) with
+  verification with honest ties. Across a scenario set (§6.3) a mean aggregation
+  searches each scenario independently and re-verifies the merged shortlist
+  across all of them; a maximin or blend run does ONE search on the aggregated
+  objective instead (`aggregatedEvaluator`: every candidate is simulated in every
+  scenario and adopted on the combined value, so a compromise that is top-5 in no
+  single scenario can still win; §E telemetry pools over the set, and that
+  search's own per-scenario champions join Stage G's pool at no race cost).
+  Either way the ranking is mean / maximin / blend (aggregateValues, §6.4) with
   conservative (all-scenarios-must-agree) ties
 - `book.ts` — opening book in localStorage (`umalator_v2_optimizer_book`):
   prior strong builds keyed by a coarse (course · distance band · strategy ·
@@ -184,7 +191,11 @@ sizing comes from the paired record above; the arithmetic is in the
   30–40-option instances vs a random-restart + exhaustive hill-climb baseline;
   the surrogate on/off race comparison; and the §6.4 scenario
   set — `aggregateValues` formulas plus a two-scenario maximin-vs-mean run whose
-  optimum moves between scenarios). Gaussian noise is calibrated to the σ table
+  optimum moves between scenarios; the §F currency's shape plus a 24-instance
+  hard-P(1st) A/B of the clipped lead against the ℓ search, printed per instance,
+  where a gap inside what the run's own verification seeds resolve counts as a
+  tie; the §G one-aggregated-search vs searched-apart comparison for maximin and
+  blend). Gaussian noise is calibrated to the σ table
   above — a shared field term that cancels in pairing + a per-build term that
   survives it, CRN per position. The oracle's second-scenario weight is derived
   from the pair ids, not the RNG, so scenario 0 stays byte-identical to the

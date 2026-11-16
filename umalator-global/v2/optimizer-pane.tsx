@@ -128,6 +128,8 @@ interface RunSnapshot {
 	result: OptimizerResult;
 	objective: ObjectiveKind;
 	aggregation: AggregationKind;
+	/** §G: whether that run searched the scenario set as one objective. */
+	aggregated: boolean;
 	objDigits: number;
 }
 
@@ -186,6 +188,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [preset, setPreset] = useState<EffortPreset>('standard');
 	const [seed, setSeed] = useState(props.seed);
 	const [aggregation, setAggregation] = useState<AggregationKind>('mean');
+	/** §G: with a maximin/blend robustness run, search the scenario set as one
+	 *  aggregated objective instead of one search per scenario. */
+	const [aggregated, setAggregated] = useState(true);
 	/** Robustness scenario count (ground variants, §6.3): 1 = current only. */
 	const [robustness, setRobustness] = useState(1);
 	const [useBook, setUseBook] = useState(true);
@@ -399,7 +404,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 
 			const res = await runOptimizer(
 				ev,
-				{ space, scenarioIdx: 0, scenarioIdxs, objective, aggregation, bookStarts, current, effort: effortConfig(preset) },
+				{
+					space, scenarioIdx: 0, scenarioIdxs, objective, aggregation, aggregatedSearch: aggregated,
+					bookStarts, current, effort: effortConfig(preset),
+				},
 				ctrl,
 				(p) => {
 					// A mid-run unmount can still emit an event before the abort
@@ -425,7 +433,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			// closure values this run actually searched under (same as the input at
 			// runOptimizer above), so the finished table can never be relabelled by
 			// later changes to the live dropdowns.
-			setRunResult({ result: res, objective, aggregation, objDigits: objDigitsOf(objective) });
+			setRunResult({ result: res, objective, aggregation, aggregated, objDigits: objDigitsOf(objective) });
 			setProgress(null);
 			if (useBook) {
 				saveBook(bk, res.shortlist.slice(0, 5).map(r => ({
@@ -520,6 +528,11 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 						{AGGREGATIONS.map((a) => <option value={a.id}>{a.label}</option>)}
 					</select>
 				</div>
+				<label style={{ display: robustness > 1 && aggregation !== 'mean' ? 'flex' : 'none', gap: 6, alignItems: 'center', fontSize: 13, paddingBottom: 4, cursor: 'pointer' }}
+					title="Search the scenario set as one objective instead of searching each scenario apart and picking afterwards: every candidate is simulated on every ground, and a build is only adopted when it improves the aggregated value, so a compromise that is top-5 on no single ground can still win. Verification still reports each scenario separately.">
+					<input type="checkbox" checked={aggregated} disabled={running} onChange={() => setAggregated((v) => !v)} />
+					<span style={{ opacity: 0.85 }}>One aggregated search</span>
+				</label>
 				<label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, paddingBottom: 4, cursor: 'pointer' }}>
 					<input type="checkbox" checked={useBook} disabled={running} onChange={() => setUseBook((v) => !v)} />
 					<span style={{ opacity: 0.85 }}>Use &amp; save opening book</span>
@@ -621,7 +634,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			{runResult && (
 				<OptimizerResults
 					result={runResult.result} objective={runResult.objective} objDigits={runResult.objDigits}
-					aggregation={runResult.aggregation}
+					aggregation={runResult.aggregation} aggregated={runResult.aggregated}
 					hints={hints} ownedByGroup={ownedByGroup}
 					onOpenInCompare={props.onOpenInCompare}
 				/>
@@ -632,9 +645,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 
 function OptimizerResults(props: {
 	result: OptimizerResult; objective: ObjectiveKind; objDigits: number; aggregation: AggregationKind;
+	aggregated: boolean;
 	hints: Map<string, number>; ownedByGroup: Map<string, string>; onOpenInCompare?: (ids: string[]) => void;
 }) {
-	const { result, objective, objDigits, aggregation, hints, ownedByGroup, onOpenInCompare } = props;
+	const { result, objective, objDigits, aggregation, aggregated, hints, ownedByGroup, onOpenInCompare } = props;
 	const objLabel = OBJECTIVES.find((o) => o.id === objective)?.label ?? objective;
 	const aggLabel = AGGREGATIONS.find((a) => a.id === aggregation)?.label ?? aggregation;
 	const multi = (result.best.perScenario?.length ?? 0) > 1;
@@ -733,7 +747,7 @@ function OptimizerResults(props: {
 			)}
 			<div class="v2-optimizer-footnote" style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
 				verification: {result.verificationSeeds.toLocaleString()} fresh seeds · noise σΔ(ℓ) {fmtN(result.noise.sigmaDeltaLead)} L
-				{multi ? ` · aggregated by ${aggLabel.toLowerCase()}` : ''}
+				{multi ? ` · ${aggregated ? 'one aggregated search, aggregated by ' : 'scenarios searched apart, aggregated by '}${aggLabel.toLowerCase()}` : ''}
 				{result.stoppedEarly && (
 					<span style={{ color: '#d0a030', marginLeft: 10 }}>
 						Stopped early — results come from the short Stage G verification only.

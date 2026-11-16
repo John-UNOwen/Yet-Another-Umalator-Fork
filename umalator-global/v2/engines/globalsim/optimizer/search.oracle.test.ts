@@ -20,8 +20,8 @@ import { NS_SEARCH, NS_VERIFY } from './cache';
 import { EffortConfig } from './config';
 import { BuildRefLite, objectiveOf, pairedOf, SearchEvaluator, statsOf } from './evaluator';
 import { affordable, BuildSpace, OptOption, simIdentity } from './space';
-import { aggregateValues, createController, runOptimizer } from './search';
-import { ActivationTelemetry, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult, SeedSlot, SeedValue } from './types';
+import { aggregateValues, clipLeadL, createController, LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS, leadClipL, runOptimizer, searchPickOf, SearchCurrency } from './search';
+import { ActivationTelemetry, AggregationKind, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult, SeedSlot, SeedValue } from './types';
 
 /** §E A/B switch: NO_TELEMETRY=1 hides activation telemetry from the fake
  *  evaluators (the search rules' off state). Default: telemetry on. */
@@ -627,6 +627,168 @@ test('scenario set + maximin beats mean on the worst-case objective (§6.3–6.4
 	t.ok(statsOk, 'every multi-scenario row carries real verification stats (P(1st)/P(top-3)/mean ℓ)');
 	t.ok(maximinSum >= meanSum - 0.5, `maximin does not lose on average worst-case μ (${maximinSum.toFixed(2)} vs ${meanSum.toFixed(2)})`);
 	t.ok(wins >= 3, `maximin reaches a better-or-equal floor on most instances (wins=${wins}/${N})`);
+	t.end();
+});
+
+// ── §F: the search currency ─────────────────────────────────────────────────
+
+/**
+ * What a run of this harness can actually tell apart: the 95% band of a paired
+ * Δ measured over `n` verification seeds. The fake's paired σΔ is √2·1.5 L (the
+ * build-independent term doubles in a difference; the shared field term cancels,
+ * §7.3). Two recommendations whose exact gap sits inside this band are a tie the
+ * optimizer itself would report as a tie (§13.3 P4), so the §F/§G A/B gates
+ * below count only gaps that clear it; every number is still printed.
+ */
+const resolveL = (n: number) => (2 * 1.96 * (1.5 * Math.SQRT2)) / Math.sqrt(n);
+
+test('§F currency: the clipped lead is monotone, ℓ near the finish line, flat past the band', t => {
+	const C = 4;
+	// Non-decreasing everywhere: the search can re-order a near-tie by how far
+	// ahead the build was, it can never prefer a smaller lead at the same point.
+	const ladder = [-12, -6, -4.1, -4, -2, -1, -0.5, -0.25, 0, 0.25, 0.5, 1, 2, 4, 4.1, 6, 12];
+	for (let i = 1; i < ladder.length; i++) {
+		t.ok(clipLeadL(ladder[i], C) >= clipLeadL(ladder[i - 1], C), `non-decreasing across ℓ ${ladder[i - 1]} → ${ladder[i]}`);
+		// Strictly increasing while the objective still moves (inside the band).
+		if (Math.abs(ladder[i]) <= C && Math.abs(ladder[i - 1]) <= C) {
+			t.ok(clipLeadL(ladder[i], C) > clipLeadL(ladder[i - 1], C), `strictly increasing inside the band ${ladder[i - 1]} → ${ladder[i]}`);
+		}
+	}
+	// Inside the band it IS ℓ, slope exactly 1: every adoption test, the bandit's
+	// indifference zone and δ_min read the same lengths they always did.
+	for (const x of [-3.9, -1, -0.25, 0, 0.25, 1, 3.9]) t.equal(clipLeadL(x, C), x, `ℓ ${x} inside ±${C} passes through`);
+	const h = 1e-4;
+	t.ok(Math.abs((clipLeadL(h, C) - clipLeadL(-h, C)) / (2 * h) - 1) < 1e-9, 'slope 1 at the finish line');
+	// And flat past it: a build clear of the field stops collecting credit for
+	// winning bigger, which is where P(1st) stopped growing too.
+	t.equal(clipLeadL(6, C), C, 'no credit beyond the band');
+	t.equal(clipLeadL(-6, C), -C, 'no penalty beyond the band');
+	// The band is sized by the measured noise, never a constant: ±2.5 σ(ℓ) is
+	// where Φ(μ/σ) has reached 0.994, and a noise-free scenario still has a band.
+	t.equal(leadClipL(1.6), LEAD_CLIP_SIGMAS * 1.6, 'the band is 2.5 measured σ(ℓ) wide');
+	t.equal(leadClipL(0), LEAD_CLIP_MIN_L, 'a zero σ cannot collapse the band to nothing');
+	t.ok(leadClipL(NaN) >= LEAD_CLIP_MIN_L, 'a non-finite σ still gives a band');
+	// Routing: the win-rate objectives search the clipped lead, the rest keep ℓ
+	// (§6.1), the A/B mode reads ℓ for everything, and a null lead is dropped
+	// rather than coerced to zero (§7.1).
+	const v: SeedValue = { lead: 6, win: 1, top3: 0, placing: 2, hpEmpty: 0, rushed: 0 };
+	t.equal(searchPickOf('p1', 'aligned', C)(v), C, 'p1 searches the clipped lead');
+	t.equal(searchPickOf('pTop3', 'aligned', C)(v), C, 'pTop3 searches it too (§F)');
+	t.equal(searchPickOf('meanLead', 'aligned', C)(v), 6, 'meanLead still searches ℓ (§6.1)');
+	t.equal(searchPickOf('gainVsCurrent', 'aligned', C)(v), 6, 'gainVsCurrent still searches ℓ (§6.1)');
+	t.equal(searchPickOf('meanPlacing', 'aligned', C)(v), 6, 'meanPlacing still searches ℓ (§6.1)');
+	t.equal(searchPickOf('p1', 'lead', C)(v), 6, 'the pre-§F mode reads ℓ for every objective');
+	t.equal(searchPickOf('p1')(v), 6, 'with no measured σ there is no band, so it is ℓ');
+	t.equal(searchPickOf('p1', 'aligned', C)({ ...v, lead: null }), null, 'a null lead is dropped, never coerced to 0');
+	t.end();
+});
+
+test('§F acceptance: the clipped-lead recommendation never loses hard P(1st) to the ℓ search', async t => {
+	// The handoff §F gate, on the same instances: the recommended build's HARD
+	// P(1st), the exact latent truth Φ(μ/σ) for this fake's Gaussian noise, so
+	// the comparison carries no measurement noise of its own, reported next to
+	// what the currency the search used before (§6.1, ℓ) recommends. An arm may
+	// only come out "worse" by more than this budget can resolve (resolveL):
+	// inside that band the two builds are a tie the optimizer itself would
+	// report, and which of them a search lands on is not a quality difference.
+	// Each arm gets its own cold evaluator, so neither inherits the other's
+	// transposition cache (same instance, same seed, same budget).
+	const N = 24;
+	const SIG_TOTAL = Math.sqrt(0.6 + 1.5 * 1.5); // the fake's per-seed ℓ sd: field √0.6 ⊕ independent 1.5
+	const hardP1 = (inst: Instance, id: string) => phi(inst.mu(id) / SIG_TOTAL);
+	const BAND = resolveL(TEST_CFG.gSeedsMin);
+	let worse = 0, better = 0, tie = 0;
+	let sumLead = 0, sumClip = 0, racesLead = 0, racesClip = 0;
+	console.log(`  §F currency A/B, objective P(1st); hard P(1st) = exact truth, tie band ±${BAND.toFixed(3)} L of μ`);
+	console.log('  inst  opts  ℓ-currency  clipped   Δ hard     Δμ        races ℓ   races clipped');
+	for (let i = 0; i < N; i++) {
+		const inst = genInstance(4242 + i * 131, 8, 17);
+		const arm = async (currency: SearchCurrency) => {
+			const ev = new OracleEval(inst);
+			const res = await runOptimizer(ev,
+				{ space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', searchCurrency: currency, effort: TEST_CFG },
+				createController(), () => undefined);
+			const out = {
+				p1: hardP1(inst, res.best.build.id), mu: inst.mu(res.best.build.id),
+				races: ev.racesRun(), leftover: res.best.leftover,
+			};
+			ev.dispose();
+			return out;
+		};
+		const lead = await arm('lead');    // the currency before §F
+		const clip = await arm('aligned'); // §F: the lead clipped to 2.5 σ(ℓ)
+		const d = clip.p1 - lead.p1, dm = clip.mu - lead.mu;
+		if (dm < -BAND) worse++; else if (dm > BAND) better++; else tie++;
+		sumLead += lead.p1; sumClip += clip.p1; racesLead += lead.races; racesClip += clip.races;
+		if (lead.leftover < 0 || clip.leftover < 0) t.fail(`instance ${i}: over budget`);
+		console.log(`  #${i}    ${inst.space.options.length}   ${lead.p1.toFixed(4)}      ${clip.p1.toFixed(4)}     `
+			+ `${d >= 0 ? '+' : ''}${d.toFixed(4)}  ${dm >= 0 ? '+' : ''}${dm.toFixed(4)}  ${dm >= -BAND ? 'tie ' : 'LOST'}  `
+			+ `${String(lead.races).padStart(7)}    ${String(clip.races).padStart(7)}`);
+	}
+	console.log(`  mean hard P(1st): ℓ ${(sumLead / N).toFixed(4)} → clipped lead ${(sumClip / N).toFixed(4)} · races/run ${Math.round(racesLead / N)} → ${Math.round(racesClip / N)}`);
+	t.ok(worse === 0, `§F: never a worse hard P(1st) than the ℓ search beyond what ${TEST_CFG.gSeedsMin} verify seeds resolve (±${BAND.toFixed(3)} L; worse=${worse}, better=${better}, tie=${tie} of ${N})`);
+	t.ok(sumClip >= sumLead - BAND, `§F: mean hard P(1st) does not drop (${(sumLead / N).toFixed(4)} → ${(sumClip / N).toFixed(4)}, band ±${BAND.toFixed(4)})`);
+	t.end();
+});
+
+// ── §G: one aggregated search over a scenario set ────────────────────────────
+
+test('§G: one aggregated search matches or beats the per-scenario-apart baseline (maximin + blend)', async t => {
+	// Two scenarios whose pair synergies carry opposite signs, so the optimum
+	// moves between them: a per-scenario search can only ever hand the merged
+	// shortlist one scenario's best, while the aggregated search adopts on the
+	// combined value. Truth is the exact latent μ, so the numbers below are the
+	// recommendation's real per-scenario values, not estimates. Stage G runs at
+	// 4000 seeds (not the trimmed 1200 other tests use) so it can resolve the
+	// candidates these instances put a few tenths of a length apart; a gap
+	// inside the band that budget leaves is a tie for both arms (resolveL).
+	const cfg: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, batchCap: 1200, gSeedsMin: 4000, gSeedsCap: 4000 };
+	const BAND = resolveL(cfg.gSeedsMin);
+	const insts = [...Array(6)].map((_, i) => genInstance(90210 + i * 173, 20, 26));
+	for (const aggregation of ['maximin', 'blend'] as AggregationKind[]) {
+		const aggTrue = (inst: Instance, id: string) => aggregateValues([inst.mu(id, 0), inst.mu(id, 1)], aggregation);
+		let worse = 0, better = 0, tie = 0;
+		let sumApart = 0, sumAgg = 0, racesApart = 0, racesAgg = 0;
+		let feas = true, perTwo = true, rowsOk = true;
+		console.log(`  §G one aggregated search vs each scenario apart (${aggregation}, exact μ, tie band ±${BAND.toFixed(3)})`);
+		console.log('  inst  apart μ0/μ1 → agg      aggregated μ0/μ1 → agg   Δ        flag      races apart   races aggregated');
+		for (let i = 0; i < insts.length; i++) {
+			const inst = insts[i];
+			const arm = async (aggregatedSearch: boolean) => {
+				const ev = new OracleEval(inst);
+				const res = await runOptimizer(ev, {
+					space: inst.space, scenarioIdx: 0, scenarioIdxs: [0, 1], objective: 'meanLead', aggregation, aggregatedSearch, effort: cfg,
+				}, createController(), () => undefined);
+				const out = {
+					mu: [inst.mu(res.best.build.id, 0), inst.mu(res.best.build.id, 1)],
+					agg: aggTrue(inst, res.best.build.id),
+					races: ev.racesRun(),
+					leftover: res.best.leftover,
+					per: res.best.perScenario?.length ?? 0,
+					rows: res.shortlist.every(r => !!r.stats && Number.isFinite(r.stats.lead.mean)),
+				};
+				ev.dispose();
+				return out;
+			};
+			const apart = await arm(false); // the path before §G
+			const one = await arm(true);    // §G: one search on the aggregated objective
+			const d = one.agg - apart.agg;
+			if (d < -BAND) worse++; else if (d > BAND) better++; else tie++;
+			sumApart += apart.agg; sumAgg += one.agg; racesApart += apart.races; racesAgg += one.races;
+			if (apart.leftover < 0 || one.leftover < 0) feas = false;
+			if (one.per !== 2 || apart.per !== 2) perTwo = false;
+			if (!one.rows || !apart.rows) rowsOk = false;
+			console.log(`  #${i}    ${apart.mu[0].toFixed(2)}/${apart.mu[1].toFixed(2)} → ${apart.agg.toFixed(3)}   `
+				+ `${one.mu[0].toFixed(2)}/${one.mu[1].toFixed(2)} → ${one.agg.toFixed(3)}   ${d >= 0 ? '+' : ''}${d.toFixed(3)}  `
+				+ `${d >= -BAND ? 'tie ' : 'LOST'}  ${String(apart.races).padStart(7)}    ${String(one.races).padStart(7)}`);
+		}
+		console.log(`  mean ${aggregation}: apart ${sumApart.toFixed(3)} → aggregated ${sumAgg.toFixed(3)} · races/run ${Math.round(racesApart / insts.length)} → ${Math.round(racesAgg / insts.length)}`);
+		t.ok(worse === 0, `§G ${aggregation}: the one build is never worse than the apart baseline beyond what ${cfg.gSeedsMin} verify seeds resolve (±${BAND.toFixed(3)}; worse=${worse}, better=${better}, tie=${tie}/${insts.length})`);
+		t.ok(sumAgg >= sumApart - BAND, `§G ${aggregation}: the summed aggregated value does not drop (${sumApart.toFixed(3)} → ${sumAgg.toFixed(3)}, band ±${BAND.toFixed(3)})`);
+		t.ok(feas, `§G ${aggregation}: the returned build is affordable (leftover ≥ 0)`);
+		t.ok(perTwo, `§G ${aggregation}: the returned build reports a value for every scenario`);
+		t.ok(rowsOk, `§G ${aggregation}: every returned row carries verification stats`);
+	}
 	t.end();
 });
 

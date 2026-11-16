@@ -14,14 +14,14 @@ import {
 	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
-import { BuildRefLite, calibrateNoise, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
+import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
 import { affordable, affordableAdds, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
 import { fitSurrogate, SurrogateModel, SurrogateSample } from './surrogate';
 import {
 	ActivationTelemetry, AggregationKind, MeanSem, NoiseInfo, ObjectiveKind, OptimizerProgress,
-	OptimizerResult, ScoredBuild, SeedValue,
+	OptimizerResult, ScoredBuild, SeedSlot, SeedValue,
 } from './types';
 
 /** Objective metric as a per-seed pick: a positive Δ must ALWAYS mean "better"
@@ -34,6 +34,68 @@ export function objPick(obj: ObjectiveKind): (v: SeedValue) => number | null {
 		case 'pTop3': return v => v.top3;
 		case 'meanPlacing': return v => -v.placing;
 		case 'gainVsCurrent': return v => v.lead;
+	}
+}
+
+// ── §F: the search currency ──────────────────────────────────────────────────
+
+/**
+ * §F: how far past 0 a per-seed lead still counts, as a multiple of the measured
+ * σ(ℓ). P(1st) is Φ(μ/σ), so a build sitting 2.5 σ ahead of the field has a win
+ * rate of 0.994: everything beyond that is a lead the objective cannot see, and
+ * paying for it is the §F misalignment (mean ℓ rewarding winning bigger). The
+ * clip starts there, and the whole band below it keeps ℓ's slope of 1.
+ */
+export const LEAD_CLIP_SIGMAS = 2.5;
+
+/** Floor so a noise-free scenario cannot collapse the clip to zero width (at
+ *  this width the currency is effectively the hard win indicator, which is what
+ *  a noise-free scenario's P(1st) actually is). */
+export const LEAD_CLIP_MIN_L = 0.05;
+
+/**
+ * §F: the win-rate search currency, the lead clipped to ±clipL. Inside the band it IS
+ * ℓ, so every adoption test, the bandit's indifference zone and δ_min read the
+ * same numbers they always did; outside it the credit stops growing, which is
+ * where P(1st) stopped growing too. Monotone in the lead (non-decreasing,
+ * strictly increasing inside the band), so the search can never prefer a
+ * smaller lead at the same point.
+ */
+export function clipLeadL(leadL: number, clipL: number): number {
+	const c = Math.max(LEAD_CLIP_MIN_L, clipL);
+	return leadL > c ? c : leadL < -c ? -c : leadL;
+}
+
+/** The clip width for a measured σ(ℓ) (§7.3). */
+export function leadClipL(sigmaLeadL: number): number {
+	return Math.max(LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS * (Number.isFinite(sigmaLeadL) ? sigmaLeadL : LEAD_CLIP_MIN_L / LEAD_CLIP_SIGMAS));
+}
+
+/**
+ * Which per-seed value the search screens, adopts and certifies against.
+ *  - `aligned` (default, §F): the objective's own shape. The win-rate
+ *    objectives (p1, pTop3) search the clipped lead, the handoff's other
+ *    form, and the one the A/B acceptance supports: the smoothed win
+ *    Φ(ℓ/τ) at a fixed τ = 0.5 L sits BELOW this race noise (σ(ℓ) ≈ 1.6 L),
+ *    so it flattens the band where the objective still moves and lost hard
+ *    P(1st) on 3 of 24 oracle instances (search.oracle.test.ts). P(top-3) has
+ *    no lead threshold of its own (it turns on the 3rd rival, not the best
+ *    one), so it gets the same clipped lead. The other objectives keep ℓ.
+ *  - `lead`: ℓ for every objective, the pre-§F behaviour kept as the A/B arm
+ *    of the acceptance test, and what a §G aggregated run uses, because there
+ *    the currency has already been applied per scenario by the adapter.
+ * A null lead (a record predating bestRivalFinishTimeRaw) stays null: the seed
+ * is unusable, never a zero (§7.1).
+ */
+export type SearchCurrency = 'aligned' | 'lead';
+
+export function searchPickOf(objective: ObjectiveKind, currency: SearchCurrency = 'aligned', clipL = Infinity): (v: SeedValue) => number | null {
+	if (currency === 'lead') return v => v.lead;
+	switch (objective) {
+		case 'p1':
+		case 'pTop3': return v => (v.lead == null ? null : clipLeadL(v.lead, clipL));
+		// meanLead / gainVsCurrent / meanPlacing: ℓ is still the currency (§6.1).
+		default: return v => v.lead;
 	}
 }
 
@@ -86,12 +148,28 @@ export interface SearchInput {
 	/** Scenario to optimize against. When `scenarioIdxs` is absent, this single
 	 *  scenario is the whole scenario set (the common default, §6.3). */
 	scenarioIdx: number;
-	/** Scenario set for robustness (§6.3). Each is searched; the recommendation
-	 *  then aggregates across them by `aggregation` (§6.4). Empty/omitted → [scenarioIdx]. */
+	/** Scenario set for robustness (§6.3). With a mean aggregation each is
+	 *  searched and the shortlists are merged and re-verified across all of them;
+	 *  with maximin/blend one aggregated search runs over the whole set unless
+	 *  `aggregatedSearch: false` (§G). Either way the recommendation aggregates
+	 *  by `aggregation` (§6.4). Empty/omitted → [scenarioIdx]. */
 	scenarioIdxs?: number[];
 	objective: ObjectiveKind;
 	aggregation: AggregationKind;
 	effort: EffortConfig;
+	/** §F: which per-seed currency the search decides on (default 'aligned').
+	 *  'lead' runs the pre-§F search on ℓ for every objective — the A/B arm of
+	 *  the acceptance test, and the mode a §G aggregated run uses because the
+	 *  adapter has already applied the currency per scenario. */
+	searchCurrency?: SearchCurrency;
+	/**
+	 * §G: with more than one scenario AND a maximin/blend aggregation, run ONE
+	 * search on the aggregated objective (every candidate simulated in every
+	 * scenario, Stage D and the §C climb adopting on the aggregated value)
+	 * instead of searching each scenario apart and picking afterwards.
+	 * Default true; false keeps the §6.3 per-scenario path.
+	 */
+	aggregatedSearch?: boolean;
 	/** The user's current build (gainVsCurrent pairs against it). */
 	current?: BuildRefLite;
 	/** Stage A opening-book starts (§8 A): affordable prior builds used as extra
@@ -127,6 +205,26 @@ const traceRestartEnd = (b: BuildRefLite): void => {
 	const a = (globalThis as any).OPT_RESTART_ENDS as BuildRefLite[] | undefined;
 	if (a) a.push(b);
 };
+
+/** A resolved build reference (identity + selection) for a selection. */
+function buildRef(space: BuildSpace, selection: readonly string[]): BuildRefLite {
+	return { id: simIdentity(space, selection), selection: [...selection] };
+}
+
+/**
+ * §7.3: the builds the noise calibration reads, the cheapest affordable single
+ * adds on top of the base build. Shared by the pipeline (which measures them)
+ * and by the §G aggregated branch (which only re-reads them from the real
+ * evaluator, so the reported σΔ(ℓ) stays a lead margin in lengths).
+ */
+function noiseVariantSelections(space: BuildSpace, cfg: EffortConfig): string[][] {
+	const out: string[][] = [];
+	for (const o of space.options.filter(o => !o.forced).sort((a, b) => a.cost - b.cost)) {
+		if (out.length >= cfg.noiseVariants) break;
+		if (affordable(space, [o.id])) out.push([o.id]);
+	}
+	return out;
+}
 
 /** Count measured (non-null, non-err) slots of a cached build. */
 function filled(ev: SearchEvaluator, ns: string, si: number, b: BuildRefLite): number {
@@ -168,16 +266,14 @@ async function runSingleScenario(
 	const { space, scenarioIdx: si, objective, effort: cfg } = input;
 	const t0 = Date.now();
 	const pick = objPick(objective);
-	// §6.1: ℓ is the SEARCH-stage currency — at equal seeds it resolves
-	// order-of-magnitude smaller differences than P(1st) (dP1/dℓ saturates),
-	// keeping bandit elimination and Stage D adoption sensitive deep in the
-	// ladder. The selected objective drives ranking and the final rows.
-	const searchPick = (v: SeedValue) => v.lead;
+	// What the search screens, adopts and certifies against is built right after
+	// the §7.3 noise calibration below (§F: the win-rate objectives search the
+	// lead clipped to the band the objective can still see, the rest keep ℓ, the
+	// §6.1 currency). The selected objective drives the shortlist, verification
+	// and the final rows either way.
 	const vs = input.current;
 
-	const refOf = (selection: readonly string[]): BuildRefLite => ({
-		id: simIdentity(space, selection), selection: [...selection],
-	});
+	const refOf = (selection: readonly string[]): BuildRefLite => buildRef(space, selection);
 	/** selection + option, honouring group exclusivity (drop the group's old pick). */
 	const withOption = (selection: readonly string[], opt: OptOption): BuildRefLite =>
 		refOf([...selection.filter(s => space.byId.get(s)?.groupId !== opt.groupId), opt.id]);
@@ -238,12 +334,11 @@ async function runSingleScenario(
 	// ── Stage 0: noise calibration (§7.3; search-namespace seeds, reused later) ──
 	const base = remember(refOf([]));
 	emit('noise');
-	const noiseVariants: BuildRefLite[] = [];
-	for (const o of space.options.filter(o => !o.forced).sort((a, b) => a.cost - b.cost)) {
-		if (noiseVariants.length >= cfg.noiseVariants) break;
-		if (affordable(space, [o.id])) noiseVariants.push(remember(withOption([], o)));
-	}
+	const noiseVariants: BuildRefLite[] = noiseVariantSelections(space, cfg).map(sel => remember(refOf(sel)));
 	const noise: NoiseInfo = await calibrateNoise(ev, cfg, si, base, noiseVariants);
+	// §F: now the σ(ℓ) is known, the search currency: ℓ inside ±2.5 σ of the
+	// finish line, flat beyond it, which is where P(1st) stopped growing too.
+	const searchPick = searchPickOf(objective, input.searchCurrency, leadClipL(noise.sigmaLead));
 
 	// ── Stage G machinery (also the Stop path): verify a shortlist fresh ──────
 	const verify = async (short: BuildRefLite[], nMin: number, nCap: number, stoppedEarly: boolean): Promise<OptimizerResult> => {
@@ -318,7 +413,7 @@ async function runSingleScenario(
 		};
 	};
 
-	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage B: screening chart — out-of-context v⁰ (chart-parity filter) ──
 	emit('screen', `screening ${space.options.filter(o => !o.forced).length} options`);
@@ -327,7 +422,7 @@ async function runSingleScenario(
 	const v0 = new Map<string, MeanSem>();
 	{
 		const measured = (id: string, b: BuildRefLite) => {
-			const d = ev.paired(NS_SEARCH, si, b, base, v => v.lead); // ℓ: the screening currency (§6.1)
+			const d = ev.paired(NS_SEARCH, si, b, base, searchPick); // the search currency, same as every later decision (§6.1, §F)
 			if (d) v0.set(id, { mean: d.mean, sem: d.sem, n: d.n });
 		};
 		const r1 = Array.from({ length: cfg.screenRound1Seeds }, (_, i) => i);
@@ -338,6 +433,9 @@ async function runSingleScenario(
 		adds.forEach((b, id) => measured(id, b));
 		let survivors = [...adds.keys()];
 		if (survivors.length > 40) { // chart's two-round filter, only when it pays
+			// (The floor is a length floor and v0 is the search currency: near the
+			// finish line the two are the same number, and past it a real effect
+			// that the objective cannot see is exactly what this filter drops.)
 			survivors = survivors.filter(id => {
 				const v = v0.get(id)!;
 				const spread = Number.isFinite(v.sem) ? Math.sqrt(Math.max(1, v.n)) * v.sem : Infinity;
@@ -354,7 +452,7 @@ async function runSingleScenario(
 		}
 	}
 	dbg('v0', [...v0.entries()].map(([k, v]) => k + ':' + v.mean.toFixed(2) + '±' + v.sem.toFixed(2)).join(' '));
-	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage C: starting builds by multiple-choice knapsack ──────────────────
 	emit('knapsack');
@@ -671,7 +769,11 @@ async function runSingleScenario(
 		// count ((2·1.96·σΔ/δ_min)²) growth cannot flip a δ-zone verdict, so a
 		// candidate at the ceiling with UCB ≥ δ_min is reported unresolved
 		// instead of burning seeds to the preset batch cap. The §C climb makes
-		// climbRaces, not batchCap, its race budget.
+		// climbRaces, not batchCap, its race budget. σΔ here is the calibrated
+		// ℓ one (§7.3) while the ladder decides on the §F currency: near the
+		// finish line the two are the same number (slope 1), and this is a
+		// ceiling on growth, not a decision — a currency with less noise simply
+		// resolves before reaching it.
 		const climbRungCeil = Number.isFinite(noise.sigmaDeltaLead)
 			? Math.max(BANDIT_START_SEEDS * 2, Math.ceil(4 * Math.pow((2 * 1.96 * noise.sigmaDeltaLead) / cfg.deltaMinL, 2)))
 			: cfg.batchCap;
@@ -843,19 +945,155 @@ async function runSingleScenario(
 		traceRestartEnd(X);
 		peakCerts.set(X.id, { p1: peak.p1, p2: peak.p2 });
 	}
-	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage G: verification on fresh seeds (the only numbers reported) ──────
-	const short = shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 5, space);
+	const short = await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 5, space);
 	return verify(short, cfg.gSeedsMin, cfg.gSeedsCap, false);
 }
 
 /**
+ * §G: the scenario set shown to the search as ONE scenario, so Stage B–F run
+ * once on the aggregated objective instead of once per scenario.
+ *
+ * The adapter answers the pipeline's calls on a virtual scenario whose seed
+ * positions map onto the SAME positions of every real scenario's seed list (the
+ * lists are per scenario and fixed-size, so position p is one seed there and
+ * one seed here: pairing per scenario, P2, and one batch per ensure for the
+ * whole set). Each virtual seed slot is the scenarios combined:
+ *  - `lead` carries the run's §F currency of every scenario, combined by the
+ *    run's aggregation (aggregateValues, §6.4). That is the number the bandit,
+ *    Stage D's adoption test, the §C climb and the ILS acceptance compare, so a
+ *    candidate is only adopted when it improves the ROBUST value, and a
+ *    compromise build that is top-5 in no single scenario is reachable;
+ *  - `win`/`top3`/`placing` carry the same aggregation of the per-scenario
+ *    indicators (so the shortlist, the provisional progress rows and the
+ *    internal verification read the aggregated objective, in the reporting
+ *    objective's own units), `hpEmpty`/`rushed` the plain mean;
+ *  - a position is measured only once every scenario has it (null = still
+ *    pending, 'err' = some scenario cannot score this seed at all).
+ *
+ * Because the currency is already applied here, the pipeline runs this view
+ * with `searchCurrency: 'lead'` (read the slot's value as-is) and the reporting
+ * objective unchanged. The §F clip width comes from the caller's measured σ(ℓ)
+ * (§7.3), the same number a single-scenario run would use.
+ *
+ * §E activation telemetry is pooled over the scenarios: a skill counts as
+ * never-firing only when no scenario ever saw it fire, so a skill that pays off
+ * in one footing is never sold on another's zero.
+ */
+export interface AggregatedView extends SearchEvaluator {
+	/** Every build the search asked this view to measure. */
+	seen(): BuildRefLite[];
+}
+
+export function aggregatedEvaluator(
+	ev: SearchEvaluator, scenarioIdxs: readonly number[], aggregation: AggregationKind, objective: ObjectiveKind,
+	currency: SearchCurrency = 'aligned', clipL = Infinity,
+): AggregatedView {
+	const sis = [...scenarioIdxs];
+	if (sis.length < 2) throw new Error('optimizer: aggregatedEvaluator needs at least two scenarios');
+	const one = searchPickOf(objective, currency, clipL);
+	const merged = new Map<string, SeedSlot[]>(); // `${ns}|${identity}`, rebuilt on every ensure
+	const dropMerged = (): void => { merged.clear(); };
+
+	const combine = (ns: string, identity: string): SeedSlot[] => {
+		const key = `${ns}|${identity}`;
+		const hit = merged.get(key);
+		if (hit) return hit;
+		const parts = sis.map(si => ev.slots(ns, si, identity));
+		const len = Math.min(...parts.map(p => p.length));
+		const out: SeedSlot[] = new Array<SeedSlot>(len).fill(null);
+		for (let p = 0; p < len; p++) {
+			const cur: number[] = [];
+			const win: number[] = []; const top3: number[] = []; const plac: number[] = [];
+			const hp: number[] = []; const rush: number[] = [];
+			let pending = false, err = false;
+			for (const part of parts) {
+				const s = part[p];
+				if (s == null) { pending = true; break; } // a later ensure fills it
+				if (s === 'err') { err = true; break; }
+				const c = one(s);
+				if (c == null) { err = true; break; } // a scenario with no usable ℓ cannot score this seed
+				cur.push(c); win.push(s.win); top3.push(s.top3); plac.push(-s.placing); hp.push(s.hpEmpty); rush.push(s.rushed);
+			}
+			if (pending) continue; // stays null: not measurable in every scenario yet
+			if (err) { out[p] = 'err'; continue; }
+			// placing is sign-flipped in and out, so maximin means "worst placing".
+			out[p] = {
+				lead: aggregateValues(cur, aggregation),
+				win: aggregateValues(win, aggregation),
+				top3: aggregateValues(top3, aggregation),
+				placing: -aggregateValues(plac, aggregation),
+				hpEmpty: aggregateValues(hp, 'mean'),
+				rushed: aggregateValues(rush, 'mean'),
+			};
+		}
+		merged.set(key, out);
+		return out;
+	};
+
+	const statsFor = (ns: string, identity: string): ReturnType<SearchEvaluator['stats']> => {
+		const slots = combine(ns, identity);
+		return slots.some(s => s != null) ? statsOf(slots) : null;
+	};
+	const pairedFor = (ns: string, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null) =>
+		pairedOf(combine(ns, a.id), combine(ns, b.id), pick);
+	const pairedField = (ns: string, _si: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null) =>
+		pairedFor(ns, a, b, pick);
+
+	const seenBuilds = new Map<string, BuildRefLite>();
+	return {
+		seeds(ns, _si, n) { return ev.seeds(ns, sis[0], n); }, // the virtual scenario has no single list; pairing is by position
+		async ensure(reqs) {
+			for (const r of reqs) if (!seenBuilds.has(r.build.id)) seenBuilds.set(r.build.id, r.build);
+			const fan = reqs.flatMap(r => sis.map(si => ({ ns: r.ns, scenarioIdx: si, build: r.build, positions: r.positions })));
+			const res = await ev.ensure(fan);
+			dropMerged();
+			return res;
+		},
+		/** Every build the search asked this view to measure (§G): one search
+		 *  measured every candidate in every scenario, so each scenario's own
+		 *  champion among them is known without spending another race. */
+		seen() { return [...seenBuilds.values()]; },
+		slots(ns, _si, identity) { return combine(ns, identity); },
+		racesRun() { return ev.racesRun(); },
+		stats(ns, _si, build) { return statsFor(ns, build.id); },
+		paired: pairedField,
+		objective(ns, _si, build, obj, vs) {
+			const st = statsFor(ns, build.id);
+			if (!st) return null;
+			const gain = obj === 'gainVsCurrent' && vs ? pairedFor(ns, build, vs, v => v.lead) : null;
+			return objectiveOf(st, obj, gain);
+		},
+		activations(ns, _si, identity) {
+			// Pool the scenarios (§E): seeds, counts and fired-seed counts add up,
+			// so a skill is only "never fired" when no scenario recorded it.
+			let out: ActivationTelemetry | null = null;
+			for (const si of sis) {
+				const a = ev.activations?.(ns, si, identity);
+				if (!a) continue;
+				const m = out ?? (out = { seeds: 0, counts: Object.create(null) as Record<string, number>, fired: Object.create(null) as Record<string, number> });
+				m.seeds += a.seeds;
+				for (const id in a.counts) m.counts[id] = (m.counts[id] ?? 0) + a.counts[id];
+				for (const id in a.fired) m.fired[id] = (m.fired[id] ?? 0) + a.fired[id];
+			}
+			return out;
+		},
+		dispose() { ev.dispose(); },
+	};
+}
+
+/**
  * Optimize one build against a scenario set (§6.3–6.4). One scenario → the
- * classic pipeline, unchanged. Several → each is searched independently (its
- * own anytime recommendation), then the shortlists are merged and re-verified
- * on fresh seeds ACROSS all scenarios, ranked by the chosen aggregation
- * (mean / maximin / blend). Cost scales linearly with the scenario count.
+ * classic pipeline, unchanged. Several with a mean aggregation → each is
+ * searched independently (its own anytime recommendation), then the shortlists
+ * are merged and re-verified on fresh seeds ACROSS all scenarios, ranked by the
+ * chosen aggregation. Several with a maximin/blend aggregation → one search on
+ * the aggregated objective (§G, `aggregatedSearch`): every candidate is
+ * simulated in every scenario and Stage D + the §C climb adopt on the aggregated
+ * value, so a robust compromise that is top-5 in no single scenario can still be
+ * found. Cost scales with the scenario count either way (§G).
  */
 export async function runOptimizer(
 	ev: SearchEvaluator,
@@ -874,6 +1112,45 @@ export async function runOptimizer(
 	if (sidxs.length <= 1) {
 		return runSingleScenario(ev, { ...input, scenarioIdx: sidxs[0] ?? 0, scenarioIdxs: undefined }, ctrl, onProgress);
 	}
+	// §G: a maximin/blend run searches the scenario set as ONE objective, so a
+	// compromise build that is top-5 in no single scenario can still be the
+	// recommendation. A mean keeps the §6.3 path (each scenario's own optimum
+	// is already a good mean candidate, and the merged shortlist ranks by that
+	// mean). The search runs on the adapter; verification and the reported rows
+	// still run on the REAL evaluator, so the numbers stay the selected
+	// objective on each scenario's own disjoint verify seeds (§6.4, P3).
+	if (input.aggregation !== 'mean' && input.aggregatedSearch !== false) {
+		// §7.3 says the reported noise is a LEAD margin in lengths, and §F needs
+		// σ(ℓ) before the search starts (it sizes the clip). Read it from the
+		// REAL evaluator on the first scenario; the pipeline's own Stage 0 below
+		// asks the adapter for exactly these builds at these positions, which
+		// fans out to exactly these slots, so this is not extra races. One
+		// scenario is enough: the clip is a width, and the combined value is
+		// never noisier than its parts, so this width is the generous one.
+		const noiseVariants = noiseVariantSelections(input.space, input.effort).map(sel => buildRef(input.space, sel));
+		const rawNoise = await calibrateNoise(ev, input.effort, sidxs[0], buildRef(input.space, []), noiseVariants);
+		const aggEv = aggregatedEvaluator(ev, sidxs, input.aggregation, input.objective, input.searchCurrency, leadClipL(rawNoise.sigmaLead));
+		// The adapter has already applied the §F currency per scenario and
+		// combined it by the aggregation, so the pipeline reads its slots as-is.
+		const agg = await runSingleScenario(
+			aggEv, { ...input, scenarioIdx: 0, scenarioIdxs: undefined, searchCurrency: 'lead' }, ctrl, onProgress);
+		// One search measured every candidate in every scenario, so each
+		// scenario's own champion among them costs nothing to name. Stage G
+		// sees those too: the pool would otherwise be only what the aggregated
+		// ranking happened to like, and the fresh-seed verification, not the
+		// search, is what decides the recommendation (§6.4).
+		const pool: BuildRefLite[] = [];
+		for (const si of sidxs) {
+			const own = aggEv.seen()
+				.filter(b => affordable(input.space, b.selection) && !deadSkills(ev, si, b).length)
+				.map(b => ({ b, obj: ev.objective(NS_SEARCH, si, b, input.objective, input.current) }))
+				.filter(x => x.obj && x.obj.n >= SHORTLIST_MIN_SEEDS && Number.isFinite(x.obj!.mean))
+				.map(x => ({ b: x.b, lcb: x.obj!.mean - 1.96 * (Number.isFinite(x.obj!.sem) ? x.obj!.sem : 0) }))
+				.sort((x, y) => y.lcb - x.lcb || (x.b.id < y.b.id ? -1 : 1))[0];
+			if (own) pool.push(own.b);
+		}
+		return verifyAcross(ev, input, sidxs, [{ ...agg, noise: rawNoise }], ctrl, pool);
+	}
 	const ranIdxs: number[] = [];
 	const per: OptimizerResult[] = [];
 	for (const si of sidxs) {
@@ -887,15 +1164,19 @@ export async function runOptimizer(
 /** Merge each scenario's shortlist and verify the pooled candidates fresh
  *  across every scenario, then rank by the aggregation (§6.4). A build tied
  *  with the leader in ANY scenario is reported as a tie (conservative — we
- *  only claim a win where every scenario agrees). */
+ *  only claim a win where every scenario agrees). `extra` names more candidates
+ *  for the pool (§G: the one aggregated search's per-scenario champions); they
+ *  are verified on fresh seeds like everything else in it. */
 async function verifyAcross(
 	ev: SearchEvaluator, input: SearchInput, ranIdxs: number[], per: OptimizerResult[], ctrl: SearchController,
+	extra: readonly BuildRefLite[] = [],
 ): Promise<OptimizerResult> {
 	const { space, objective, aggregation, effort: cfg } = input;
 	const vs = input.current;
 	const pick = objPick(objective);
 	const ids = ranIdxs.map(si => `S${si}`);
 	const pool = new Map<string, BuildRefLite>();
+	for (const b of extra) if (affordable(space, b.selection)) pool.set(b.id, b);
 	for (const r of per) for (const row of r.shortlist.slice(0, 5)) {
 		if (affordable(space, row.build.selection)) pool.set(row.build.id, row.build);
 	}
@@ -965,17 +1246,21 @@ async function verifyAcross(
 	// with different peaks certifies nothing).
 	const certsOf = (key: 'p1' | 'p2'): boolean =>
 		per.every(r => r.best.build.id === best.build.id && (key === 'p1' ? r.certified1MovePeak : r.certified2MovePeak));
-	// §E: merge the per-scenario activation reports of the winning build.
+	// §E: the winning build's activation report, pooled over the scenarios that
+	// ran. Read directly for the build Stage G actually recommends (on the §G
+	// path the search's own best may not be it), falling back to what each
+	// per-scenario result carried.
 	let bestActivations: ActivationTelemetry | undefined;
 	{
 		const merged: ActivationTelemetry = { seeds: 0, counts: Object.create(null) as Record<string, number>, fired: Object.create(null) as Record<string, number> };
-		for (const r of per) {
-			const a = r.bestActivations;
-			if (!a || r.best.build.id !== best.build.id) continue;
+		const add = (a: ActivationTelemetry | null | undefined): void => {
+			if (!a) return;
 			merged.seeds += a.seeds;
 			for (const id in a.counts) merged.counts[id] = (merged.counts[id] ?? 0) + a.counts[id];
 			for (const id in a.fired) merged.fired[id] = (merged.fired[id] ?? 0) + a.fired[id];
-		}
+		};
+		for (const si of ranIdxs) add(ev.activations?.(NS_SEARCH, si, best.build.id));
+		if (merged.seeds === 0) for (const r of per) if (r.best.build.id === best.build.id) add(r.bestActivations);
 		if (merged.seeds > 0) bestActivations = merged;
 	}
 	return {
@@ -997,8 +1282,10 @@ const SHORTLIST_MIN_SEEDS = 200;
 /**
  * The shortlist feeding Stage G (§3.B.2). Stage G can only choose among the
  * builds it is given, so:
- *  - every restart's final feasible build and the global incumbent always make
- *    it (mandatory slots);
+ *  - every restart's final feasible build and the global incumbent are the
+ *    mandatory slots; §E keeps out of them any build carrying a never-firing
+ *    skill, and a thin restart end is measured up to DEAD_SKILL_MIN_SEEDS first
+ *    so its slot is refused on the same evidence the climb uses;
  *  - the remaining slots are filled by LOWER CONFIDENCE BOUND (mean − 1.96·SE)
  *    restricted to well-measured builds (n ≥ SHORTLIST_MIN_SEEDS);
  *  - raw search means are never ranked across builds with wildly different
@@ -1008,7 +1295,20 @@ const SHORTLIST_MIN_SEEDS = 200;
  * for their knapsack numbers only and must never reach the report (§13.3).
  * Deterministic order.
  */
-function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, BuildRefLite>, restartEnds: readonly BuildRefLite[], objective: ObjectiveKind, vs: BuildRefLite | undefined, k: number, space: BuildSpace): BuildRefLite[] {
+async function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, BuildRefLite>, restartEnds: readonly BuildRefLite[], objective: ObjectiveKind, vs: BuildRefLite | undefined, k: number, space: BuildSpace): Promise<BuildRefLite[]> {
+	/** §E: a skill of this build its telemetry never recorded firing. */
+	const neverFired = (b: BuildRefLite): boolean => {
+		const t = ev.activations?.(NS_SEARCH, si, b.id);
+		return !!t && b.selection.some(id => !t.counts[id]);
+	};
+	/** §E: below DEAD_SKILL_MIN_SEEDS the dead-skill rule stands down, so on a thin build a
+	 *  never-firing skill is invisible and would ride a mandatory slot into the report. Read
+	 *  the floor first (the §C climb's top-up), so the rule decides on measured seeds. */
+	const readDeadFloor = async (b: BuildRefLite): Promise<void> => {
+		const t = ev.activations?.(NS_SEARCH, si, b.id);
+		if (!t || t.seeds >= DEAD_SKILL_MIN_SEEDS || !neverFired(b)) return;
+		await ev.ensure([{ ns: NS_SEARCH, scenarioIdx: si, build: b, positions: Array.from({ length: DEAD_SKILL_MIN_SEEDS }, (_, i) => i) }]);
+	};
 	const measured = [...evaluated.values()]
 		.filter(b => affordable(space, b.selection))
 		.map(b => ({ b, obj: ev.objective(NS_SEARCH, si, b, objective, vs) }))
@@ -1020,10 +1320,17 @@ function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, Bui
 		.filter(x => !deadSkills(ev, si, x.b).length);
 	const out: BuildRefLite[] = [];
 	const take = (b: BuildRefLite) => { if (!out.some(o => o.id === b.id)) out.push(b); };
-	for (const e of restartEnds) if (affordable(space, e.selection) && !deadSkills(ev, si, e).length) take(e);
-	// The global incumbent (the best search objective measured so far) keeps a
-	// slot even below the seed floor; it is one raw-mean pick, not a ranking.
-	const incumbent = measured.sort((x, y) => y.obj!.mean - x.obj!.mean || (x.b.id < y.b.id ? -1 : 1))[0];
+	for (const e of restartEnds) {
+		await readDeadFloor(e);
+		if (affordable(space, e.selection) && !deadSkills(ev, si, e).length) take(e);
+	}
+	// The global incumbent (the best search objective measured so far) keeps a slot
+	// even below the seed floor; it is one raw-mean pick, not a ranking. Taken
+	// without measuring, it cannot read the floor, so it refuses any build whose own
+	// seeds already show a skill that never fired (the empty build has none to fail).
+	const incumbent = measured
+		.sort((x, y) => y.obj!.mean - x.obj!.mean || (x.b.id < y.b.id ? -1 : 1))
+		.filter(x => !neverFired(x.b))[0];
 	if (incumbent) take(incumbent.b);
 	const fill = measured
 		.filter(x => x.obj!.n >= SHORTLIST_MIN_SEEDS && !out.some(o => o.id === x.b.id))

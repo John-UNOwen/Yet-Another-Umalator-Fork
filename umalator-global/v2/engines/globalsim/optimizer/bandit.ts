@@ -37,7 +37,8 @@ export interface BanditOpts {
 	incumbent: BuildRefLite;
 	/** Deterministic order (caller sorts) — the ladder is reproducible (P6). */
 	candidates: BuildRefLite[];
-	/** Metric for Δ vs the incumbent (searchPick=ℓ, or objPick(obj) in Stage G). */
+	/** Metric for Δ vs the incumbent (the §F search currency in Stages B–F,
+	 *  or objPick(obj) in Stage G). δ_min below is in that metric's units. */
 	pick: (v: SeedValue) => number | null;
 	cfg: EffortConfig;
 	/** First rung (default: 50). */

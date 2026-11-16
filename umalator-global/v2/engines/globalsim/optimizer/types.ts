@@ -36,20 +36,29 @@ export interface ScenarioSpec {
  * Per-seed, per-build measured value — what the transposition table stores
  * (~40 B; the full SeedCompactRecord's tail grid is consumed by leadMarginL
  * and dropped, §7.1). Null seed = the seed errored on the engine side.
+ * The §G aggregatedEvaluator builds the same shape as a DERIVED view over a
+ * scenario set, where the indicator fields hold the run's aggregation of the
+ * per-scenario values (fractions) — noted on each field below.
  */
 export interface SeedValue {
 	/** Lead margin ℓ in lengths (metrics.leadMarginL); null when the record
 	 *  predates bestRivalFinishTimeRaw — such seeds are unusable and dropped
 	 *  from ℓ statistics (never coerced to 0). Win/top3/placing stay valid. */
 	lead: number | null;
-	/** 1 when finishOrder === 0 — the engine's finishOrder is 0-based (winner = 0). */
-	win: 0 | 1;
-	/** 1 when finishOrder ≤ 2 (0-based finishOrder ⇒ top-3). */
-	top3: 0 | 1;
+	/** 1 when finishOrder === 0 — the engine's finishOrder is 0-based (winner = 0).
+	 *  A measured seed always holds 0 or 1; only the §G aggregated view
+	 *  (search.ts aggregatedEvaluator) writes fractions here — the per-scenario
+	 *  indicators combined by the run's aggregation. */
+	win: number;
+	/** 1 when finishOrder ≤ 2 (0-based finishOrder ⇒ top-3). Fractions only in
+	 *  the §G aggregated view, like `win`. */
+	top3: number;
 	/** Human placing, 1-based (engine finishOrder + 1 ⇒ a win places 1, never 0). */
 	placing: number;
-	hpEmpty: 0 | 1;
-	rushed: 0 | 1;
+	/** 1 when the HP bar ran empty mid-race (plain mean in the §G view). */
+	hpEmpty: number;
+	/** 1 when the runner rushed (plain mean in the §G view). */
+	rushed: number;
 }
 
 export interface MeanSem {
