@@ -295,9 +295,12 @@ Acceptance numbers, measured on the branch:
   upstream commit `27a4d13` (`"pairedRandomStreams": false` replies byte-identical
   too; re-checked 2026-11-16 against the baseline binary),
 - `cargo test --release`: 171 passed / 171,
-- median ρ 0.974 and paired σΔ(ℓ) 0.175 L (300 seeds, course 10504, 15-skill
-  base; the optimizer's README "Noise calibration record" carries the
-  1000-seed re-measurement and the field-vs-build split),
+- median ρ 0.974 and paired σΔ(ℓ) 0.162 L (600 seeds, course 10504, 15-skill
+  base, a 12-candidate slice). σΔ tracks the size of the effects being measured
+  rather than the course: the same slice reads 0.320 L at 3000 m, and a wider
+  candidate slice at 10810 read 0.971 L, while the field's own finish speed
+  differs by only a few percent between the two distances. The optimizer's README
+  "Noise calibration record" carries the full field-vs-build split,
 - distributions unchanged: the outcome marginals match retail mode at 1 %
   (optimizer README, "Paired-draws mode (engine fork)").
 
