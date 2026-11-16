@@ -209,7 +209,7 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 	return { ...done(best), capCut, priorCut };
 }
 
-function done(best: Map<string, Row>): Omit<BanditResult, 'capCut'> {
+function done(best: Map<string, Row>): Omit<BanditResult, 'capCut' | 'priorCut'> {
 	const measured = [...best.values()].filter(r => r.n > 0).map(toOutcome);
 	const survivors = measured.filter(m => m.survived).sort((a, b) => b.diff.mean - a.diff.mean || (a.build.id < b.build.id ? -1 : 1));
 	return { survivors, measured };
