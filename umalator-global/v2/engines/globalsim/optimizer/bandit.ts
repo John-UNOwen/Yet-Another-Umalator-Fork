@@ -42,6 +42,26 @@ export interface BanditOpts {
 	cfg: EffortConfig;
 	/** First rung (default: 50). */
 	startSeeds?: number;
+	/** Minimum growth per ladder round (default BANDIT_RUNG_MIN_SEEDS = 8 threads ×
+	 *  chunk). The §C climb lowers it: its batches are 4–16 waves wide, so even a
+	 *  small per-candidate step is a pool-sized job, and the wide screening pays
+	 *  the rung floor once per candidate — a smaller step is the cost lever that
+	 *  lets the whole N1 be laddered at all. */
+	rungMin?: number;
+	/** Cap growth at this seed count (default: the preset's batchCap). The §C
+	 *  certified climb passes the δ-resolution count of the measured σΔ: growth
+	 *  past that point cannot change a candidate's δ-zone verdict, and candidates
+	 *  still at the ceiling with UCB ≥ δ_min come back as "unresolved" (measured,
+	 *  not adopted, not certifiably hopeless). */
+	rungCeil?: number;
+	/** Set false to switch off the LUCB rival cut. The §C certification pass does
+	 *  this: only an indifference-zone drop proves UCB < δ_min, and a wave whose
+	 *  survivors are all zone-dropped is a certified screen. */
+	lucbCut?: boolean;
+	/** Override the alive cap (default BANDIT_MAX_ALIVE). The §C climb screens in
+	 *  waves and raises the cap to the wave size so a cut candidate can never
+	 *  invalidate the wave's certification (capCut then always reports 0). */
+	maxAlive?: number;
 	/** Observability: called after each round. */
 	onRound?: (survivors: number, seedsUsed: number) => void;
 }
@@ -74,15 +94,21 @@ interface Row {
 
 const Z = 1.96;
 
-/** §9's shrinking β: conservative (≈2.8) at 50 seeds, Z at ≥300. */
-const beta = (n: number) => Z * Math.sqrt(Math.min(2, 300 / Math.max(1, n)));
+/** §9's shrinking β: conservative (≈2.8) at 50 seeds, Z at ≥300. Exported so
+ *  callers that classify survivors (the §C climb's δ-zone check) use exactly
+ *  the ladder's own optimism, not the fixed-Z CI. */
+export const betaOf = (n: number) => Z * Math.sqrt(Math.min(2, 300 / Math.max(1, n)));
 
 /** Run one bandit batch. */
 export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Promise<BanditResult> {
 	const seen = new Set<string>([o.incumbent.id]);
 	const cands = o.candidates.filter(c => !seen.has(c.id) && (seen.add(c.id), true));
 	if (!cands.length) return { survivors: [], measured: [], capCut: 0 };
-	const cap = o.cfg.batchCap;
+	// rungCeil overrides the preset batch cap (§C's climb sizes its ladder by
+	// the measured noise, and takes climbRaces/time as the budget instead).
+	const cap = o.rungCeil !== undefined ? Math.max(1, o.rungCeil) : o.cfg.batchCap;
+	const maxAlive = o.maxAlive ?? BANDIT_MAX_ALIVE;
+	const rungMin = o.rungMin ?? BANDIT_RUNG_MIN_SEEDS;
 	const start = Math.min(cap, o.startSeeds ?? BANDIT_CHUNK_SIZE * 5);
 
 	const best = new Map<string, Row>(); // id → last measurement (every candidate)
@@ -113,22 +139,22 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 		// reach δ_min, so there is no improvement worth chasing), the LUCB
 		// rival cut (can't reach the leader's lower bound), and as a cost
 		// backstop the alive cap, whose cut is counted for the caller (§D.4).
-		const up = (r: Row) => r.mean + beta(r.n) * (r.sem || 0);
+		const up = (r: Row) => r.mean + betaOf(r.n) * (r.sem || 0);
 		const leader = rows.length ? rows.reduce((a, b) => (b.mean > a.mean ? b : a)) : null;
-		const lcb = leader ? leader.mean - beta(leader.n) * (leader.sem || 0) : 0;
+		const lcb = leader ? leader.mean - betaOf(leader.n) * (leader.sem || 0) : 0;
 		const ranked = [...rows].sort((a, b) => up(b) - up(a) || (a.build.id < b.build.id ? -1 : 1));
 		const kept: Row[] = [];
 		for (const r of ranked) {
 			if (up(r) < deltaMin) { r.survived = false; continue; }
-			if (r !== leader && up(r) < lcb) { r.survived = false; continue; }
-			if (kept.length >= BANDIT_MAX_ALIVE) { r.survived = false; capCut++; continue; }
+			if (o.lucbCut !== false && r !== leader && up(r) < lcb) { r.survived = false; continue; }
+			if (kept.length >= maxAlive) { r.survived = false; capCut++; continue; }
 			kept.push(r);
 		}
 		// Resolved: the best survivor's lower bound beats 0 AND every rival's
 		// upper bound.
 		if (kept.length) {
 			const top = kept.reduce((a, b) => (b.mean > a.mean ? b : a));
-			const lo = top.mean - beta(top.n) * (top.sem || 0);
+			const lo = top.mean - betaOf(top.n) * (top.sem || 0);
 			const restWorst = kept.length === 1 ? -Infinity : Math.max(...kept.filter(r => r !== top).map(up));
 			if (lo > 0 && lo >= restWorst - 1e-12) {
 				for (const r of kept) if (r !== top) r.survived = false;
@@ -140,7 +166,7 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 		// threshold, so every one grows one rung (not just the top two). The
 		// rung floor of 8 threads × chunk keeps one batch big enough to
 		// saturate the pool. The ×1.5 keeps it at O(log cap) rounds.
-		const grow = (r: Row) => Math.min(cap, Math.max(r.n + BANDIT_RUNG_MIN_SEEDS, Math.ceil(r.n * 1.5)));
+		const grow = (r: Row) => Math.min(cap, Math.max(r.n + rungMin, Math.ceil(r.n * 1.5)));
 		const chosen = kept.filter(r => r.n < cap);
 		if (!chosen.length) { alive = kept.map(r => r.build); break; } // everyone capped
 		const reqs = [];

@@ -252,7 +252,7 @@ class OracleEval implements SearchEvaluator {
 const TEST_CFG: EffortConfig = {
 	preset: 'standard',
 	// Standard-scale knobs (plan §11); verification trimmed for test runtime.
-	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, fMaxRounds: 3, beam: 0,
+	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, kicks: 0, climbRaces: 25_000,
 	gSeedsMin: 2000, gSeedsCap: 6000, batchCap: 5000, surrogate: false, timeBudgetMs: Infinity,
 	screenRound1Seeds: 25, screenRound2Seeds: 175, screenFilterMaxL: 0.1, screenFilterSpreadL: 0.1,
 	noiseSeeds: 120, noiseVariants: 3,
@@ -308,12 +308,11 @@ test('synthetic oracle: >=95% of 100 instances find the optimum or a statistical
 	}
 	console.log(`  oracle: exact=${exact} tie=${ties} fail=${fails.length} avgRaces=${Math.round(races / 100)}`);
 	for (const f of fails.slice(0, 8)) console.log('  MISS', f);
-	// Pins today's measured baseline: 14/100 misses (exact 44 + tie 42 = 86),
-	// was 4/100 before the §3.B fixes: the affordable-fallback, shortlist-LCB
-	// and knapsack-start changes reroute the (path-dependent) search, so more
-	// small instances land on a resolved worse build. Gate = measured + 4.
-	// §3.C's certified local search should pull this back down; then re-tighten.
-	t.ok(fails.length <= 18, `failure rate ≤ 18% (fails=${fails.length}/100)`);
+	// Pins the measured baseline (all runs deterministic): 10/100 misses
+	// (exact 51 + tie 39 = 89) with the §C certified climb (climbRaces
+	// 25,000/restart at this harness's huge noise, kicks 0), down from 13/100
+	// under the old capped sweep and 14/100 before §3.C. Gate = measured + 4.
+	t.ok(fails.length <= 14, `failure rate ≤ 14% (fails=${fails.length}/100)`);
 	t.end();
 });
 
@@ -453,7 +452,7 @@ test('medium instances (30–40 options): within δ_min of random+hillclimb base
 			cur = best; curMu = bestMu;
 		}
 	};
-	const MED_CFG: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, fMaxRounds: 3, batchCap: 1200, gSeedsMin: 700, gSeedsCap: 1600 };	let misses = 0;
+	const MED_CFG: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, batchCap: 1200, gSeedsMin: 700, gSeedsCap: 1600 };	let misses = 0;
 	for (let i = 0; i < 5; i++) {
 		const inst = genInstance(555000 + i * 131, 30, 41); // 30..40 options
 		// External baseline: random greedy restarts → hill climb, best kept.
@@ -480,32 +479,9 @@ test('medium instances (30–40 options): within δ_min of random+hillclimb base
 	t.end();
 });
 
-// Stage F beam variant (§8F): with a beam the frontier expands several elites
-// per round. Exercise it on medium pools — the recommendation must stay
-// feasible and at least as good as the plain hill climb (beam is strictly more
-// search, so it must never regress quality).
-test('Stage F beam variant stays feasible and ≥ plain hill-climb quality (§8F)', async t => {
-	const hill = { ...TEST_CFG, restarts: 2, dMaxIters: 3, fMaxRounds: 3, batchCap: 1200, gSeedsMin: 700, gSeedsCap: 1600, beam: 0 };
-	const beamCfg = { ...hill, beam: 4 };
-	let regress = 0;
-	for (let i = 0; i < 4; i++) {
-		const inst = genInstance(555000 + i * 131, 30, 41);
-		const runMu = async (cfg: EffortConfig): Promise<{ mu: number; over: boolean }> => {
-			const ev = new OracleEval(inst);
-			const res = await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'meanLead', aggregation: 'mean', effort: cfg }, createController(), () => undefined);
-			const over = res.best.leftover < 0;
-			const out = { mu: inst.mu(res.best.build.id), over };
-			ev.dispose();
-			return out;
-		};
-		const h = await runMu(hill);
-		const bm = await runMu(beamCfg);
-		t.ok(!bm.over, `beam instance ${i}: never over budget`);
-		if (h.mu - bm.mu > 0.2) { regress++; console.log(`  BEAM REGRESS #${i}: beam μ ${bm.mu.toFixed(2)} < hill ${h.mu.toFixed(2)}`); }
-	}
-	t.ok(regress === 0, `beam never regresses below the plain hill climb (regress=${regress}/4)`);
-	t.end();
-});
+// The old "Stage F beam variant" test is gone: §C replaced the capped sweep and
+// its beam with the certified climb (kicks: 0 / 4 / 10 in the presets), and the
+// realistic suite now certifies the peak claims end-to-end.
 
 // ── §6.4 aggregation + §6.3 scenario set ───────────────────────────────────
 
@@ -523,7 +499,7 @@ test('aggregateValues: mean / maximin / blend are the exact §6.4 formulas', t =
 test('scenario set + maximin beats mean on the worst-case objective (§6.3–6.4)', async t => {
 	// Two scenarios whose pair synergies carry opposite signs, so the optimum
 	// moves between them. maximin must trade a little mean for a better floor.
-	const cfg: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, fMaxRounds: 3, batchCap: 1200, gSeedsMin: 1200, gSeedsCap: 1200 };
+	const cfg: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, batchCap: 1200, gSeedsMin: 1200, gSeedsCap: 1200 };
 	const worstTrueMu = (inst: ReturnType<typeof genInstance>, id: string) => Math.min(inst.mu(id, 0), inst.mu(id, 1));
 	let maximinSum = 0, meanSum = 0, wins = 0, N = 0, feasible = true, perTwo = true, statsOk = true;
 	for (let i = 0; i < 6; i++) {
@@ -568,7 +544,7 @@ test('scenario set + maximin beats mean on the worst-case objective (§6.3–6.4
 // for surrogate ordering + optimistic pruning to pay; quality is checked by
 // true μ parity against the surrogate-off recommendation (μ is exact here).
 test('surrogate on: μ-parity quality, fewer search races on medium pools (§13.2 Phase 4)', async t => {
-	const base: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, fMaxRounds: 4, batchCap: 1200, gSeedsMin: 80, gSeedsCap: 80 };
+	const base: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, batchCap: 1200, gSeedsMin: 80, gSeedsCap: 80 };
 	const cfgOff: EffortConfig = { ...base, surrogate: false };
 	const cfgOn: EffortConfig = { ...base, surrogate: true };
 	const N = 8;
@@ -610,7 +586,7 @@ test('surrogate on: μ-parity quality, fewer search races on medium pools (§13.
 // regime with an exact-lead evaluator (noise = 0): quality is unchanged (the
 // search already finds the optimum) while the pruned arm spends fewer races.
 test('surrogate on (low-variance regime): prunes hopeless neighbours → ≤70% search races (§13.2 Phase 4)', async t => {
-	const base: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 4, fMaxRounds: 5, batchCap: 1200, gSeedsMin: 120, gSeedsCap: 120, screenRound1Seeds: 6, screenRound2Seeds: 10 };
+	const base: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 4, batchCap: 1200, gSeedsMin: 120, gSeedsCap: 120, screenRound1Seeds: 6, screenRound2Seeds: 10 };
 	const cfgOff: EffortConfig = { ...base, surrogate: false };
 	const cfgOn: EffortConfig = { ...base, surrogate: true };
 	const N = 6;

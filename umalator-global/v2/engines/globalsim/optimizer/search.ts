@@ -1,21 +1,22 @@
 /**
- * Search pipeline orchestration (SKILL-OPTIMIZER-PLAN §8). Stages B–D + G live
- * here; Stage A (book) ships with Phase 5 and Stage E (surrogate) / Stage F
- * (local search) plug into the same loop later. Everything measurable runs
+ * Search pipeline orchestration (SKILL-OPTIMIZER-PLAN §8). Stages B–D + F + G
+ * live here; Stage A (book) ships with Phase 5 and Stage E (surrogate) plugs in
+ * to the same loop. Everything measurable runs
  * through the evaluator (P7); every comparison is paired over identical seed
  * positions (P2); final numbers come only from the verification namespace (P3);
  * progress events make the run anytime (P5); all inputs are deterministic (P6).
  */
 
-import { banditVsIncumbent } from './bandit';
+import { banditVsIncumbent, BanditOutcome, betaOf } from './bandit';
 import {
-	BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
+	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
+	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
 import { BuildRefLite, calibrateNoise, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
-import { affordable, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
+import { affordable, affordableAdds, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
 import { fitSurrogate, SurrogateModel, SurrogateSample } from './surrogate';
 import {
 	AggregationKind, MeanSem, NoiseInfo, ObjectiveKind, OptimizerProgress,
@@ -88,9 +89,10 @@ const isTie = (ci: [number, number]) => ci[0] <= 0 && ci[1] >= 0;
 /** Harness-gated trace (the oracle test toggles it for one instance). */
 const dbg = (...a: unknown[]) => { if ((globalThis as any).OPT_DBG) console.error('[opt]', ...a); };
 
-/** Harness-gated traces for the oracle tests (like OPT_DBG): every Stage D
- *  adoption (with its path) and every restart's final build. */
-const traceAdopt = (b: BuildRefLite, via: 'resolve' | 'fallback'): void => {
+/** Harness-gated traces for the oracle tests (like OPT_DBG): every adoption
+ *  (with its path: Stage D resolve/fallback, or the §C climb) and every
+ *  restart's final build. */
+const traceAdopt = (b: BuildRefLite, via: 'resolve' | 'fallback' | 'climb'): void => {
 	const a = (globalThis as any).OPT_ADOPTIONS as { build: BuildRefLite; via: string }[] | undefined;
 	if (a) a.push({ build: b, via });
 };
@@ -178,6 +180,10 @@ async function runSingleScenario(
 	// §3.B.2: every restart's final build; the shortlist always includes them
 	// (Stage G can only choose among the builds it is given).
 	const restartEnds: BuildRefLite[] = [];
+	// §C certificates per restart end: p1 = every feasible N1 move (drop, add,
+	// swap, 2-for-1, 1-for-2) had its UCB on Δ below δ_min; p2 = the N2 screen
+	// (2-for-2 among the 8 lowest-value owned × the 8 best free) was clean too.
+	const peakCerts = new Map<string, { p1: boolean; p2: boolean }>();
 
 	// ── Stage 0: noise calibration (§7.3; search-namespace seeds, reused later) ──
 	const base = remember(refOf([]));
@@ -246,11 +252,14 @@ async function runSingleScenario(
 		emit('done');
 		let maxSearchFilled = 0;
 		for (const b of evaluated.values()) maxSearchFilled = Math.max(maxSearchFilled, filled(ev, NS_SEARCH, si, b));
+		const cert = peakCerts.get(best.build.id);
 		return {
 			best, shortlist: rows, noise,
 			verificationSeeds: n,
 			searchSeedsPerScenario: maxSearchFilled,
 			stoppedEarly: stoppedEarly || ctrl.stopped(),
+			certified1MovePeak: cert?.p1 === true,
+			certified2MovePeak: cert?.p2 === true,
 			orderingCorrelation: Number.isFinite(orderingCorrelation) ? orderingCorrelation : undefined,
 		};
 	};
@@ -382,12 +391,16 @@ async function runSingleScenario(
 			const n = valueN.get(id) ?? 0;
 			return (n * m + 25 * p.mean) / (n + 25);
 		};
-		/** Fold bandit outcomes into the value maps (D and F share the semantics). */
+		/** Fold bandit outcomes into the value maps (D and the §C climb share the
+		 *  semantics). `replaced`/`extraDrop` are the skills a move sold;
+		 *  `pairWith` marks a 1-for-2-style double add. */
 		const applyMeasured = (
 			outcomes: { build: BuildRefLite; diff: PairedDiff }[],
 			dropOf: Map<string, string>,
-			addedOf: Map<string, { opt: string; replaced?: string; pairWith?: string }>,
+			addedOf: Map<string, { opt: string; replaced?: string; extraDrop?: string; pairWith?: string }>,
 		) => {
+			const backOf = (id?: string): number =>
+				id ? (value.get(id) ?? v0.get(id)?.mean ?? 0) : 0;
 			for (const out of outcomes) {
 				const drop = dropOf.get(out.build.id);
 				if (drop != null) { value.set(drop, -out.diff.mean); valueN.set(drop, out.diff.n); } // ℓ(X) − ℓ(X−i)
@@ -397,18 +410,21 @@ async function runSingleScenario(
 			for (const out of outcomes) {
 				const add = addedOf.get(out.build.id);
 				if (!add || add.pairWith) continue;
-				// Δ of X−i+j vs X is v_j − v_i; put v_i back when it was measured
-				// (or fall back to the out-of-context v⁰) so the knapsack gets v_j.
-				const back = add.replaced ? (value.get(add.replaced) ?? v0.get(add.replaced)?.mean ?? 0) : 0;
+				// Δ of (X minus what it sold, plus opt) vs X is v_opt − Σv_sold;
+				// put the sold values back (measured, or fall back to the
+				// out-of-context v⁰) so the knapsack gets v_opt.
+				const back = backOf(add.replaced) + backOf(add.extraDrop);
 				value.set(add.opt, out.diff.mean + back); valueN.set(add.opt, out.diff.n);
 			}
 			for (const out of outcomes) {
 				const add = addedOf.get(out.build.id);
 				if (!add || !add.pairWith) continue;
 				// Pair add Δ splits half/half as a floor estimate — never
-				// overwrite a direct single-option measurement.
-				if (!value.has(add.opt)) { value.set(add.opt, out.diff.mean / 2); valueN.set(add.opt, out.diff.n); }
-				if (!value.has(add.pairWith)) { value.set(add.pairWith, out.diff.mean / 2); valueN.set(add.pairWith, out.diff.n); }
+				// overwrite a direct single-option measurement. A 1-for-2 puts
+				// its dropped skill's value back before halving.
+				const half = (out.diff.mean + backOf(add.replaced)) / 2;
+				if (!value.has(add.opt)) { value.set(add.opt, half); valueN.set(add.opt, out.diff.n); }
+				if (!value.has(add.pairWith)) { value.set(add.pairWith, half); valueN.set(add.pairWith, out.diff.n); }
 			}
 		};
 		for (let it = 0; it < cfg.dMaxIters; it++) {
@@ -555,71 +571,202 @@ async function runSingleScenario(
 			} else break;
 		}
 
-		// ── Stage F: local search over richer moves (§8F), beam-capable ────────
-		// Frontier = [X] for a plain hill climb (beam ≤ 1), else the top-`beam`
-		// elite pool (plan §8F beam variant for large / Thorough inputs; all
-		// elites share the cache). Order: surrogate acquisition (§8 E) when the
-		// model clears the R² gate, else Σv_added − Σv_removed. Prune on the
-		// optimistic bound. Adopt each elite's best significant improvement.
-		const beamW = Math.max(1, cfg.beam);
-		let frontier: BuildRefLite[] = [X];
-		let prevBest = X.id;
-		for (let fr = 0; fr < cfg.fMaxRounds; fr++) {
-			if (ctrl.stopped() || Date.now() - t0 > cfg.timeBudgetMs) break;
-			const pool = new Map<string, BuildRefLite>();
-			let anyAdopt = false;
-			for (const E of frontier) {
-				const moves = fMoves(space, E, ctxVal, cfg.deltaMinL, histAdopted, surrScore(E));
-				if (!moves.length) { pool.set(E.id, E); continue; }
-				const batch = moves.slice(0, F_BATCH_MAX);
-				emit('local', `restart ${s + 1}/${startBuilds.length} local ${fr + 1}/${cfg.fMaxRounds}${beamW > 1 ? ` (beam ${frontier.length})` : ''} · ${batch.length}/${moves.length} moves`, provisional(E));
-				const dropOf = new Map<string, string>();
-				const addedOf = new Map<string, { opt: string; replaced?: string; pairWith?: string }>();
-				for (const mv of batch) {
-					if (mv.adds.length === 0 && mv.drops.length === 1) dropOf.set(mv.b.id, mv.drops[0]);
-					else if (mv.adds.length === 1) addedOf.set(mv.b.id, mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
-					else if (mv.adds.length === 2) addedOf.set(mv.b.id, { opt: mv.adds[0], pairWith: mv.adds[1] });
-				}
-				const bres = await banditVsIncumbent(ev, {
-					ns: NS_SEARCH, scenarioIdx: si, incumbent: E,
-					candidates: batch.map(m => m.b).sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
-				});
-				const outcomes = bres.measured;
-				if (bres.capCut) { // §D.4: batch wider than the alive cap
-					dbg('  F alive cap cut', bres.capCut, 'candidates beyond', BANDIT_MAX_ALIVE);
-					emit('local', `restart ${s + 1}/${startBuilds.length} · alive cap cut ${bres.capCut}`, provisional(E));
-				}
-				applyMeasured(outcomes, dropOf, addedOf);
-				for (const out of outcomes) surrHarvest(out.build);
-				surrHarvest(E); surrRefit();
-				for (const out of outcomes) dbg('  F', out.build.id || '(base)', 'Δ', out.diff.mean.toFixed(3), 'surv', out.survived ? 1 : 0);
-				// Adopt only a significant improvement (lower CI bound > 0).
-				const sure = outcomes.filter(o => o.survived && o.diff.n >= 2 && o.diff.ci95[0] > 0)
-					.sort((a, b) => b.diff.mean - a.diff.mean);
-				if (sure.length) {
-					const nb = sure[0].build;
-					remember(nb);
-					pool.set(nb.id, nb); pool.set(E.id, E); // expand: child + parent stay in the pool
-					for (const id of nb.selection) histAdopted.add(id);
-					anyAdopt = true;
-				} else pool.set(E.id, E); // elite is a local optimum: keep it (beam explores siblings)
+		// ── Stage F: certified local search + iterated local search (§C) ──────
+		// Replaces the old capped sweep (3 rounds × 14 estimate-batched moves
+		// pruned by the additive estimate). Now the whole feasible N1
+		// neighbourhood — drop, add, swap (same-group = tier move; also every
+		// drop's refill), 2-for-1 (which contains the upgrade-and-sell shape:
+		// sell a filler, buy the higher tier) and 1-for-2 — is enumerated every
+		// round, so everything budget-feasible is one move away. Screening is
+		// the §D bandit with its indifference zone, run in waves of CLIMB_WAVE:
+		// bad moves die at the first rung, seeds go to contenders. Move order
+		// (surrogate acquisition / Σ ctxVal) only sequences the waves; it never
+		// excludes a move (bound-pruning by the surrogate would be §I work).
+		// A round ends three ways:
+		//  - adopt the strongest significant improver (one move per round; N1
+		//    is rebuilt against the new incumbent next round, and the waves the
+		//    round never screened get re-enumerated anyway), or
+		//  - every screened candidate's UCB sits under δ_min with no improver:
+		//    a CERTIFIED peak, the §C stop certificate. The waves run with the
+		//    LUCB rival cut off (only the indifference zone may drop a
+		//    candidate) and maxAlive ≥ wave size (no candidate can be cap-cut
+		//    out of the proof), so "the round is clean" really bounds every Δ.
+		//    Or
+		//  - a candidate the zone could not resolve within the ladder ceiling
+		//    (§D.4: the indifference zone stopped separating this
+		//    neighbourhood): keep the best build, uncertified, and no kicks.
+		// There is no round cap (§C): ctrl.stopped(), the preset time budget
+		// and the per-restart climbRaces budget bound the loop. After a
+		// certified peak the ILS kicks cfg.kicks times (k = 2–4 random
+		// feasible swaps biased toward low in-build value) and re-climbs; the
+		// new peak is accepted only on a significantly better paired Δ. The
+		// peak is finally screened against N2 (2-for-2 swaps among the 8
+		// lowest-value owned × the 8 best free options, §C's final-
+		// recommendation check) before Stage G.
+		const climbRaces0 = ev.racesRun();
+		const climbOut = (): boolean => ctrl.stopped() || Date.now() - t0 > cfg.timeBudgetMs
+			|| ev.racesRun() - climbRaces0 >= cfg.climbRaces;
+		// Ladder ceiling (§D.4 sizing): past ~4× the measured-σΔ δ-resolve
+		// count ((2·1.96·σΔ/δ_min)²) growth cannot flip a δ-zone verdict, so a
+		// candidate at the ceiling with UCB ≥ δ_min is reported unresolved
+		// instead of burning seeds to the preset batch cap. The §C climb makes
+		// climbRaces, not batchCap, its race budget.
+		const climbRungCeil = Number.isFinite(noise.sigmaDeltaLead)
+			? Math.max(BANDIT_START_SEEDS * 2, Math.ceil(4 * Math.pow((2 * 1.96 * noise.sigmaDeltaLead) / cfg.deltaMinL, 2)))
+			: cfg.batchCap;
+		const significantBetter = async (better: BuildRefLite, against: BuildRefLite): Promise<boolean> => {
+			// The same sequential test Stage D's adoption test runs: grow the
+			// held common prefix until the paired CI excludes 0 either way, the
+			// gain falls under δ_min, or the batch cap holds.
+			let d: PairedDiff | null = null;
+			let held = Math.min(cfg.batchCap, Math.max(150, filled(ev, NS_SEARCH, si, better), filled(ev, NS_SEARCH, si, against)));
+			for (;;) {
+				const pos = Array.from({ length: held }, (_, i) => i);
+				await ev.ensure([
+					{ ns: NS_SEARCH, scenarioIdx: si, build: better, positions: pos },
+					{ ns: NS_SEARCH, scenarioIdx: si, build: against, positions: pos },
+				]);
+				d = ev.paired(NS_SEARCH, si, better, against, searchPick);
+				if (!d || held >= cfg.batchCap) break;
+				if (d.ci95[0] > 0 || d.ci95[1] < 0) break; // significant either way, §8D
+				if (d.ci95[1] < cfg.deltaMinL) break; // cannot show an improvement worth having
+				held = Math.min(cfg.batchCap, Math.max(held + BANDIT_RUNG_MIN_SEEDS, Math.ceil(held * 1.5)));
 			}
-			const ranked = [...pool.values()]
-				.filter(b => affordable(space, b.selection))
-				.map(b => ({ b, l: ev.stats(NS_SEARCH, si, b)?.lead.mean ?? -Infinity }))
-				.sort((a, z) => z.l - a.l || (a.b.id < z.b.id ? -1 : 1))
-				.map(x => x.b);
-			if (!ranked.length) break;
-			frontier = ranked.slice(0, beamW);
-			X = frontier[0];
-			assertFeasible(space, X.selection); // §3.B.1: X stays affordable at every adoption
-			remember(X);
-			if (X.id !== prevBest) { emit('local', `local adopted`, provisional(X)); prevBest = X.id; }
-			else if (!anyAdopt) break; // nothing moved and no elite improved ⇒ converged (§8F stop)
+			return !!d && d.ci95[0] > 0;
+		};
+		const makeKick = (Xc: BuildRefLite, kickIdx: number): BuildRefLite => {
+			// k = 2–4 random feasible swaps (§C), drop side skewed toward low
+			// in-build value. The PRNG is keyed by identity+restart+kick index,
+			// so the whole run stays deterministic (P6).
+			const rng = mulberry32(fnv1a(`${Xc.id}\u0000${s}\u0000${kickIdx}`));
+			const valOf = (id: string): number => value.get(id) ?? v0.get(id)?.mean ?? 0;
+			let sel = [...Xc.selection];
+			const k = 2 + Math.floor(rng() * 3);
+			let moved = 0;
+			for (let step = 0; step < k; step++) {
+				const owned = sel.filter(id => !space.byId.get(id)?.forced);
+				if (!owned.length) break;
+				const asc = [...owned].sort((a, b) => valOf(a) - valOf(b) || (a < b ? -1 : 1));
+				const drop = asc[Math.floor(asc.length * rng() * rng())]; // squared rng: low-value skew
+				const afterDrop = sel.filter(id => id !== drop);
+				const free = affordableAdds(space, afterDrop);
+				if (!free.length) { sel = afterDrop; moved++; continue; } // nothing affordable: a pure sell
+				const desc = [...free].sort((a, b) => valOf(b.id) - valOf(a.id) || (a.id < b.id ? -1 : 1));
+				const take = desc[Math.floor(desc.length * rng() * rng())]; // random, better end weighted
+				sel = applyMove(space, afterDrop, [], [take.id]);
+				moved++;
+			}
+			if (!moved && sel.length) sel = sel.slice(1); // never kick to the same build: sell something
+			const b = remember(refOf(sel));
+			assertFeasible(space, b.selection); // affordableAdds/applyMove keep budget + one-per-group
+			return b;
+		};
+		const screenWaves = async (inc: BuildRefLite, moves: FMove[], tag: string): Promise<{ best: BanditOutcome | null; unresolved: number }> => {
+			let best: BanditOutcome | null = null;
+			let unresolved = 0;
+			let cut = false;
+			for (let w0 = 0; w0 < moves.length; w0 += CLIMB_WAVE) {
+				if (w0 > 0 && climbOut()) { cut = true; break; } // budget/Stop mid-round: nothing this round is certified
+				const wave = moves.slice(w0, w0 + CLIMB_WAVE);
+				// Per-wave rung ceiling: the ladder may never outgrow the restart's
+				// remaining climb budget — the bandit cannot check races mid-ladder,
+				// so the budget is converted into a per-candidate seed cap here.
+				const remain = cfg.climbRaces - (ev.racesRun() - climbRaces0);
+				const rungCeil = Number.isFinite(remain)
+					? Math.min(climbRungCeil, Math.max(BANDIT_CHUNK_SIZE * 5, Math.floor(remain / (wave.length + 1))))
+					: climbRungCeil;
+				const dropOf = new Map<string, string>();
+				const addedOf = new Map<string, { opt: string; replaced?: string; extraDrop?: string; pairWith?: string }>();
+				for (const mv of wave) {
+					if (mv.adds.length === 0 && mv.drops.length === 1) dropOf.set(mv.b.id, mv.drops[0]);
+					else if (mv.adds.length === 1) addedOf.set(mv.b.id,
+						mv.drops.length >= 2 ? { opt: mv.adds[0], replaced: mv.drops[0], extraDrop: mv.drops[1] }
+							: mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
+					else if (mv.adds.length === 2) addedOf.set(mv.b.id, mv.drops.length === 1
+						? { opt: mv.adds[0], pairWith: mv.adds[1], replaced: mv.drops[0] }
+						: { opt: mv.adds[0], pairWith: mv.adds[1] });
+				}
+				emit('local', `${tag} · ${Math.min(w0 + CLIMB_WAVE, moves.length)}/${moves.length} moves screened`, provisional(inc));
+				const bres = await banditVsIncumbent(ev, {
+					ns: NS_SEARCH, scenarioIdx: si, incumbent: inc,
+					candidates: wave.map(m => m.b), pick: searchPick, cfg,
+					rungMin: BANDIT_CHUNK_SIZE, rungCeil,
+					maxAlive: wave.length, lucbCut: false,
+				});
+				applyMeasured(bres.measured, dropOf, addedOf);
+				for (const out of bres.measured) surrHarvest(out.build);
+				for (const out of bres.measured) {
+					// Adopt: a significant improvement (Z-CI lower bound above 0,
+					// at least two common seeds).
+					if (out.diff.n >= 2 && out.diff.ci95[0] > 0) {
+						if (!best || out.diff.mean > best.diff.mean) best = out;
+						continue;
+					}
+					// Certifiably hopeless: the ladder's own optimism β(n) — never
+					// below Z — already puts the optimistic Δ under δ_min (that is
+					// what a δ-zone drop means). Anything else (still alive at the
+					// ceiling, or never measured) blocks certification.
+					const upb = out.diff.mean + betaOf(out.diff.n) * (out.diff.sem || 0);
+					if (out.diff.n < 2 || upb >= cfg.deltaMinL) unresolved++;
+				}
+				// A candidate that errored out of `measured` cannot be certified either.
+				unresolved += Math.max(0, wave.length - bres.measured.length);
+				if (best) break; // significant improver: adopt without screening the rest
+			}
+			if (cut) unresolved = Math.max(unresolved, 1); // an unscreened round certifies nothing
+			surrHarvest(inc);
+			surrRefit();
+			return { best, unresolved };
+		};
+		const climbToPeak = async (startX: BuildRefLite, tag: string): Promise<{ X: BuildRefLite; p1: boolean; p2: boolean }> => {
+			let Xc = startX;
+			const adopt = (out: BanditOutcome): void => {
+				Xc = remember(out.build);
+				assertFeasible(space, Xc.selection); // §3.B.1: X stays affordable at every adoption
+				for (const id of Xc.selection) histAdopted.add(id);
+				traceAdopt(Xc, 'climb');
+			};
+			for (;;) {
+				if (climbOut()) return { X: Xc, p1: false, p2: false };
+				const moves = n1Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted, surrScore(Xc));
+				if (!moves.length) return { X: Xc, p1: true, p2: true }; // degenerate space: X is the only build
+				const r = await screenWaves(Xc, moves, tag);
+				if (r.best) { adopt(r.best); continue; }
+				if (r.unresolved > 0) {
+					dbg(`  ${tag}: ${r.unresolved} N1 candidate(s) unresolved at the ${climbRungCeil}-seed ceiling — the zone stopped separating; kept uncertified`);
+					return { X: Xc, p1: false, p2: false };
+				}
+				// Certified N1 peak (§C). Screen the recommendation against N2.
+				const n2 = n2Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted);
+				if (!n2.length) return { X: Xc, p1: true, p2: true };
+				if (climbOut()) return { X: Xc, p1: true, p2: false };
+				const r2 = await screenWaves(Xc, n2, `${tag} N2`);
+				if (r2.best) { adopt(r2.best); continue; } // a 2-for-2 improves: re-climb from there
+				return { X: Xc, p1: true, p2: r2.unresolved === 0 };
+			}
+		};
+		let peak = await climbToPeak(X, `restart ${s + 1}/${startBuilds.length} climb`);
+		let kickIdx = 0;
+		while (peak.p1 && kickIdx < cfg.kicks && !climbOut()) {
+			const Xk = makeKick(peak.X, kickIdx);
+			kickIdx++;
+			// Degenerate space (nothing kickable): the kick could not change the
+			// build, so no later kick can either — stop kicking this restart.
+			if (Xk.id === peak.X.id) { dbg('  ILS kick impossible (nothing owned), stopping'); break; }
+			emit('local', `restart ${s + 1}/${startBuilds.length} ILS kick ${kickIdx}${Number.isFinite(cfg.kicks) ? `/${cfg.kicks}` : ''}`, provisional(Xk));
+			const r = await climbToPeak(Xk, `restart ${s + 1} kick ${kickIdx} climb`);
+			// Accept only a certified peak that beats the current one
+			// significantly (§C); anything else falls back to the old peak.
+			if (r.p1 && (await significantBetter(r.X, peak.X))) {
+				dbg('  ILS kick accepted', r.X.id || '(base)');
+				peak = r;
+			} else dbg('  ILS kick rejected');
 		}
+		X = peak.X;
 		remember(X);
 		restartEnds.push(X);
 		traceRestartEnd(X);
+		peakCerts.set(X.id, { p1: peak.p1, p2: peak.p2 });
 	}
 	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
@@ -738,11 +885,18 @@ async function verifyAcross(
 	}
 	assertFeasible(space, best.build.selection);
 	assertOnePerGroup(space, best.build.selection);
+	// §C certificates: only carry through when every scenario agreed on the same
+	// best build AND certified it (conservative — a tie-break across scenarios
+	// with different peaks certifies nothing).
+	const certsOf = (key: 'p1' | 'p2'): boolean =>
+		per.every(r => r.best.build.id === best.build.id && (key === 'p1' ? r.certified1MovePeak : r.certified2MovePeak));
 	return {
 		best, shortlist: rows, noise: per[0].noise,
 		verificationSeeds: n,
 		searchSeedsPerScenario: per.reduce((m, r) => Math.max(m, r.searchSeedsPerScenario), 0),
 		stoppedEarly: ctrl.stopped(),
+		certified1MovePeak: certsOf('p1'),
+		certified2MovePeak: certsOf('p2'),
 		orderingCorrelation: per[0].orderingCorrelation,
 	};
 }
@@ -790,13 +944,12 @@ function evPairedBest(ev: SearchEvaluator, si: number, best: BuildRefLite, b: Bu
 	return ev.paired(NS_VERIFY, si, best, b, pick);
 }
 
-/** Bandit batch width for Stage F local search (kept modest so each move
- *  gets a meaningful rung before the batch cap; the plan caps by value). */
-const F_BATCH_MAX = 14;
-/** Hard ceiling on generated moves before batching (keeps the O(K·F) sweep
- *  bounded; the top-F_BATCH_MAX by estimate are what get evaluated). */
-const F_MOVE_CAP = 60;
+// ── §C move space: the climb's full N1 + the recommendation's N2 ─────────────
 
+/** A candidate move relative to the current build X: the resulting build plus
+ *  its own drops/adds (post group-exclusivity) and the acquisition estimate.
+ *  The estimate only sequences screening waves — it never excludes a move
+ *  (§C: an additive estimate is too noisy AND biased to drop moves by). */
 interface FMove { b: BuildRefLite; est: number; drops: string[]; adds: string[]; }
 
 /** Apply a move (drop ids then add ids) to a selection, honouring group
@@ -814,15 +967,17 @@ function applyMove(space: BuildSpace, sel: readonly string[], drops: readonly st
 	return out.sort();
 }
 
-/** Enumerate the feasible Stage-F neighbourhood of X (§8F), ordered best
- *  first. With a live surrogate (§8 E) the estimate is the acquisition score
- *  `predicted gain + κ·SE` and moves are pruned when their optimistic bound
- *  `prediction + κ_prune·SE` can't beat X's actual ℓ by δ_min — α/β with error
- *  bars. Without one, fall back to Σ ctxVal_added − Σ ctxVal_removed (§8D)
- *  pruned at δ_min. A history heuristic nudges skills that paid off earlier. */
-function fMoves(
+/** Shared tail of the move generators: canonicalize, dedup, budget-gate
+ *  (feasibility is the only filter, §13.3), estimate, and order deterministically.
+ *  The estimate — surrogate acquisition `predicted gain + κ·SE` (§8 E) when the
+ *  model clears the R² gate, else Σ ctxVal_added − Σ ctxVal_removed with a
+ *  history nudge for skills that paid off earlier — sequences screening waves
+ *  only. Nothing is pruned by it: §C put an end to estimate-based pruning
+ *  (the additive estimate is too noisy AND biased; bug §B.1). */
+function movesFrom(
 	space: BuildSpace,
 	X: BuildRefLite,
+	raw: readonly { drops: string[]; adds: string[] }[],
 	ctxVal: (id: string) => number,
 	deltaMinL: number,
 	hist: ReadonlySet<string>,
@@ -830,31 +985,6 @@ function fMoves(
 ): FMove[] {
 	const Xsel = X.selection;
 	const seen = new Set<string>([X.id]);
-	const free = space.options.filter(o => !o.forced && !Xsel.includes(o.id));
-	const owned = Xsel.filter(id => !space.byId.get(id)?.forced);
-	const pos = [...free].filter(o => ctxVal(o.id) > 0).sort((a, b) => ctxVal(b.id) - ctxVal(a.id));
-	const raw: { drops: string[]; adds: string[] }[] = [];
-	// 1. single adds
-	for (const j of free) raw.push({ drops: [], adds: [j.id] });
-	// 2. single drops
-	for (const i of owned) raw.push({ drops: [i], adds: [] });
-	// 3. replaces: 1-for-1 (cross-group swap; same-group = tier move)
-	for (const i of owned) for (const j of free) raw.push({ drops: [i], adds: [j.id] });
-	// 4. pair adds among the strongest positive options
-	for (let a = 0; a < pos.length && a < 3; a++) for (let c = a + 1; c < pos.length && c < 4; c++) if (pos[a].groupId !== pos[c].groupId) raw.push({ drops: [], adds: [pos[a].id, pos[c].id] });
-	// 5. pair removes within the build
-	for (let a = 0; a < owned.length; a++) for (let c = a + 1; c < owned.length; c++) raw.push({ drops: [owned[a], owned[c]], adds: [] });
-	// 6. uneven: drop one, add two strong (1-for-2)
-	for (const i of owned) {
-		const g2 = pos.filter(o => o.groupId !== space.byId.get(i)?.groupId).slice(0, 3);
-		for (let a = 0; a < g2.length; a++) for (let c = a + 1; c < g2.length; c++) if (g2[a].groupId !== g2[c].groupId) raw.push({ drops: [i], adds: [g2[a].id, g2[c].id] });
-	}
-	// 7. surrogate synergy pair adds (§8 E) — reach pairs the v⁰>0 flag misses.
-	if (surr) for (const syn of surr.model.synergyPairs(12, deltaMinL)) {
-		const A = space.byId.get(syn.a), C = space.byId.get(syn.b);
-		if (A && C && !A.forced && !C.forced && A.groupId !== C.groupId) raw.push({ drops: [], adds: [A.id, C.id] });
-	}
-
 	const predX = surr ? surr.model.predict(Xsel) : null;
 	const out: FMove[] = [];
 	for (const mv of raw) {
@@ -869,18 +999,95 @@ function fMoves(
 		if (surr && predX) {
 			const pred = surr.model.predict(sel);
 			const se = Math.sqrt(pred.se * pred.se + predX.se * predX.se);
-			if (surr.model.covers(sel) && pred.mean + PRUNE_KAPPA * se < surr.xL + deltaMinL) continue; // α/β with error bars (§8F)
 			est = (pred.mean - predX.mean) + KAPPA * se;                      // acquisition ordering (§8 E)
 			for (const id of added) if (hist.has(id)) est += deltaMinL;        // history tiebreak (§8F)
 		} else {
 			est = 0;
 			for (const id of added) est += ctxVal(id) + (hist.has(id) ? deltaMinL : 0); // history heuristic (§8F)
 			for (const id of removed) est -= ctxVal(id);
-			if (est <= deltaMinL) continue;                                    // optimistic prune (§8F)
 		}
 		out.push({ b, est, drops: removed, adds: added });
 	}
-	return out
-		.sort((a, b) => b.est - a.est || (a.b.id < b.b.id ? -1 : 1))
-		.slice(0, F_MOVE_CAP);
+	return out.sort((a, b) => b.est - a.est || (a.b.id < b.b.id ? -1 : 1));
+}
+
+/**
+ * The FULL N1 neighbourhood of X (§C): drop, add, swap (cross-group; same-group
+ * = tier move), 2-for-1 (every owned pair out, every free option in — this is
+ * the upgrade-and-sell shape: sell a filler, buy the higher tier), 1-for-2
+ * (every owned option out, every affordable pair of free options in), and the
+ * SP refill move (a drop followed by its best affordable add — it is one of the
+ * swaps, so it is enumerated too). Everything budget-feasible must be reachable
+ * in one move: no move caps, no estimate pruning — the bandit's indifference
+ * zone (§D) screens, nothing else decides what deserves seeds.
+ */
+function n1Moves(
+	space: BuildSpace,
+	X: BuildRefLite,
+	ctxVal: (id: string) => number,
+	deltaMinL: number,
+	hist: ReadonlySet<string>,
+	surr?: { model: SurrogateModel; xL: number },
+): FMove[] {
+	const Xsel = X.selection;
+	const free = space.options.filter(o => !o.forced && !Xsel.includes(o.id));
+	const owned = Xsel.filter(id => !space.byId.get(id)?.forced);
+	const raw: { drops: string[]; adds: string[] }[] = [];
+	// add (includes refills: an add is a drop's other half done the other way)
+	for (const j of free) raw.push({ drops: [], adds: [j.id] });
+	// drop
+	for (const i of owned) raw.push({ drops: [i], adds: [] });
+	// swap: 1-for-1 (cross-group; same-group = tier move; the refill move)
+	for (const i of owned) for (const j of free) raw.push({ drops: [i], adds: [j.id] });
+	// 2-for-1 / upgrade-and-sell: every owned pair out, every free option in
+	for (let a = 0; a < owned.length; a++) for (let c = a + 1; c < owned.length; c++)
+		for (const j of free) raw.push({ drops: [owned[a], owned[c]], adds: [j.id] });
+	// 1-for-2: every owned option out, every distinct-group pair in. The pair
+	// may include i's own group — dropping i leaves that group open, and
+	// "sell i, buy its better tier plus a filler" is part of the §C vocabulary.
+	for (const i of owned)
+		for (let a = 0; a < free.length; a++) for (let c = a + 1; c < free.length; c++)
+			if (free[a].groupId !== free[c].groupId)
+				raw.push({ drops: [i], adds: [free[a].id, free[c].id] });
+	return movesFrom(space, X, raw, ctxVal, deltaMinL, hist, surr);
+}
+
+/** The §C final-recommendation screen: every feasible 2-for-2 swap among the 8
+ *  lowest-value owned options × the 8 best free options (the move class beyond
+ *  N1 worth checking before reporting the peak). */
+function n2Moves(
+	space: BuildSpace,
+	X: BuildRefLite,
+	ctxVal: (id: string) => number,
+	deltaMinL: number,
+	hist: ReadonlySet<string>,
+): FMove[] {
+	const Xsel = X.selection;
+	const owned = Xsel.filter(id => !space.byId.get(id)?.forced);
+	const free = space.options.filter(o => !o.forced && !Xsel.includes(o.id));
+	const low = [...owned].sort((a, b) => ctxVal(a) - ctxVal(b) || (a < b ? -1 : 1)).slice(0, 8);
+	const best = [...free].sort((a, b) => ctxVal(b.id) - ctxVal(a.id) || (a.id < b.id ? -1 : 1)).slice(0, 8);
+	const raw: { drops: string[]; adds: string[] }[] = [];
+	for (let a = 0; a < low.length; a++) for (let c = a + 1; c < low.length; c++)
+		for (let x = 0; x < best.length; x++) for (let y = x + 1; y < best.length; y++)
+			if (space.byId.get(best[x].id)?.groupId !== space.byId.get(best[y].id)?.groupId)
+				raw.push({ drops: [low[a], low[c]], adds: [best[x].id, best[y].id] });
+	return movesFrom(space, X, raw, ctxVal, deltaMinL, hist);
+}
+
+/** Deterministic PRNG for ILS kicks (P6): FNV-1a over the build identity +
+ *  restart + kick index, then mulberry32. */
+function fnv1a(s: string): number {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+	return h >>> 0;
+}
+function mulberry32(seed: number): () => number {
+	let a = seed >>> 0;
+	return () => {
+		a = (a + 0x6D2B79F5) | 0;
+		let t = Math.imul(a ^ (a >>> 15), 1 | a);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
 }

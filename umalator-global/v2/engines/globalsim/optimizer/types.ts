@@ -130,6 +130,12 @@ export interface OptimizerResult {
 	searchSeedsPerScenario: number;
 	/** True when Stop truncated the run (results are the short Stage G). */
 	stoppedEarly: boolean;
+	/** §C certificate: every feasible N1 move (drop, add, swap, 2-for-1, 1-for-2)
+	 *  had its upper confidence bound on Δ vs the recommendation below δ_min. */
+	certified1MovePeak: boolean;
+	/** §C certificate: the N2 screen (2-for-2 swaps among the 8 lowest-value owned
+	 *  × the 8 best free options) was also screened clean. */
+	certified2MovePeak: boolean;
 	/** ℓ-rank vs P(1st)-rank agreement on the shortlist (plan §6.1 debug log). */
 	orderingCorrelation?: number;
 }

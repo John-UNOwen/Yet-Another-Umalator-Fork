@@ -6,14 +6,20 @@
  * Effort presets (plan §11 table; G seeds and batch cap re-sized from the
  * paired noise record, README.md 2026-11-16 — the presets run paired):
  *
- * |              | Quick        | Standard (default) | Thorough          |
- * | δ_min (L)    | 0.05         | 0.03               | 0.02              |
- * | K restarts   | 1            | 3                  | 5                 |
- * | D_MAX_ITERS  | 1            | 4                  | 6                 |
- * | Beam B       | —            | —                  | 6                 |
- * | G seeds      | 200 / 800    | 500 / 2,000        | 1,000 / 4,000     |
- * | batch cap    | 400          | 1,000              | 2,000             |
- * | surrogate    | off          | on                 | on                |
+ * |              | Quick        | Standard (default) | Thorough           |
+ * | δ_min (L)    | 0.05         | 0.03               | 0.02               |
+ * | K restarts   | 1            | 3                  | 5                  |
+ * | D_MAX_ITERS  | 1            | 4                  | 6                  |
+ * | ILS kicks    | 0            | 4                  | 10                 |
+ * | G seeds      | 200 / 800    | 500 / 2,000        | 1,000 / 4,000      |
+ * | batch cap    | 400          | 1,000              | 2,000              |
+ * | surrogate    | off          | on                 | on                 |
+ *
+ * The §C certified local search has no round cap: a restart's climb runs until
+ * every N1 move's upper bound sits under δ_min (or the indifference zone stops
+ * resolving at this noise), then ILS kicks re-climb. What bounds it instead is
+ * the preset time budget and the per-restart climbRaces budget (§C: "keep race
+ * budgets instead").
  *
  * `untilStopped` runs at Thorough sizes with no wall-clock deadline: the loop
  * keeps iterating local search and extends Stage G verification up to
@@ -32,10 +38,13 @@ export interface EffortConfig {
 	restarts: number;
 	/** Stage D re-pick rounds. */
 	dMaxIters: number;
-	/** Stage F local-search rounds per restart (0 = Stage F off, as in Quick). */
-	fMaxRounds: number;
-	/** Stage F beam width (0 = plain hill climb). */
-	beam: number;
+	/** ILS kicks per restart after a certified peak (§C). 0 = climb only,
+	 *  Infinity = kick until Stop / the time budget ends it (untilStopped). */
+	kicks: number;
+	/** Race budget for one restart's certified local search + ILS (§C: "keep
+	 *  race budgets instead" of a round cap). The climb stops and keeps its best
+	 *  (un-certified) build once the restart's search races exceed this. */
+	climbRaces: number;
 	/** Stage G verification seeds: minimum per scenario, then hard cap. */
 	gSeedsMin: number;
 	gSeedsCap: number;
@@ -77,7 +86,14 @@ const SCREEN_COMMON = {
 
 export const QUICK: EffortConfig = {
 	preset: 'quick',
-	deltaMinL: 0.05, restarts: 1, dMaxIters: 1, fMaxRounds: 0, beam: 0,
+	deltaMinL: 0.05, restarts: 1, dMaxIters: 1, kicks: 0, climbRaces: 40_000,
+	// climbRaces (§C): the per-restart race budget for the certified climb +
+	// ILS (the "race budgets instead of a round cap" control). Sized per
+	// preset from the wall-clock budget at ~1,000 races/s (8 threads): Quick
+	// 60 s ≈ 60k races, ~40k to one climb. A realistic-size N1 (1–3.7k
+	// candidates) needs ~100–250k per certification round alone, so Quick only
+	// certifies small pools — the anytime rule returns the best so far and the
+	// cert flags say so honestly.
 	// Paired record σΔ = 0.16 L: (2·1.96·0.16/0.05)² = 158 seeds resolve δ_min,
 	// rounded up to 200; the cap is 4× (resolves δ_min/2), batchCap 2× per
 	// candidate for multiple-comparison slack.
@@ -87,18 +103,25 @@ export const QUICK: EffortConfig = {
 
 export const STANDARD: EffortConfig = {
 	preset: 'standard',
-	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, fMaxRounds: 3, beam: 0,
+	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, kicks: 4, climbRaces: 80_000,
 	// Same sizing as Quick at δ_min = 0.03: (2·1.96·0.16/0.03)² = 437, rounded
-	// up to 500; cap 4× (0.014 L), batchCap 2×.
+	// up to 500; cap 4× (0.014 L), batchCap 2×. climbRaces 80k × 3 restarts ≈
+	// 240k of the ~300k budget at 5 min; a full certified climb + 4 ILS kicks
+	// measures 450–700k per restart on realistic pools, so Standard certifies
+	// small/medium pools and returns an honest uncertified best (with the
+	// best-so-far guarantee) on large ones. Thorough runs the full loop.
 	gSeedsMin: 500, gSeedsCap: 2000, batchCap: 1000, surrogate: true,
 	timeBudgetMs: 5 * 60_000, ...SCREEN_COMMON,
 };
 
 export const THOROUGH: EffortConfig = {
 	preset: 'thorough',
-	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, fMaxRounds: 4, beam: 6,
+	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, kicks: 10, climbRaces: 180_000,
 	// Same sizing at δ_min = 0.02: (2·1.96·0.16/0.02)² = 983, rounded up to
-	// 1000; cap 4× (0.010 L), batchCap 2×.
+	// 1000; cap 4× (0.010 L), batchCap 2×. climbRaces 180k × 5 restarts ≈ 900k
+	// of the ~1.2M budget at 20 min — enough for a certification round plus a
+	// few ILS re-climbs per restart at realistic sizes (measured §C numbers in
+	// the README; the acceptance run itself is budget-unbounded).
 	gSeedsMin: 1000, gSeedsCap: 4000, batchCap: 2000, surrogate: true,
 	timeBudgetMs: 20 * 60_000, ...SCREEN_COMMON,
 };
@@ -106,7 +129,7 @@ export const THOROUGH: EffortConfig = {
 /** Thorough sizes, no deadline, verification grows to the cap. */
 export const UNTIL_STOPPED: EffortConfig = {
 	preset: 'untilStopped',
-	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, fMaxRounds: 4, beam: 6,
+	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, kicks: Infinity, climbRaces: Infinity,
 	// THOROUGH's sizes (paired record, see its comment), unbounded in time.
 	gSeedsMin: 1000, gSeedsCap: 4000, batchCap: 2000, surrogate: true,
 	timeBudgetMs: Infinity, ...SCREEN_COMMON,
@@ -144,6 +167,11 @@ export const BANDIT_START_SEEDS = 50;
  *  reports it (capCut) and search.ts logs it: a capped batch means the
  *  indifference zone stopped separating this neighbourhood. */
 export const BANDIT_MAX_ALIVE = 40;
+/** §C: candidates screened per bandit batch in the certified climb. The batch's
+ *  alive cap is raised to the wave size, so the indifference zone alone sizes
+ *  the alive set, capCut stays 0, and a wave ending with all survivors
+ *  zone-dropped really certifies its candidates. */
+export const CLIMB_WAVE = 128;
 /** Floor on one candidate's growth per bandit round (§D.2): 8 threads (the
  *  8-core sizing machine of the presets) × the pool chunk (CHUNK_SIZE = 25),
  *  so a growth batch hands every worker at least one full chunk even with a

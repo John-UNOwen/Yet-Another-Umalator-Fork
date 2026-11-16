@@ -24,18 +24,30 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
 - `surrogate.ts` — Bayesian ridge on cached build ℓ: per-option indicators +
   pair-interaction terms (co-occurring ≥ m builds, capped by |coef|), closed-form
   posterior, weighted 5-fold holdout R², synergy flags (§8 E). Drives Stage D/F
-  move ordering (acquisition gain + κ·SE) and α/β-with-error-bars pruning
-  below the R²=0.3 gate it falls back to in-context values; it only ever
-  decides what to simulate (P1) and never prunes an option it hasn't learned
+  move ordering (acquisition gain + κ·SE); below the R²=0.3 gate it falls back to
+  in-context values; it only ever decides what to simulate (P1) and what order to
+  screen it in — §C removed its bound-pruning from the Stage-F move space (a move
+  may only die to the indifference zone; the Δ-SE bound prune is §I work)
 - `search.ts` — Stages A–F + G orchestration (anytime): opening-book starts,
   chart-parity screening, MCKP restarts, in-context drop/add/replace/pair moves
   with bandit allocation and knapsack re-solve (ℓ is the search currency, §6.1),
-  a Stage-F local search over richer 1-1/1-2/2-1/pair moves (history heuristic,
-  budget-feasible neighbourhood, adopt-only-significant, surrogate-ordered,
-  beam-capable), fresh-seed Stage G verification with honest ties. Across a
-  scenario set (§6.3) it searches each scenario independently then re-verifies
-  the merged shortlist across all of them, ranked by mean / maximin / blend
-  (aggregateValues, §6.4) with conservative (all-scenarios-must-agree) ties
+  Stage F = §C certified local search: every round enumerates the full feasible
+  N1 (drop, add, swap/tier-move, 2-for-1 incl. upgrade-and-sell, 1-for-2 — no
+  caps, no estimate pruning) and screens the waves with the bandit's
+  indifference zone (rival cut off, alive cap raised to the wave, the ladder
+  capped at the measured σΔ's δ-resolve count); a round adopts one significant
+  improver or certifies the peak (every UCB < δ_min) or reports the zone
+  stopped resolving; after a certified peak, ILS kicks (Quick 0, Standard 4,
+  Thorough 10, untilStopped unbounded; k = 2–4 random feasible swaps biased to
+  low in-build value) re-climb and are accepted only on a significantly better
+  paired Δ; the final peak is screened against N2 (2-for-2, 8 lowest-value
+  owned × 8 best free). No round cap — the preset time budget and the
+  per-restart climbRaces race budget bound it, and the result carries
+  `certified1MovePeak` / `certified2MovePeak`. Then fresh-seed Stage G
+  verification with honest ties. Across a scenario set (§6.3) it searches each
+  scenario independently then re-verifies the merged shortlist across all of
+  them, ranked by mean / maximin / blend (aggregateValues, §6.4) with
+  conservative (all-scenarios-must-agree) ties
 - `book.ts` — opening book in localStorage (`umalator_v2_optimizer_book`):
   prior strong builds keyed by a coarse (course · distance band · strategy ·
   mob preset · ground) fingerprint, best-effort (never fatal), and only ever
@@ -71,7 +83,13 @@ replaces that sizing), and screening therefore ranks by
 Throughput (globalsim-wasm/README.md): 6.3–9.4 ms per 9-runner race in Chrome
 → ~1,000 races/s at 8 threads; a Standard run is ~110–180k races ≈ 2–3 min
 (§10). Recompute with `npm run test:optimizer` (the calibration test prints
-fresh numbers).
+fresh numbers). Note (§C, measured 2026-12-05 on the realistic instances): a
+full certified climb re-screens the whole feasible N1 — 1,000–3,700 candidates
+at those sizes, ~100–250k races per certification round — so a Standard-scale
+run with ILS lands near 1–2M races, well over the §10 band (which predates the
+full N1). The preset budgets are the control: `climbRaces` per restart bounds
+the climb, `timeBudgetMs` bounds the run, and the anytime rule keeps the best
+so far valid when either ends it mid-climb (that round just is not certified).
 
 Paired-mode re-measurement (2026-11-16, native `race_engine_rs_v2.exe`, same
 course and mob field, 15-skill base + 12 single-skill adds, 1000 seeds per
@@ -163,24 +181,36 @@ sizing comes from the paired record above; the arithmetic is in the
   affordable/one-per-group seed filter) + the synthetic oracle
   (`search.oracle.test.ts`: 100 small instances fully enumerated, recommendation
   must be the optimum, within δ_min, or a statistical tie — gate ≥95%; 5 medium
-  30–40-option instances vs a random-restart + exhaustive hill-climb baseline; a
-  Stage-F beam check; the surrogate on/off race comparison; and the §6.4 scenario
+  30–40-option instances vs a random-restart + exhaustive hill-climb baseline;
+  the surrogate on/off race comparison; and the §6.4 scenario
   set — `aggregateValues` formulas plus a two-scenario maximin-vs-mean run whose
   optimum moves between scenarios). Gaussian noise is calibrated to the σ table
   above — a shared field term that cancels in pairing + a per-build term that
   survives it, CRN per position. The oracle's second-scenario weight is derived
   from the pair ids, not the RNG, so scenario 0 stays byte-identical to the
   single-scenario run (its 95% gate is unaffected by the scenario work).
+- `search.realistic.test.ts` — the §C acceptance gate on 12 realistic instances
+  (~30 families, budget ≈ 20 skills, exact reference optimum from annealing +
+  full 1+2-move ascent): at post-fix (paired) noise — mean gap ≤ 0.02 L, ≥90%
+  within δ_min, no certified peak with an improvement ≥ δ_min left, and every
+  run inside the preset-derived race budget. Peak status asserts at δ_min
+  resolution (an improving move counts only if its gain > δ_min): the strict
+  "no improving move at all" reading is not achievable at any finite budget —
+  at σΔ ≈ 0.21 L the indifference zone drops a gain Δ at n ≈ 1.96·σΔ·√300/
+  (δ_min−Δ) seeds, before its significance test at n = (1.96·σΔ/Δ)² could
+  resolve it, so every strict miss measured so far is a sub-δ_min gain (the
+  table prints both readings and the largest miss). The today-noise setting
+  (σΔ ≈ 1.1 L) is reported for the record with regression floors: certifying a
+  full N1 there needs ~20k seeds per candidate, far past any sane budget, so
+  the climb stops uncertified and ILS never starts.
 
 Surrogate race findings (measured, in-suite): at the engine's real noise band the
 posterior SE is too wide to certify any move hopeless, so the surrogate is
-quality-safe but race-neutral (its acquisition only reshuffles the search).
-Once the model is trustworthy (large cache / low variance) its α/β pruning cuts
-~20% of search races with zero quality loss. The plan's ≤70%-of-Phase-3 target is
-production-scale (a real Standard run is Stage-D+F-bound); this harness's fixed
-Stage-B screening and the bandit's per-candidate seed floor hold the synthetic
-ratio above it — the assertion pins the always-holds property (real cut, no
-quality loss), not the aspiration.
+quality-safe but race-neutral (its acquisition only reshuffles the search; the
+on/off ratio measures 0.98). §C removed bound-pruning from the Stage-F move
+space (only the indifference zone may retire a move), so today the surrogate
+orders waves but cuts nothing; the future race lever is §I's certified Δ-SE
+bound. The plan's ≤70%-of-Phase-3 target stays production-scale.
 
 - `npm run test:optimizer:slow` — real-engine exhaustive check: 3 setups ×
   ~12 purchasable options, every affordable build enumerated on the SAME
