@@ -357,10 +357,16 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			};
 			// §6.3 scenario set: scenario 0 is the current setup; the robustness
 			// variants re-run the SAME mob field on different footing.
+			// Variants are the nearest footings first (GroundCondition.Good is
+			// FIRM, Yielding is "Good"): Firm → Good, Soft; Soft → Good, Heavy.
+			const cur = Number(conditions.ground);
 			const grounds = [conditions.ground];
-			for (const g of [GroundCondition.Good, GroundCondition.Soft, GroundCondition.Heavy]) {
+			const nearest = [GroundCondition.Good, GroundCondition.Yielding, GroundCondition.Soft, GroundCondition.Heavy]
+				.filter((g) => g !== cur)
+				.sort((a, b) => Math.abs(a - cur) - Math.abs(b - cur) || a - b);
+			for (const g of nearest) {
 				if (grounds.length >= robustness) break;
-				if (!grounds.includes(g)) grounds.push(g);
+				grounds.push(g);
 			}
 			const scenarios: ScenarioSpec[] = grounds.map((g, i) => {
 				const gc = { ...conds, ground: g as ChartRaceConditions['ground'] };
