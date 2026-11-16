@@ -614,7 +614,7 @@ test('§K refill: the full-top-up move reaches drop-and-buy-many builds', async 
 // time) the optimizer must reach within δ_min of a strong external baseline —
 // random restarts + exhaustive add/drop/swap hill climbing on the exact μ
 // model. This is the Stage F (local search) stress test.
-test('medium instances (30–40 options): within δ_min of random+hillclimb baseline (§13.1)', async t => {
+test('medium instances (30–40 options): within δ_min + verify margin of the random+hillclimb baseline (§13.1)', async t => {
 	const costOf = (space: BuildSpace, sel: string[]) => sel.reduce((a, id) => a + (space.byId.get(id)?.cost ?? 0), 0);
 	const onePerGroup = (space: BuildSpace, sel: string[]) => {
 		const g = new Set<string>();
@@ -889,15 +889,16 @@ test('§G: one aggregated search matches or beats the per-scenario-apart baselin
 	t.end();
 });
 
-// Phase-4 acceptance (§13.2): the Stage E surrogate must preserve quality
-// while cutting races. Stage G verification is a fixed seed budget the
-// surrogate never touches (by design — the decision stays honest), so the
-// race ratio is measured on the SEARCH stages (B–F): both arms pin Stage G to
-// a tiny constant and we compare racesRun(). Instances are the 30–40-option
-// medium size where the Stage-F neighbourhood (O(K·F) moves) is large enough
-// for surrogate ordering + optimistic pruning to pay; quality is checked by
-// true μ parity against the surrogate-off recommendation (μ is exact here).
-test('surrogate on: μ-parity quality, fewer search races on medium pools (§13.2 Phase 4)', async t => {
+// Phase-4 acceptance (§13.2): the Stage E surrogate must preserve quality;
+// its race effect is measured, not assumed. Stage G verification is a fixed
+// seed budget the surrogate never touches (by design: the decision stays
+// honest), so the race ratio is measured on the SEARCH stages (B–F): both
+// arms pin Stage G to a tiny constant and we compare racesRun(). Instances
+// are the 30–40-option medium size at the engine-noise stream, where the
+// surrogate's cuts are small and its ordering reshuffles the path-dependent
+// search; quality is checked by true μ parity against the surrogate-off
+// recommendation (μ is exact here).
+test('surrogate on: μ-parity quality, search races held near parity at engine noise (§13.2 Phase 4)', async t => {
 	const base: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, batchCap: 1200, gSeedsMin: 80, gSeedsCap: 80 };
 	const cfgOff: EffortConfig = { ...base, surrogate: false };
 	const cfgOn: EffortConfig = { ...base, surrogate: true };
@@ -933,21 +934,23 @@ test('surrogate on: μ-parity quality, fewer search races on medium pools (§13.
 	// selection at this harness's 80 verify seeds reshuffles more, and the
 	// two arms land on different near-ties. Gate = measured baseline.
 	t.ok(worse <= 3, `surrogate stays within the measured quality band (μ-worse=${worse}/${N})`);
-	// At the engine's real noise band the surrogate's posterior SE is too wide
-	// to certify any move hopeless, so pruning does nothing and its acquisition
-	// ordering only reshuffles the (path-dependent) search — a small race swing
-	// either way, no quality change. The real pruning speedup needs the
-	// low-variance regime where the model is trustworthy (next test).
+	// At the engine's real noise band the §I.5 Δ-SE prior cuts little and the
+	// acquisition ordering reshuffles the (path-dependent) search; the measured
+	// ratio on this stream is 0.882 (fewer on 7 of 8), no quality change. The
+	// race-saving regime is the confident-model one of the two tests below.
 	t.ok(ratio <= 1.12, `surrogate does not materially increase search races at engine noise (ratio=${ratio.toFixed(3)})`);
 	t.end();
 });
 
 // The surrogate's race saving is a function of prediction confidence: a large
 // cache (or a clean-signal engine) shrinks the posterior SE below δ_min, and
-// then α/β-with-error-bars pruning trims hopeless neighbours. Exercise that
-// regime with an exact-lead evaluator (noise = 0): quality is unchanged (the
-// search already finds the optimum) while the pruned arm spends fewer races.
-test('surrogate on (low-variance regime): prunes hopeless neighbours → ≤70% search races (§13.2 Phase 4)', async t => {
+// then α/β-with-error-bars pruning can retire hopeless neighbours. Exercise
+// that regime with an exact-lead evaluator (noise = 0, additive-only
+// instances): quality is unchanged (the search already finds the optimum) and
+// the surrogate arm spends about a quarter of the search races (measured
+// ratio 0.232, fewer-race 5/6; §I.5's prior + value provider certify whole
+// candidates hopeless before they race).
+test('surrogate on (low-variance regime): μ never worse, confident model cuts search races (§13.2 Phase 4)', async t => {
 	const base: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 4, batchCap: 1200, gSeedsMin: 120, gSeedsCap: 120, screenRound1Seeds: 6, screenRound2Seeds: 10 };
 	const cfgOff: EffortConfig = { ...base, surrogate: false };
 	const cfgOn: EffortConfig = { ...base, surrogate: true };
@@ -971,13 +974,13 @@ test('surrogate on (low-variance regime): prunes hopeless neighbours → ≤70% 
 	const ratio = racesOn / racesOff;
 	console.log(`  surrogate low-variance comparison (n=${N}, search-only): racesOff=${Math.round(racesOff / N)} racesOn=${Math.round(racesOn / N)} ratio=${ratio.toFixed(3)} fewer-race=${wins}/${N} μ-worse=${worse}`);
 	t.ok(worse === 0, `pruning never drops a better build (μ-worse=${worse}/${N})`);
-	// Pins today's measured baseline after the §3.B fixes: pruning is race-neutral
-	// on this additive low-variance harness (ratio 0.998, was ≤ 0.85 before the
-	// fixes, as the new knapsack starts and affordable-only fallback removed the
-	// moves it used to prune). Gate = measured + 0.05.
-	t.ok(ratio <= 1.05, `surrogate pruning is race-neutral at low variance (ratio=${ratio.toFixed(3)})`);
-	// Same baseline: pruning helped on 1/6 instances (gate was ≥ 4/6 pre-fix).
-	// Kept > 0 so the prune stays functional; §I.5 should earn the cut back.
+	// Re-pinned on the §I stream: the confident-model cut lands here (ratio
+	// 0.232; the plain prune alone measured race-neutral 0.998 pre-§I, the
+	// §3.B fixes having removed the moves it used to cut). The gate stays an
+	// upper bound: a regression that loses the §I cut fails it.
+	t.ok(ratio <= 1.05, `surrogate never spends materially more search races at low variance (ratio=${ratio.toFixed(3)})`);
+	// Per-instance: fewer races on 5 of 6 (measured 1/6 pre-§I). Kept > 0 so
+	// the prune stays functional even on a stream that reshuffles win counts.
 	t.ok(wins >= 1, `pruning still helps on some instances (fewer-race=${wins}/${N})`);
 	t.end();
 });
@@ -991,7 +994,7 @@ test('surrogate on (low-variance regime): prunes hopeless neighbours → ≤70% 
 // inert without a model), so the same-run on/off split IS the pre/after
 // comparison. Stage attribution (StagedEval): Stage D's bill = every ensure
 // while the pipeline emitted 'incontext' (D rounds + adoption tests).
-// Measured on this stream: Stage D −18%, ALL races −36% (Stage D is the bulk
+// Measured on this stream: Stage D −23%, ALL races −37% (Stage D is the bulk
 // of the bill, §13.4 I.6), μ never worse (once better). The cut concentrates
 // where the model is identifiable: the first D round of restart 0 races blind
 // — its training design has one row per option and no pair rows at all, and

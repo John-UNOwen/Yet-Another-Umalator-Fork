@@ -17,8 +17,9 @@
  *    ci95 via metrics — the only comparisons the pipeline ever makes;
  *  - objective math (§6.1): meanPlacing is sign-flipped so "bigger objective
  *    value = better build" holds everywhere above it;
- *  - noise calibration (§7.3) feeding seed budgets, the time estimate and the
- *    unit tests.
+ *  - noise calibration (§7.3): σ(ℓ) of the base sizes the §F lead clip, the
+ *    measured σΔ caps the §C climb's ladder growth (§D.4); the pair is
+ *    reported with the result and exercised by the unit tests.
  */
 
 import { Map as ImmMap } from 'immutable';
@@ -456,9 +457,12 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 
 /**
  * §7.3 noise calibration: base build + a few single adds on `cfg.noiseSeeds`
- * seeds → σ(ℓ) of the base and the PAIRED σ of ℓ differences (the number seed
- * budgets scale from). Runs in the SEARCH namespace — the screening stage
- * reuses these seeds from cache (never wasted).
+ * seeds → σ(ℓ) of the base and the PAIRED σΔ of ℓ differences. Both size the
+ * search (search.ts: σ(ℓ) the §F lead clip, σΔ the §C climb's ladder ceiling),
+ * and the pair ships in the result for the pane. The presets' seed counts are
+ * not sized here; those come from the paired calibration record in README.md.
+ * Runs in the SEARCH namespace — the screening stage reuses these seeds from
+ * cache (never wasted).
  */
 export async function calibrateNoise(
 	ev: SearchEvaluator, cfg: EffortConfig, si: number,

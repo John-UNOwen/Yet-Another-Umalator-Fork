@@ -27,7 +27,7 @@ seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
   move ordering (acquisition gain + κ·SE); below the R²=0.3 gate it falls back to
   in-context values; it only ever decides what to simulate (P1) and what order to
   screen it in — §C removed its bound-pruning from the Stage-F move space (a move
-  may only die to the indifference zone; the Δ-SE bound prune is §I work)
+  may only die to the indifference zone or §I.5's certified Δ-SE prior)
 - `search.ts` — Stages A–F + G orchestration (anytime): opening-book starts,
   chart-parity screening, MCKP restarts, in-context drop/add/replace/pair moves
   with bandit allocation and knapsack re-solve (the search currency, §6.1 + §F:
@@ -89,8 +89,10 @@ replaces that sizing), and screening therefore ranks by
 
 Throughput (globalsim-wasm/README.md): 6.3–9.4 ms per 9-runner race in Chrome
 → ~1,000 races/s at 8 threads; a Standard run is ~110–180k races ≈ 2–3 min
-(§10). Recompute with `npm run test:optimizer` (the calibration test prints
-fresh numbers). Note (§C, measured 2026-12-05 on the realistic instances): a
+(§10). The calibration smoke test in `npm run test:optimizer` prints 40-seed
+numbers on a skill-less base: it proves the plumbing, not this record (the
+paired block below was re-measured on the native engine, as described there).
+Note (§C, measured 2026-11-16 on the realistic instances): a
 full certified climb re-screens the whole feasible N1 — 1,000–3,700 candidates
 at those sizes, ~100–250k races per certification round — so a Standard-scale
 run with ILS lands near 1–2M races, well over the §10 band (which predates the
@@ -98,29 +100,38 @@ full N1). The preset budgets are the control: `climbRaces` per restart bounds
 the climb, `timeBudgetMs` bounds the run, and the anytime rule keeps the best
 so far valid when either ends it mid-climb (that round just is not certified).
 
-Paired-mode re-measurement (2026-11-16, native `race_engine_rs_v2.exe`, same
-course and mob field, 15-skill base + 12 single-skill adds, 1000 seeds per
-arm, both stream modes over the same seed list, lead in lengths at 20 m/s):
+Paired-mode re-measurement (2026-11-16, §J.3: the realistic build the record
+should read). Setup: native `race_engine_rs_v2.exe`, one JSON request per
+stdin line, the v77 example request (course 10504, its 9-runner field and
+fixed gates). The base is 17 one-per-group options, 7 of them gold (mixed
+tiers, the shape the optimizer space actually offers); the adds are 12
+single-skill options from groups the base does not own. 1000 seeds per arm,
+the same seed list in both stream modes. The lead is in lengths on the app's
+own `leadMarginL` conversion (`distance / ownT`, the tail-free form a compact
+record gives); the fixed 20 m/s factor this block first used reads ~3.5 % low
+at 2000 m. Medians over the 10 (retail) / 6 (paired) adds that move at all:
 
 | Number | Retail | Paired |
 |---|---|---|
-| σ(ℓ) of one build | 0.82 L | 0.77 L |
-| median σΔ(ℓ) of active adds | 1.07 L | 0.16 L |
-| median ρ of the two arms on shared seeds | 0.115 | 0.980 |
+| σ(ℓ) of one build | 0.84 L | 0.78 L |
+| median σΔ(ℓ), with median ρ | 1.08 L, ρ 0.111 | 0.17 L, ρ 0.979 |
 | seed-shared (race) part, √(ρ·σA·σB) | 0.27 L | 0.76 L |
-| per-arm (build draws) part, σΔ/√2 | 0.75 L | 0.11 L |
-| adds with Δ exactly 0 | 1 of 12 | 6 of 12 |
+| per-arm (build draws) part, σΔ/√2 | 0.76 L | 0.12 L |
+| adds with Δ exactly 0 on every seed | 2 of 12 | 6 of 12 |
+| base P(1st) | 0.987 | 0.984 |
 
-Split-half σΔ is stable (paired halves 0.154 / 0.147, retail halves
-1.064 / 1.071). Paired keys replay the field for a shared seed (ρ 0.980), so
-the 0.76 L race part cancels and only the 0.11 L per-arm build draws survive;
-in retail mode the field does not replay across builds of one seed (ρ 0.115),
+Split-half σΔ is stable (paired halves 0.171 / 0.182, retail halves
+1.137 / 1.024). Paired keys replay the field for a shared seed (ρ 0.979), so
+the 0.76 L race part cancels and only the 0.12 L per-arm build draws survive;
+in retail mode the field does not replay across builds of one seed (ρ 0.111),
 so seed-pairing there cancels almost nothing and σΔ stays near √2·σ(ℓ). Seed
-budget: `n ≈ (2·1.96·σΔ/δ)²` — δ = 0.03 L costs ~440 paired seeds where
-retail needs ~19.5k. The `config.ts` presets are sized from the paired
-column, since Stage A-G and the Skill Chart run paired; the retail column is
-what Compare traffic still runs on until the user switches on "Paired seeds
-(lower noise)".
+budget: `n ≈ (2·1.96·σΔ/δ)²`. δ = 0.03 L costs ~470 paired seeds where
+retail needs ~19.9k. At the 20 m/s factor the paired median reads 0.161 L,
+which is the 0.16 L the `config.ts` sizing comments quote (and 500 gSeeds
+still covers the app-unit 472). The `config.ts` presets are sized from the
+paired column, since Stage A-G and the Skill Chart run paired; the retail
+column is what Compare traffic still runs on until the user switches on
+"Paired seeds (lower noise)".
 
 ## Prerequisite skills spend SP and measure as free
 
@@ -215,13 +226,17 @@ sizing comes from the paired record above; the arithmetic is in the
   full N1 there needs ~20k seeds per candidate, far past any sane budget, so
   the climb stops uncertified and ILS never starts.
 
-Surrogate race findings (measured, in-suite): at the engine's real noise band the
-posterior SE is too wide to certify any move hopeless, so the surrogate is
-quality-safe but race-neutral (its acquisition only reshuffles the search; the
-on/off ratio measures 0.98). §C removed bound-pruning from the Stage-F move
-space (only the indifference zone may retire a move), so today the surrogate
-orders waves but cuts nothing; the future race lever is §I's certified Δ-SE
-bound. The plan's ≤70%-of-Phase-3 target stays production-scale.
+Surrogate race findings (measured, in-suite): the cut is confidence-gated. At
+the engine's real noise band the §I prior + value provider shave little off
+the search bill (search-only on/off ratio 0.88 on the noisy medium pool,
+fewer on 7 of 8) while the acquisition reshuffles the path-dependent search;
+the plan's ≤70%-of-Phase-3 target does not hold there. Where the model is
+identifiable (exact-lead, additive-only instances) the same machinery is a
+race saver: search-only ratio 0.23 with μ never worse, and with stage
+attribution Stage D, the bulk of the bill, −23 %, all races −37 % (§I test
+gates ≤0.85 / ≤0.70). §C removed the additive-estimate bound-prune from the
+Stage-F move space; the bound-based retire that stays is §I.5's certified
+Δ-SE prior (a wave candidate the model certifies hopeless never races).
 
 - `npm run test:optimizer:slow` — real-engine exhaustive check: 3 setups ×
   ~12 purchasable options, every affordable build enumerated on the SAME

@@ -175,8 +175,8 @@ export interface OptimizerResult {
 export interface NoiseInfo {
 	/** sd of per-seed ℓ of the base build. */
 	sigmaLead: number;
-	/** Paired sd of ℓ differences (base vs single-skill variants) — the number
-	 *  seed budgets scale from. */
+	/** Paired sd of ℓ differences (base vs single-skill variants); the §C
+	 *  climb's ladder ceiling sizes from it (§D.4), and the pane prints it. */
 	sigmaDeltaLead: number;
 	baseP1: number;
 	nSeeds: number;
