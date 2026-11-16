@@ -168,7 +168,7 @@ function buildHtml(title: string, description: string, canonicalUrl: string, ima
   <meta property="og:title" content="${escapeAttr(title)}">
   <meta property="og:description" content="${escapeAttr(description)}">
   <meta property="og:url" content="${canonicalUrl}">${imageTags}
-  <meta property="og:site_name" content="Moomoolator">
+  <meta property="og:site_name" content="Yet Another Umalator">
   <meta name="theme-color" content="#6ee718">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="${escapeAttr(title)}">
@@ -214,7 +214,7 @@ export const onRequest: PagesFunction = async (context) => {
     if (nextEvent) {
       ({ title, description, image } = buildOgData(nextEvent, now));
     } else {
-      title = 'Events \u2014 Moomoolator';
+      title = 'Events \u2014 Yet Another Umalator';
       description = 'Upcoming Champions Meeting events and gacha banners for Uma Musume Pretty Derby';
     }
   }

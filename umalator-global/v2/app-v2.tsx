@@ -1,5 +1,5 @@
 /**
- * Moomoolator v2 - Modern Uma Musume Race Simulator
+ * Yet Another Umalator v2 - Modern Uma Musume Race Simulator
  *
  * Copyright (c) 2026 TheCing (https://github.com/TheCing/uma-tools)
  * Licensed under GPL-3.0-or-later
@@ -2248,7 +2248,7 @@ function App() {
             {/* FOOTER */}
             <footer class="v2-footer">
               <p>
-                Umalator is licensed under{" "}
+                Yet Another Umalator is licensed under{" "}
                 <a
                   href="https://www.gnu.org/licenses/gpl-3.0.html"
                   target="_blank"
@@ -2284,7 +2284,7 @@ function App() {
               </p>
               <div class="v2-footer-links">
                 <a
-                  href="https://github.com/TheCing/uma-tools"
+                  href="https://github.com/John-UNOwen/Yet-Another-Umalator-Fork"
                   target="_blank"
                   rel="noopener"
                 >
@@ -2292,7 +2292,7 @@ function App() {
                 </a>
                 &nbsp;|&nbsp;
                 <a
-                  href="https://github.com/TheCing/uma-tools/issues"
+                  href="https://github.com/John-UNOwen/Yet-Another-Umalator-Fork/issues"
                   target="_blank"
                   rel="noopener"
                 >

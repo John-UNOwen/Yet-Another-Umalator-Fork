@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Moomoolator** is a modern Uma Musume race simulator with bilingual JP/EN support, forked from alpha123/umalator and kachi-dev/umalator.
+**Yet Another Umalator** is a modern Uma Musume race simulator with bilingual JP/EN support, forked from TheCing/uma-tools (Moomoolator), itself a hybrid fork of alpha123/umalator and kachi-dev/umalator.
 
 ### Live Applications
 
