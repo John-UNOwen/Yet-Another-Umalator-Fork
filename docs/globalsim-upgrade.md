@@ -276,10 +276,13 @@ fork's own work, so the branch pin is deliberate.
 
 The branch adds one request flag, `pairedRandomStreams` (omitted unless the
 app asks for it). With the flag the in-race random stream is keyed by
-(seed, runner) and each skill's initialization windows and wisdom lottery by
-(seed, runner, skill), so adding one skill no longer reshuffles another
-runner's draws: two builds run over the same seeds share the whole field and
-differ only in the changed skill's own draws.
+(seed, runner), each skill's initialization windows and wisdom lottery by
+(seed, runner, skill), and the rushing lottery by (seed, runner), so adding
+one skill no longer reshuffles another runner's draws: two builds run over the
+same seeds share the whole field and differ only in the changed skill's own
+draws. The rushing draw needs its own key because whether it draws at all
+depends on that runner's own rushing chance: on the shared stream a kakari
+skill shifted the runners behind it.
 
 The mode each surface uses:
 
@@ -294,7 +297,9 @@ Acceptance numbers, measured on the branch:
 - requests without the flag reply **byte-identical** to a build of the pinned
   upstream commit `27a4d13` (`"pairedRandomStreams": false` replies byte-identical
   too; re-checked 2026-11-16 against the baseline binary),
-- `cargo test --release`: 171 passed / 171,
+- `cargo test --no-default-features`: 172 passed / 172 (CI runs
+  `cargo test --release`, whose default `fast-alloc` feature needs a C
+  toolchain),
 - median ρ 0.974 and paired σΔ(ℓ) 0.162 L (600 seeds, course 10504, 15-skill
   base, a 12-candidate slice). σΔ tracks the size of the effects being measured
   rather than the course: the same slice reads 0.320 L at 3000 m, and a wider
