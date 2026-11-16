@@ -382,3 +382,57 @@ test('real wasm run_compact: finishOrder is 0-based and the winner (0) folds to 
 	t.pass('on all 48 real records: win ⇔ finishOrder 0, top3 ⇔ finishOrder ≤ 2, placing = finishOrder + 1');
 	t.end();
 });
+
+// ── job failures: transient holes are retried, repeated ones become 'err' ────
+
+/** The real worker, with a switch that makes the course-geometry fetch fail —
+ *  the "prepare failed" job error the pool reports without any requeue. */
+function flakyFactory(fail: { on: boolean }): WorkerFactory {
+	return () => {
+		let closed = false;
+		const listeners: Array<(e: { data: any }) => void> = [];
+		const core = createGlobalsimWorkerCore({
+			postMessage: (m: any) => queueMicrotask(() => { if (!closed) for (const cb of listeners) cb({ data: m }); }),
+			loadWasm: loadPkgFresh,
+			fetchText: (url: string) => fail.on
+				? Promise.reject(new Error('network down'))
+				: fs.promises.readFile(path.join(geomDir, path.basename(url)), 'utf8'),
+		});
+		return {
+			postMessage: (m: any) => queueMicrotask(() => { if (!closed) core.onMessage(m); }),
+			addEventListener: (type: string, cb: any) => { if (type === 'message') listeners.push(cb); },
+			terminate: () => { closed = true; },
+		};
+	};
+}
+
+test('a transient job failure leaves holes that the next ensure re-runs', async t => {
+	const fail = { on: true };
+	const evF = createEvaluator({ workerFactory: flakyFactory(fail), threads: 2, space, baseHorse: horse, scenarios, baseSeed: BASE_SEED, skillData: mergedTable });
+	const req = [{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }];
+	const r1 = await evF.ensure(req);
+	t.ok(r1.jobErrors.length > 0, 'the outage is reported as job errors');
+	t.ok(evF.slots(NS_SEARCH, 0, base.id).every(s => s === null), 'failed seeds stay holes, not err');
+	fail.on = false;
+	await evF.ensure(req);
+	const after = evF.slots(NS_SEARCH, 0, base.id);
+	t.ok(after.length === SEEDS && after.every(s => s != null && s !== 'err'), 'every seed measured once the fetch recovers');
+	t.ok(evF.stats(NS_SEARCH, 0, base)?.n === SEEDS, 'the build is measurable again');
+	t.ok(evF.jobErrorLog().some(e => e.error.includes('network down')), 'the failure is in the job error log');
+	evF.dispose();
+	t.end();
+});
+
+test('a seed that keeps failing becomes err after the attempt cap', async t => {
+	const evF = createEvaluator({ workerFactory: flakyFactory({ on: true }), threads: 2, space, baseHorse: horse, scenarios, baseSeed: BASE_SEED, skillData: mergedTable });
+	const req = [{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }];
+	await evF.ensure(req);
+	await evF.ensure(req);
+	t.ok(evF.slots(NS_SEARCH, 0, base.id).every(s => s === null), 'still holes after 2 failed attempts');
+	await evF.ensure(req);
+	t.ok(evF.slots(NS_SEARCH, 0, base.id).every(s => s === 'err'), "err after the 3rd failed attempt");
+	const r4 = await evF.ensure(req);
+	t.equal(r4.jobErrors.length, 0, 'err seeds are never re-requested');
+	evF.dispose();
+	t.end();
+});

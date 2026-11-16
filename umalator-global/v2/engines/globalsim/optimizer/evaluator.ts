@@ -129,6 +129,9 @@ export interface Evaluator extends SearchEvaluator {
 	/** §H: the pool's worker-reported prepare/run timing ledger (zeros before
 	 *  the first ensure; re-zeroed when a new pool is created after abort()). */
 	poolTiming(): PoolTiming;
+	/** Engine/worker job failures so far, one row per distinct message (the
+	 *  search ignores them; the pane shows them so a failure is never silent). */
+	jobErrorLog(): Array<{ error: string; count: number }>;
 	/** Free the pool (Stop). The cache survives; the next ensure starts fresh workers. */
 	abort(): void;
 }
@@ -198,7 +201,10 @@ export function statsOf(values: SeedSlot[]): BuildStats {
 }
 
 /** Seed slot position cap (verify lists slice below this). */
-const SEED_LIST_SIZE = 20000;
+/** Seeds per (namespace, scenario) list — the most positions any ladder can ask for. */
+export const SEED_LIST_SIZE = 20000;
+/** Failed jobs a seed survives as a retryable hole before it becomes 'err'. */
+const JOB_FAIL_ATTEMPTS = 3;
 
 /** Paired diff over two slot arrays (§6.2, shared with synthetic evaluators). */
 export function pairedOf(a: SeedSlot[], b: SeedSlot[], pick: (v: SeedValue) => number | null): PairedDiff | null {
@@ -250,6 +256,12 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	const indexes = new Map<string, Map<number, number>>();
 	let pool: GlobalsimPool | null = null;
 	let races = 0;
+	// Job-level failures (worker crash, dead handle, failed prepare/geometry
+	// fetch, lost preparation) are not proven deterministic, so a failed
+	// seed stays a hole and is retried by later ensure() passes; only after
+	// JOB_FAIL_ATTEMPTS failed jobs does it become a permanent 'err'.
+	const failCount = new Map<string, number>(); // `${cacheKey}#${pos}` → failed jobs
+	const errorLog = new Map<string, number>();   // message → occurrences
 	// The pool takes onChunk at CREATION; each ensure() swaps in its mapping
 	// through this hop (one batch runs at a time — runJobs enforces it).
 	let currentChunk: ((job: PoolJob, records: unknown[]) => void) | null = null;
@@ -413,17 +425,27 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 			} finally {
 				currentChunk = null;
 			}
-			// A failed job's remaining holes are deterministic failures — mark
-			// them 'err' so later passes never refetch (and never count them).
-			for (const { jobId } of res.errors) {
+			// A failed job's holes stay null (retried next pass) until the same
+			// seed has failed JOB_FAIL_ATTEMPTS times; only then is it 'err'
+			// (never refetched, never counted). Per-seed engine errors inside a
+			// successful chunk are already 'err' via seedValueOf.
+			for (const { jobId, error } of res.errors) {
+				errorLog.set(error, (errorLog.get(error) ?? 0) + 1);
 				const m = jobReq.get(jobId);
 				if (!m) continue;
 				const idx = indexes.get(listKey(m.req.ns, m.req.scenarioIdx))!;
+				const ck = cache.keyFor(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id);
 				for (const s of m.seeds) {
 					const pos = idx.get(s);
 					if (pos === undefined) continue;
-					if (cache.peek(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id)?.values[pos] === null) {
+					if (cache.peek(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id)?.values[pos] !== null) continue;
+					const fk = `${ck}#${pos}`;
+					const n = (failCount.get(fk) ?? 0) + 1;
+					if (n >= JOB_FAIL_ATTEMPTS) {
+						failCount.delete(fk);
 						cache.set(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id, pos, 'err');
+					} else {
+						failCount.set(fk, n);
 					}
 				}
 			}
@@ -441,6 +463,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 		pinBuilds(ns, si, identities) { setPins(ns, si, identities); },
 		racesRun() { return races; },
 		cacheStats: () => cache.stats(),
+		jobErrorLog: () => [...errorLog].map(([error, count]) => ({ error, count })),
 		poolTiming: () => pool?.timing() ?? { prepares: 0, prepareMs: 0, chunks: 0, runMs: 0, records: 0 },
 		stats: statsFor,
 		paired: pairedFor,
