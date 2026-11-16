@@ -27,12 +27,12 @@ console.log(`Stats: ${baseUma.speed}/${baseUma.stamina}/${baseUma.power}/${baseU
 console.log('Course: CM8 Nakayama 2500m (10506)');
 console.log('');
 console.log('Note: This script outlines the test setup.');
-console.log('For actual bashin values, use the skill chart in umalator-global:');
+console.log('For actual bashin values, use Skill mode in the v2 app:');
 console.log('  1. cd umalator-global && node build.mjs --serve');
-console.log('  2. Open http://localhost:8000/umalator-global/');
+console.log('  2. Open http://localhost:8000/umalator-global/v2/');
 console.log('  3. Set course to Nakayama 2500m Inner');
 console.log('  4. Import the test uma');
-console.log('  5. Use Skill Chart mode to measure each skill');
+console.log('  5. Use Skill mode to measure each skill (vs Base points)');
 console.log('');
 console.log('Skills to test:');
 SKILLS_TO_TEST.forEach((s, i) => {
