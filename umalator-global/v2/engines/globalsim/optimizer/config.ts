@@ -199,6 +199,10 @@ export const SURROGATE_MIN_FIT = 12;
 export const SURROGATE_PAIR_MIN_COOC = 8;
 /** Stage E: pair-term cap (~300, plan). */
 export const SURROGATE_PAIR_CAP = 300;
+/** §I: pair columns take this multiple of the ridge penalty. They are the
+ *  widest coefficients in the design (only their co-occurrences stand behind
+ *  them), so the prior must be strongest exactly there. 10× the option λ. */
+export const SURROGATE_PAIR_PRIOR = 10;
 /** Stage E: below this holdout R² the surrogate stops driving ordering. */
 export const SURROGATE_MIN_R2 = 0.3;
 /** Verification-seed disjointness margin check (P3) — overlap assert helper. */

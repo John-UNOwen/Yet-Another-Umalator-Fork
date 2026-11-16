@@ -27,7 +27,7 @@ import skillmeta from '../../../../../skill_meta.json';
 import { buildGlobalsimChartJobs } from '../chart';
 import { globalsimSeedList } from '../compare';
 import { ci95, leadMarginL, SeedCompactRecord } from '../metrics';
-import { createGlobalsimPool, GlobalsimPool, PoolJob, resolveThreadCount, WorkerFactory } from '../pool';
+import { createGlobalsimPool, GlobalsimPool, PoolJob, PoolTiming, resolveThreadCount, WorkerFactory } from '../pool';
 import { CACHE_CAP_BYTES, EffortConfig, VERIFY_SALT } from './config';
 import { EvalCache, NS_SEARCH, NS_VERIFY, nsWithMode } from './cache';
 import { BuildSpace, forcedOptions } from './space';
@@ -115,6 +115,9 @@ export interface SearchEvaluator {
 export interface Evaluator extends SearchEvaluator {
 	seedPosition(ns: string, scenarioIdx: number, seed: number): number;
 	cacheStats(): ReturnType<EvalCache['stats']>;
+	/** §H: the pool's worker-reported prepare/run timing ledger (zeros before
+	 *  the first ensure; re-zeroed when a new pool is created after abort()). */
+	poolTiming(): PoolTiming;
 	/** Free the pool (Stop). The cache survives; the next ensure starts fresh workers. */
 	abort(): void;
 }
@@ -407,6 +410,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 		},
 		racesRun() { return races; },
 		cacheStats: () => cache.stats(),
+		poolTiming: () => pool?.timing() ?? { prepares: 0, prepareMs: 0, chunks: 0, runMs: 0, records: 0 },
 		stats: statsFor,
 		paired: pairedFor,
 		objective(ns, si, build, obj, vs) {

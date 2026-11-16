@@ -285,6 +285,32 @@ class OracleEval implements SearchEvaluator {
 	dispose(): void { this.table.clear(); } // free seed slots between instances
 }
 
+/** §I race attribution: books every ensure()'s races to the stage that was
+ *  emitting progress when it ran (the pipeline awaits one batch at a time, so
+ *  "races since the last emit" belongs to the emitted stage — 'incontext' is
+ *  Stage D's round + adoption test, 'local' the §C climb, 'verify' Stage G).
+ *  Needs no hooks: the same attribution measures trees before and after §I. */
+class StagedEval implements SearchEvaluator {
+	readonly per = new Map<string, number>();
+	tag = 'other';
+	constructor(private readonly ev: OracleEval) {}
+	private add(n: number): void { if (n > 0) this.per.set(this.tag, (this.per.get(this.tag) ?? 0) + n); }
+	seeds(ns: string, si: number, n: number) { return this.ev.seeds(ns, si, n); }
+	async ensure(reqs: Parameters<SearchEvaluator['ensure']>[0]) {
+		const pre = this.ev.racesRun();
+		const r = await this.ev.ensure(reqs);
+		this.add(this.ev.racesRun() - pre);
+		return r;
+	}
+	slots(ns: string, si: number, id: string) { return this.ev.slots(ns, si, id); }
+	racesRun() { return this.ev.racesRun(); }
+	stats(ns: string, si: number, b: BuildRefLite) { return this.ev.stats(ns, si, b); }
+	paired(ns: string, si: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null) { return this.ev.paired(ns, si, a, b, pick); }
+	objective(ns: string, si: number, b: BuildRefLite, o: ObjectiveKind, vs?: BuildRefLite) { return this.ev.objective(ns, si, b, o, vs); }
+	activations(ns: string, si: number, id: string) { return this.ev.activations ? this.ev.activations(ns, si, id) : null; }
+	dispose() { this.ev.dispose(); }
+}
+
 // ── the harness ─────────────────────────────────────────────────────────────
 
 const TEST_CFG: EffortConfig = {
@@ -882,5 +908,48 @@ test('surrogate on (low-variance regime): prunes hopeless neighbours → ≤70% 
 	// Same baseline: pruning helped on 1/6 instances (gate was ≥ 4/6 pre-fix).
 	// Kept > 0 so the prune stays functional; §I.5 should earn the cut back.
 	t.ok(wins >= 1, `pruning still helps on some instances (fewer-race=${wins}/${N})`);
+	t.end();
+});
+
+// §I acceptance: with the corrected model (§I.1 difference-covariance SE on the
+// holdout-measured predictive scale, mean-1 weights, 10× pair prior, n/4 pair
+// cap, no fold skip, Map lookups) the surrogate is a race saver, not a
+// reshuffle: it supplies Stage D's in-context option values AND the bandit's
+// prior, so a candidate whose Δ the model bound-certifies hopeless never races.
+// The surrogate-off arm is identical to the pre-§I pipeline (every §I branch
+// inert without a model), so the same-run on/off split IS the pre/after
+// comparison. Stage attribution (StagedEval): Stage D's bill = every ensure
+// while the pipeline emitted 'incontext' (D rounds + adoption tests).
+// Measured on this stream: Stage D −18%, ALL races −36% (Stage D is the bulk
+// of the bill, §13.4 I.6), μ never worse (once better). The cut concentrates
+// where the model is identifiable: the first D round of restart 0 races blind
+// — its training design has one row per option and no pair rows at all, and
+// the predictive-σ² prior correctly self-silences there instead of mispruning
+// (on the noisy medium pool it stays nearly silent throughout: D −10%, all
+// −11%, μ-worse unchanged from baseline).
+test('§I: prior + value provider cut Stage D + total races on low-var pools, μ held', async t => {
+	const base: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 3, batchCap: 1200, gSeedsMin: 80, gSeedsCap: 80 };
+	const N = 6;
+	let dOn = 0, dOff = 0, allOn = 0, allOff = 0, worse = 0;
+	for (let i = 0; i < N; i++) {
+		const inst = genInstance(71000 + i * 313, 22, 30, false); // the low-variance stream
+		const run = async (surr: boolean) => {
+			const ev = new StagedEval(new OracleEval(inst));
+			const res = await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'meanLead', aggregation: 'mean', effort: { ...base, surrogate: surr } }, createController(), (p: OptimizerProgress) => {
+				ev.tag = p.stage === 'incontext' ? 'D' : p.stage === 'local' ? 'F' : p.stage === 'verify' ? 'G' : p.stage;
+			});
+			const out = { mu: inst.mu(res.best.build.id), races: ev.racesRun(), d: ev.per.get('D') ?? 0 };
+			ev.dispose();
+			return out;
+		};
+		const off = await run(false);
+		const on = await run(true);
+		dOn += on.d; dOff += off.d; allOn += on.races; allOff += off.races;
+		if (on.mu < off.mu - 1e-9) worse++;
+	}
+	console.log(`  §I stage-D (n=${N}, low-var pools): D off=${dOff} on=${dOn} ratio=${(dOn / Math.max(1, dOff)).toFixed(3)} · all off=${allOff} on=${allOn} ratio=${(allOn / Math.max(1, allOff)).toFixed(3)} · μ-worse=${worse}`);
+	t.ok(dOn <= 0.85 * dOff, `Stage D races cut vs the pre-§I arm (${dOn} ≤ ${Math.round(0.85 * dOff)})`);
+	t.ok(allOn <= 0.7 * allOff, `total races cut ≥30% where the model is identifiable (${allOn} ≤ ${Math.round(0.7 * allOff)})`);
+	t.ok(worse === 0, `the value provider never trades quality for races (μ-worse=${worse}/${N})`);
 	t.end();
 });

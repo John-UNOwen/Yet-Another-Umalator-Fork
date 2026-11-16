@@ -199,6 +199,11 @@ test(`real-engine exhaustive check (3 setups × ${N_OPTS} options × ${V_SEEDS} 
 		const recBest = recLead !== null && recLead >= truthBest.lead - 1e-12;
 		const spread = truthBest.lead - scored[scored.length - 1].lead; // non-degeneracy guard
 		t.comment(`[${setup.label}] builds=${scored.length} lead-spread=${spread.toFixed(3)} races=${ev.racesRun()} truth ℓ=${truthBest.lead.toFixed(3)} rec ℓ=${recLead?.toFixed(3)} Δci=[${d ? d.ci95[0].toFixed(3) : '?'},${d ? d.ci95[1].toFixed(3) : '?'}] ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+		// §H acceptance record: worker-measured prepare time as a share of
+		// worker-measured race time (gate: under 10%; the per-setup LRU reuse
+		// is what keeps it there — every re-run rung runs on held preparations).
+		const tm = ev.poolTiming();
+		t.comment(`[${setup.label}] prep share: ${tm.prepares} prepares ${tm.prepareMs.toFixed(0)}ms / ${tm.runMs.toFixed(0)}ms race over ${tm.chunks} chunks ${tm.records} records = ${(100 * tm.prepareMs / Math.max(1, tm.runMs)).toFixed(1)}%`);
 		t.ok(spread > 1e-6, `[${setup.label}] the lead objective is non-degenerate over the space (spread=${spread.toFixed(3)})`);
 		t.ok(recBest || tied, `[${setup.label}] recommendation is the exhaustive best or tied with it`);
 		ev.dispose();

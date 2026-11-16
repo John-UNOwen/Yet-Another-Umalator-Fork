@@ -4,7 +4,9 @@
  *
  *  - every candidate starts at the first rung (50 seeds, or whatever the
  *    transposition cache already holds — ensure() skips cached positions for
- *    free, so cached builds start with more);
+ *    free, so cached builds start with more) — except under the §I.5 prior: a
+ *    candidate whose predicted Δ has an optimistic bound under δ_min never
+ *    races at all and is counted in `priorCut`;
  *  - candidates are dropped when their optimistic Δ (mean + β·SE, β shrinking
  *    with the seed total, conservative early per §9) falls under δ_min, the
  *    indifference zone (§D.1): if the best case is below the smallest
@@ -27,7 +29,7 @@
  * (×1.5), so a batch converges in O(log cap) rounds regardless of alive size.
  */
 
-import { BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, EffortConfig } from './config';
+import { BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, EffortConfig, PRUNE_KAPPA } from './config';
 import { BuildRefLite, PairedDiff, SearchEvaluator } from './evaluator';
 import { SeedValue } from './types';
 
@@ -63,6 +65,14 @@ export interface BanditOpts {
 	 *  waves and raises the cap to the wave size so a cut candidate can never
 	 *  invalidate the wave's certification (capCut then always reports 0). */
 	maxAlive?: number;
+	/** §I.5 prior: a prediction of each candidate's Δ vs the incumbent with
+	 *  the posterior SE OF THE DIFFERENCE (the surrogate's predictDiff), or
+	 *  null when no model has seen the candidate. A candidate whose OPTIMISTIC
+	 *  prior bound (gain + PRUNE_KAPPA·se) cannot reach δ_min is retired before
+	 *  its first race — the §C screening rule's one sanctioned exception, so a
+	 *  first rung is spent only where the prediction leaves a chance. Anything
+	 *  that races lives and dies by the indifference zone exactly as before. */
+	prior?: (build: BuildRefLite) => { gain: number; se: number } | null;
 	/** Observability: called after each round. */
 	onRound?: (survivors: number, seedsUsed: number) => void;
 }
@@ -83,6 +93,10 @@ export interface BanditResult {
 	/** Candidates the alive cap cut during this batch (§D.4). > 0 means the
 	 *  cap, not the indifference zone, ended the batch. The caller logs it. */
 	capCut: number;
+	/** §I.5: candidates the Δ-SE prior retired before their first race (0 when
+	 *  no prior is given). They never raced, so they are absent from
+	 *  `measured`; the caller treats them as bound-certified hopeless (§C). */
+	priorCut: number;
 }
 
 interface Row {
@@ -103,8 +117,20 @@ export const betaOf = (n: number) => Z * Math.sqrt(Math.min(2, 300 / Math.max(1,
 /** Run one bandit batch. */
 export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Promise<BanditResult> {
 	const seen = new Set<string>([o.incumbent.id]);
-	const cands = o.candidates.filter(c => !seen.has(c.id) && (seen.add(c.id), true));
-	if (!cands.length) return { survivors: [], measured: [], capCut: 0 };
+	const deltaMin = o.cfg.deltaMinL;
+	let cands = o.candidates.filter(c => !seen.has(c.id) && (seen.add(c.id), true));
+	// §I.5: the surrogate's Δ-SE bound retires hopeless candidates BEFORE
+	// their first race (the sanctioned exception; §C's "race everything"
+	// stands for everything the model cannot rule out).
+	let priorCut = 0;
+	if (o.prior) {
+		cands = cands.filter(c => {
+			const p = o.prior!(c);
+			if (p && p.gain + PRUNE_KAPPA * p.se < deltaMin) { priorCut++; return false; }
+			return true;
+		});
+	}
+	if (!cands.length) return { survivors: [], measured: [], capCut: 0, priorCut };
 	// rungCeil overrides the preset batch cap (§C's climb sizes its ladder by
 	// the measured noise, and takes climbRaces/time as the budget instead).
 	const cap = o.rungCeil !== undefined ? Math.max(1, o.rungCeil) : o.cfg.batchCap;
@@ -126,7 +152,6 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 	let alive = cands;
 	let lastN = start;
 	let capCut = 0;
-	const deltaMin = o.cfg.deltaMinL;
 	for (;;) {
 		const rows: Row[] = [];
 		for (const c of alive) {
@@ -181,7 +206,7 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 		o.onRound?.(kept.length, lastN);
 		alive = kept.map(r => r.build);
 	}
-	return { ...done(best), capCut };
+	return { ...done(best), capCut, priorCut };
 }
 
 function done(best: Map<string, Row>): Omit<BanditResult, 'capCut'> {

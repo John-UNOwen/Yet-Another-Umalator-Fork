@@ -175,6 +175,115 @@ test('preparation affinity: same setupKey runs without re-preparing, matching jo
 	t.end();
 });
 
+// ── §H: per-worker preparation LRU + key-affine scheduling ──────────────────
+
+/**
+ * Scripted workers that model the §H LRU core: every `prepared` reply (ok or
+ * failed) reports the held setupKeys, MRU first, trimmed to the cap — exactly
+ * what the pool mirrors into slot.held for key-affine dispatch.
+ */
+function lruScripted(cap: number, failKeys: ReadonlySet<string> = new Set()) {
+	const heldBy = new Map<number, string[]>(); // worker instance → held keys, MRU first
+	const { workers, factory } = scripted((m, w) => {
+		const keys = () => heldBy.get(w.instance) ?? [];
+		const touch = (key: string) => {
+			const next = keys().filter(k => k !== key);
+			next.unshift(key);
+			heldBy.set(w.instance, next.slice(0, cap));
+		};
+		if (m.type === 'prepare') {
+			// Re-preparing a key drops its old entry even when the build
+			// fails; the OTHER preparations are untouched (LRU core contract).
+			heldBy.set(w.instance, keys().filter(k => k !== String(m.setupKey)));
+			if (failKeys.has(String(m.setupKey))) {
+				w.fire({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: false, error: 'bad request', dead: false, held: keys().slice() });
+				return;
+			}
+			touch(String(m.setupKey));
+			w.fire({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: true, prepareMs: 8, held: keys().slice() });
+		} else if (m.type === 'run') {
+			const key = String(m.setupKey);
+			if (!keys().includes(key)) {
+				w.fire({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: false, dead: false, error: `no preparation for job ${m.jobId}` });
+				return;
+			}
+			touch(key);
+			w.fire({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: true, records: m.seeds.map((seed: number) => ({ seed, finishTimeRaw: 10, finishOrder: 0 })), runMs: 40 });
+		}
+	});
+	return { workers, factory, heldBy };
+}
+
+test('§H LRU scheduling: interleaved gate blocks on ONE worker pay one prepare per setup', async t => {
+	const { workers, factory } = lruScripted(8);
+	// Three setups interleaved gate-block style. A one-preparation worker
+	// re-prepares six times here; the LRU worker holds all three, so every
+	// job after the first of its setup runs bare, out of queue order.
+	const pool = createGlobalsimPool({ factory, threads: 1 });
+	const res = await pool.runJobs([
+		job('x1', 'X', [1]), job('y1', 'Y', [2]), job('x2', 'X', [3]),
+		job('z1', 'Z', [4]), job('y2', 'Y', [5]), job('x3', 'X', [6]),
+	]);
+	t.deepEqual(res.errors, [], 'no job errors (every held key served bare)');
+	const w = workers[0];
+	const seq = w.sent.map(m => `${m.type}:${(m as any).id ?? (m as any).jobId}`).join(' ');
+	// Key-affine dispatch drains ALL of a held setup's blocks (MRU first)
+	// before the worker ever goes cold: X's blocks go first, then Y's, then Z.
+	t.equal(seq, 'prepare:x1 run:x1 run:x2 run:x3 prepare:y1 run:y1 run:y2 prepare:z1 run:z1',
+		'each setup prepared once and drained whole before the next prepare');
+	t.equal(w.sent.filter(m => m.type === 'prepare').length, 3, 'three prepares for six jobs across three setups');
+	t.ok(w.sent.filter(m => m.type === 'run').every(m => typeof (m as any).setupKey === 'string'), 'every run names the setupKey it runs on');
+	pool.dispose();
+	t.end();
+});
+
+test('§H held mirror: an evicted preparation re-prepares, held ones never do', async t => {
+	const { workers, factory } = lruScripted(2);
+	const pool = createGlobalsimPool({ factory, threads: 1 });
+	const res1 = await pool.runJobs([job('a1', 'A', [1]), job('b1', 'B', [2]), job('c1', 'C', [3])]);
+	t.deepEqual(res1.errors, [], 'batch 1: three cold prepares');
+	// Cap 2: preparing C evicted A. The mirror carries the worker's truth,
+	// so A is re-prepared — had the pool merely accumulated every key it
+	// ever saw, a2 would bare-run into a "no preparation" failure.
+	const res2 = await pool.runJobs([job('a2', 'A', [4])]);
+	t.deepEqual(res2.errors, [], 'the evicted setup is re-prepared, not errored');
+	const seq = workers[0].sent.map(m => `${m.type}:${(m as any).id ?? (m as any).jobId}`).join(' ');
+	t.equal(seq, 'prepare:a1 run:a1 prepare:b1 run:b1 prepare:c1 run:c1 prepare:a2 run:a2');
+	pool.dispose();
+	t.end();
+});
+
+test('§H gate-blocked batch: two workers, two gate blocks, one prepare each', async t => {
+	const { workers, factory } = lruScripted(8);
+	const pool = createGlobalsimPool({ factory, threads: 2 });
+	const res = await pool.runJobs([job('g0a', 'G0', [1]), job('g1a', 'G1', [2]), job('g0b', 'G0', [3]), job('g1b', 'G1', [4])]);
+	t.deepEqual(res.errors, [], 'no job errors');
+	// Each worker cold-prepared one gate block and then bare-ran the second
+	// chunk of the block it holds — a batch never waits on a preparation it
+	// cannot use.
+	t.equal(workers.length, 2, 'two workers for four queued chunks');
+	for (const w of workers) {
+		t.equal(w.sent.filter(m => m.type === 'prepare').length, 1, 'one prepare per worker');
+		t.equal(w.sent.filter(m => m.type === 'run').length, 2, 'two bare runs per worker');
+	}
+	pool.dispose();
+	t.end();
+});
+
+test('§H timing ledger: worker prepareMs/runMs accumulate for the prepare-share check', async t => {
+	const { factory } = lruScripted(8);   // reports prepareMs: 8, runMs: 40
+	const pool = createGlobalsimPool({ factory, threads: 1, onChunk: () => {} });
+	t.deepEqual(pool.timing(), { prepares: 0, prepareMs: 0, chunks: 0, runMs: 0, records: 0 }, 'zero until the worker reports');
+	await pool.runJobs([job('j1', 'X', [1, 2, 3]), job('j2', 'Y', [4, 5])]);
+	t.deepEqual(pool.timing(), { prepares: 2, prepareMs: 16, chunks: 2, runMs: 80, records: 5 }, 'ledger reflects the two preparations and two chunks');
+	await pool.runJobs([job('j3', 'X', [6])]);
+	const late = pool.timing();
+	t.equal(late.prepares, 2, 'a held setup re-runs bare: no new prepare in the ledger');
+	t.equal(late.chunks, 3, 'the third chunk ran on the held preparation');
+	pool.dispose();
+	t.end();
+});
+
 test('dead handle: worker recreated, in-flight chunk requeued exactly once, second death = job error', async t => {
 	let runCount = 0;
 	const { workers, factory } = scripted((m, w) => {
@@ -229,12 +338,14 @@ test('non-dead prepare failure = immediate job error, no requeue', async t => {
 });
 
 test('non-dead prepare failure invalidates the cached preparation (no stale-key poisoning)', async t => {
-	// Regression: workerCore.handlePrepare frees the held PreparedRace BEFORE
-	// building the next one, so a failed prepare leaves the worker holding NO
-	// preparation. The pool must drop slot.preparedKey on a non-dead prepare
-	// failure — keeping the previous key made dispatch bare-run the next
-	// matching job into the worker's "no preparation" reply: a permanent job
-	// error for every later job of that setup, for the pool's lifetime.
+	// Regression: a worker that does NOT report `held` (the legacy core
+	// semantics this fake models) can be left holding NO preparation by a
+	// failed prepare. The pool must empty slot.held on a non-dead prepare
+	// failure when the worker reports no LRU — keeping the previous key would
+	// make dispatch bare-run the next matching job into the worker's
+	// "no preparation" reply: a permanent job error for every later job of
+	// that setup, for the pool's lifetime. (The §H LRU core keeps the other
+	// entries and says so via `held`; see the LRU test below.)
 	const held = new Map<number, string | null>();   // per-worker state, mirrors workerCore.prepared
 	const { workers, factory } = scripted((m, w) => {
 		if (m.type === 'prepare') {

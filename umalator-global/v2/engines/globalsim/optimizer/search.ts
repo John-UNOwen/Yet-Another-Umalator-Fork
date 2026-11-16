@@ -7,11 +7,11 @@
  * progress events make the run anytime (P5); all inputs are deterministic (P6).
  */
 
-import { banditVsIncumbent, BanditOutcome, betaOf } from './bandit';
+import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf } from './bandit';
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
 	DEAD_SKILL_MIN_SEEDS,
-	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
+	EffortConfig, KAPPA, LAMBDA_MAXIMIN,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
 import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
@@ -205,6 +205,23 @@ const traceRestartEnd = (b: BuildRefLite): void => {
 	const a = (globalThis as any).OPT_RESTART_ENDS as BuildRefLite[] | undefined;
 	if (a) a.push(b);
 };
+
+/** §I.5: the bandit's prior from the surrogate — each candidate's predicted Δ
+ *  vs the batch incumbent, SE from the COVARIANCE of that difference
+ *  (predictDiff, §I.1). Unlike the ordering/acquisition use (gated on r2), the
+ *  prior runs on the raw fit: its authority is its own posterior SE — a cut
+ *  needs gain + κ·SE < δ_min, and an unidentified model has honest, wide SEs,
+ *  so it self-silences instead of mispruning. Null (no opinion) when either
+ *  build holds features the model never saw: a prior may only cut what it knows. */
+function diffPrior(sm: SurrogateModel | null, inc: BuildRefLite): BanditOpts['prior'] {
+	if (!sm) return undefined;
+	const model = sm; // non-null for the closure
+	return (b: BuildRefLite) => {
+		if (!model.covers(b.selection) || !model.covers(inc.selection)) return null;
+		const p = model.predictDiff(b.selection, inc.selection);
+		return { gain: p.mean, se: p.se };
+	};
+}
 
 /** A resolved build reference (identity + selection) for a selection. */
 function buildRef(space: BuildSpace, selection: readonly string[]): BuildRefLite {
@@ -630,31 +647,25 @@ async function runSingleScenario(
 				for (let a = 0; a < pos.length && a < 3; a++) for (let c = a + 1; c < pos.length; c++) addPair(pos[a], pos[c]);
 				if (it === 0) for (const a of pos.slice(0, 2)) for (const c of free) if (a.id !== c.id) addPair(a, c);
 			}
-			// Surrogate-guided candidate pruning (§8 E, applied to the biggest
-			// move consumer, Stage D): once the model clears the R² gate, drop a
-			// neighbour whose OPTIMISTIC predicted gain (prediction + κ·SE) can't
-			// beat X by δ_min — α/β with error bars. Unpruned candidates stay; if
-			// every one is pruned X is already locally optimal. This only decides
-			// what to simulate (P1); the knapsack re-solve still runs on measured
-			// + v⁰ values, and a wrong prune is re-tried next round via v0.
+			// §I.5: the surrogate enters this batch as the bandit's PRIOR (the
+			// old α/β prune did the same job on inflated marginals — §I.1:
+			// sqrt(se² + se²) counts every shared feature twice): a candidate
+			// whose predicted Δ vs X, with the SE of the DIFFERENCE from
+			// predictDiff, has an optimistic bound (gain + PRUNE_KAPPA·SE, the
+			// same α/β rule §8 E used) under δ_min is cut before its first
+			// race. No opinion (either build holds unseen features) → it races;
+			// everything that races lives and dies by the §9/§D ladder exactly
+			// as before. This decides what to simulate (P1) — the re-solve
+			// below still runs on measured values plus the model's in-context
+			// values (§I.5).
 			const dSm = surrModel();
-			let toMeasure = cands;
-			if (dSm) {
-				const px = dSm.predict(X.selection);
-				toMeasure = cands.filter(b => {
-					if (b.id === X.id) return false;
-					if (!dSm.covers(b.selection)) return true; // unjudged move: never prune
-					const p = dSm.predict(b.selection);
-					const se = Math.sqrt(p.se * p.se + px.se * px.se);
-					return (p.mean - px.mean) + PRUNE_KAPPA * se > cfg.deltaMinL;
-				});
-				if (!toMeasure.length) { dbg('D pruned all cands, locally optimal'); break; }
-			}
-			dbg('D s', s, 'it', it, 'X', X.id || '(base)', 'cands', cands.length, dSm ? '→' + toMeasure.length : '');
+			dbg('D s', s, 'it', it, 'X', X.id || '(base)', 'cands', cands.length);
 			const bres = await banditVsIncumbent(ev, {
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
-				candidates: toMeasure.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
+				candidates: cands.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
+				prior: diffPrior(surrogate, X), // the raw fit, not the r2-gated one (see diffPrior)
 			});
+			if (bres.priorCut) dbg('  prior-cut', bres.priorCut, 'of', cands.length, 'candidates (Δ-SE bound under δ_min)');
 			const outcomes = bres.measured; // eliminated candidates' numbers feed the re-solve too (§8D)
 			if (bres.capCut) { // §D.4: the alive cap bound this batch, not the indifference zone
 				dbg('  D alive cap cut', bres.capCut, 'candidates beyond', BANDIT_MAX_ALIVE);
@@ -664,10 +675,23 @@ async function runSingleScenario(
 			for (const out of outcomes) surrHarvest(out.build);
 			surrHarvest(X); surrRefit();
 			for (const out of outcomes) dbg('  meas', out.survived ? '+' : '-', out.build.id || '(base)', 'Δ', out.diff.mean.toFixed(3), 'n', out.diff.n);
-			// Re-solve the knapsack with in-context values.
+			// Re-solve the knapsack with in-context values. §I.5 value provider:
+			// measured value (shrunk toward v⁰) wins; else, when the model saw
+			// both builds, its IN-CONTEXT option value — predictDiff(X+o, X)
+			// reads the option coefficient together with its pair terms against
+			// the incumbent's own skills — replaces the out-of-context v⁰
+			// (adding back the displaced pick's value, same arithmetic as
+			// applyMeasured). Uncovered options keep the old v⁰ fallback.
+			const dValue = (o: OptOption): number => {
+				if (value.has(o.id) || !dSm || !dSm.covers(X.selection)) return ctxVal(o.id);
+				const b = withOption(X.selection, o);
+				if (!dSm.covers(b.selection)) return ctxVal(o.id);
+				const covering = X.selection.find(x => space.byId.get(x)?.groupId === o.groupId);
+				return dSm.predictDiff(b.selection, X.selection).mean + (covering ? ctxVal(covering) : 0);
+			};
 			const groups: KnapGroup[] = knapGroups().map(g => ({
 				...g,
-				options: g.options.map(o => ({ ...o, value: ctxVal(o.id) })),
+				options: g.options.map(o => ({ ...o, value: dValue(o) })),
 			}));
 			const sol = mckpSolve(groups, space.budget);
 			const Y = sol ? remember(refOf(selFromKnap(sol.selection.values()))) : X;
@@ -740,7 +764,9 @@ async function runSingleScenario(
 		// the §D bandit with its indifference zone, run in waves of CLIMB_WAVE:
 		// bad moves die at the first rung, seeds go to contenders. Move order
 		// (surrogate acquisition / Σ ctxVal) only sequences the waves; it never
-		// excludes a move (bound-pruning by the surrogate would be §I work).
+		// excludes a move. The one bound-based exception is §I.5's Δ-SE prior:
+		// a wave candidate the model certifies hopeless under δ_min never races,
+		// and it counts as resolved for the wave's certification.
 		// A round ends three ways:
 		//  - adopt the strongest significant improver (one move per round; N1
 		//    is rebuilt against the new incumbent next round, and the waves the
@@ -858,6 +884,7 @@ async function runSingleScenario(
 					candidates: wave.map(m => m.b), pick: searchPick, cfg,
 					rungMin: BANDIT_CHUNK_SIZE, rungCeil,
 					maxAlive: wave.length, lucbCut: false,
+					prior: diffPrior(surrogate, inc), // §I.5 (see Stage D): a bound-certified wave candidate never races
 				});
 				applyMeasured(bres.measured, dropOf, addedOf);
 				for (const out of bres.measured) surrHarvest(out.build);
@@ -875,8 +902,11 @@ async function runSingleScenario(
 					const upb = out.diff.mean + betaOf(out.diff.n) * (out.diff.sem || 0);
 					if (out.diff.n < 2 || upb >= cfg.deltaMinL) unresolved++;
 				}
-				// A candidate that errored out of `measured` cannot be certified either.
-				unresolved += Math.max(0, wave.length - bres.measured.length);
+				// A candidate that errored out of `measured` cannot be certified
+				// either — but a §I.5 prior cut can: the Δ-SE bound certifies it
+				// hopeless (the one sanctioned exception to "race everything"),
+				// so it is resolved and comes off the unresolved head count.
+				unresolved += Math.max(0, wave.length - bres.measured.length - bres.priorCut);
 				if (best) break; // significant improver: adopt without screening the rest
 			}
 			if (cut) unresolved = Math.max(unresolved, 1); // an unscreened round certifies nothing
@@ -1387,7 +1417,6 @@ function movesFrom(
 ): FMove[] {
 	const Xsel = X.selection;
 	const seen = new Set<string>([X.id]);
-	const predX = surr ? surr.model.predict(Xsel) : null;
 	const out: FMove[] = [];
 	for (const mv of raw) {
 		const sel = applyMove(space, Xsel, mv.drops, mv.adds);
@@ -1402,10 +1431,13 @@ function movesFrom(
 		// offered.
 		if (addDead && added.some((id: string) => addDead(b, id))) continue;
 		let est: number;
-		if (surr && predX) {
-			const pred = surr.model.predict(sel);
-			const se = Math.sqrt(pred.se * pred.se + predX.se * predX.se);
-			est = (pred.mean - predX.mean) + KAPPA * se;                      // acquisition ordering (§8 E)
+		if (surr) {
+			// §I.1: acquisition on the move's own unit — the predicted DIFFERENCE
+			// vs X with the SE of that difference (predictDiff; the marginals in
+			// quadrature counted every shared feature twice and blurred the
+			// ordering across the whole neighbourhood).
+			const pd = surr.model.predictDiff(sel, Xsel);
+			est = pd.mean + KAPPA * pd.se;                                             // acquisition ordering (§8 E)
 			for (const id of added) if (hist.has(id)) est += deltaMinL;        // history tiebreak (§8F)
 		} else {
 			est = 0;

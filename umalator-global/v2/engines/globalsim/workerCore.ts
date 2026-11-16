@@ -21,11 +21,21 @@
  *     activations of that one skill in each compact record.
  *     secondPlayerIndex (head-to-head compare): also extract that runner's
  *     finish data (+ frames in full mode) into the record's `opp` field.
- *     ← {type:'prepared', id, setupKey, ok, error?, dead?}
+ *     ← {type:'prepared', id, setupKey, ok, error?, dead?, prepareMs, held}
  *     dead:true means the wasm handle/instance may be poisoned (engine panic)
- *     and the pool should recreate the worker.
+ *     and the pool should recreate the worker. prepareMs times the
+ *     PreparedRace construction itself (the engine-side prepare the §H
+ *     prepare-share acceptance measures). `held` is the worker's current
+ *     preparation LRU (MRU first): the pool mirrors it for key-affine
+ *     scheduling instead of assuming a single preparation per worker.
+ *     A failed prepare touches NO other entry (only the re-prepared key is
+ *     dropped, since replacing an entry frees its old handle first).
  *
- *   → {type:'run', jobId, seeds:number[], mode:'compact'|'full'}
+ *   → {type:'run', jobId, setupKey?, seeds:number[], mode:'compact'|'full'}
+ *     setupKey picks which held preparation runs the job; a worker holds up
+ *     to PREPARED_LRU of them (§H). Omitted (legacy/manual callers): the most
+ *     recently prepared race answers. A key the worker does not hold is a
+ *     chunk failure — the pool mirrors `held` and never sends one.
  *     compact: per-seed SeedCompactRecord (finish metadata + the tail sample
  *       grid; frames dropped). On newer pkg builds wasm run_compact()
  *       computes this engine-side and never serializes frames at all; the
@@ -33,7 +43,9 @@
  *       for older pkg — both must stay in lockstep (parity-tested).
  *     full: per-seed FullRunData (player frame arrays + skill events) for the
  *       representative runs.
- *     ← {type:'chunk', jobId, mode, ok:true, records:[...]}
+ *     ← {type:'chunk', jobId, mode, ok:true, records:[...], runMs}
+ *       runMs times the whole per-seed loop (engine run + reply parse), the
+ *       denominator of the §H prepare-share ratio.
  *       A per-seed engine error is a record with {seed, error} — the chunk
  *       (and the handle) survive. An engine PANIC kills the handle:
  *     ← {type:'chunk', jobId, mode, ok:false, dead:true, error, processed}
@@ -61,6 +73,17 @@ export interface PreparedRaceInstance {
 	run_compact?(seed: number, trackSkillId: string, secondPlayerIndex: number): string;
 	free(): void;
 }
+
+/**
+ * §H: a worker keeps a small LRU of prepared races (setupKey → handle)
+ * instead of one. A setup's prepare costs 4.5–12.8 ms (globalsim-wasm
+ * README) against ~7–9 ms per seed, so re-preparing between the small
+ * per-gate seed blocks of a search batch is pure loss; an LRU turns the
+ * second and later rungs of a build into pure run time. The cap bounds
+ * memory (one PreparedRace is one parsed request + init state — a handful
+ * of them per worker stays well inside the pool's memory story).
+ */
+export const PREPARED_LRU = 8;
 
 /** The wasm-bindgen surface globalsim-wasm/src/lib.rs exposes. */
 export interface WasmApi {
@@ -104,7 +127,7 @@ export interface PrepareMsg {
  * charts never re-ship the ~350 KB table per preparation.
  */
 export interface SkillDataMsg { type: 'skillData'; skillData: unknown }
-export interface RunMsg { type: 'run'; jobId: string; seeds: number[]; mode: 'compact' | 'full' }
+export interface RunMsg { type: 'run'; jobId: string; setupKey?: string; seeds: number[]; mode: 'compact' | 'full' }
 export type WorkerInMsg = PrepareMsg | RunMsg | SkillDataMsg;
 
 /** True for errors that poison the wasm handle/instance (panic, dead handle). */
@@ -112,12 +135,25 @@ export function isDeadlyError(text: string): boolean {
 	return text.startsWith('engine panic') || text.startsWith('handle is dead');
 }
 
+interface HeldPrep {
+	setupKey: string;
+	race: PreparedRaceInstance;
+	canCompact: boolean;
+	trackSkillId?: string;
+	secondPlayerIndex?: number;
+}
+
+/** ms since (monotonic where the host gives it, else wall clock). */
+const nowMs = (): number => (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+
 export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 	const geometryBase = deps.geometryBase ?? `${BASE_PATH}/globalsim/geometry/`;
 	let wasm: WasmApi | null = null;
 	let wasmLoading: Promise<WasmApi> | null = null;
 	const geometryRegistered = new Set<number>();
-	let prepared: { setupKey: string; race: PreparedRaceInstance; canCompact: boolean; trackSkillId?: string; secondPlayerIndex?: number } | null = null;
+	// §H: the preparation LRU — Map insertion order IS the LRU order (oldest
+	// first; a run touch deletes + re-inserts to mark most-recently-used).
+	const prepared = new Map<string, HeldPrep>();
 	let heldSkillData: unknown = null;
 
 	async function ensureWasm(): Promise<WasmApi> {
@@ -265,6 +301,13 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 		return rec;
 	}
 
+	/** Held keys, most-recently-used first (what the pool mirrors). */
+	const heldKeys = (): string[] => Array.from(prepared.keys()).reverse();
+
+	function freePrep(p: HeldPrep): void {
+		try { p.race.free(); } catch { /* already dead */ }
+	}
+
 	async function handlePrepare(m: PrepareMsg): Promise<void> {
 		try {
 			const w = await ensureWasm();
@@ -278,41 +321,58 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 				? { ...requestObj, skillData: heldSkillData }
 				: requestObj;
 			const json = JSON.stringify(requestFinal);
-			// Free the previous preparation before building the next one (a
-			// worker keeps at most one PreparedRace — memory bound).
-			if (prepared) { try { prepared.race.free(); } catch { /* already dead */ } prepared = null; }
+			// §H: a re-prepare of a held key replaces that entry (old handle
+			// freed first, one entry's worth of memory at a time); the other
+			// entries survive, and a failed prepare does not touch them.
+			const stale = prepared.get(m.setupKey);
+			if (stale) { freePrep(stale); prepared.delete(m.setupKey); }
+			const t0 = nowMs();
 			const race = new w.PreparedRace(json);
-			prepared = { setupKey: m.setupKey, race, canCompact: typeof race.run_compact === 'function', trackSkillId: m.trackSkillId, secondPlayerIndex: m.secondPlayerIndex };
-			deps.postMessage({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: true });
+			const prepareMs = nowMs() - t0;
+			prepared.set(m.setupKey, { setupKey: m.setupKey, race, canCompact: typeof race.run_compact === 'function', trackSkillId: m.trackSkillId, secondPlayerIndex: m.secondPlayerIndex });
+			// Bound memory: evict the least-recently-used preparations.
+			while (prepared.size > PREPARED_LRU) {
+				const oldestKey = prepared.keys().next().value as string;
+				freePrep(prepared.get(oldestKey)!);
+				prepared.delete(oldestKey);
+			}
+			deps.postMessage({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: true, prepareMs, held: heldKeys() });
 		} catch (e: any) {
 			const msg = String(e && e.message || e);
 			// A panic during construction may have poisoned the wasm instance.
-			deps.postMessage({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: false, error: msg, dead: isDeadlyError(msg) });
+			deps.postMessage({ type: 'prepared', id: m.id, setupKey: m.setupKey, ok: false, error: msg, dead: isDeadlyError(msg), held: heldKeys() });
 		}
 	}
 
 	function handleRun(m: RunMsg): void {
-		if (!prepared) {
+		// setupKey picks the held preparation; without one (manual/legacy
+		// callers) the most recently prepared race answers.
+		const newest = prepared.size ? Array.from(prepared.keys()).pop()! : null;
+		const prep = m.setupKey != null ? prepared.get(m.setupKey) ?? null : (newest != null ? prepared.get(newest) ?? null : null);
+		if (!prep || (m.setupKey != null && !prepared.has(m.setupKey))) {
 			deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: false, dead: false, error: `no preparation for job ${m.jobId}` });
 			return;
 		}
+		// Run touch: the used preparation becomes the most-recently-used one.
+		if (m.setupKey != null) { prepared.delete(m.setupKey); prepared.set(m.setupKey, prep); }
 		const records: (SeedCompactRecord | FullRunData)[] = [];
 		/** Deadly (handle-poisoning) error: report the chunk as a worker failure. */
 		const deadly = (msg: string, i: number): void => {
-			prepared = null;
+			prepared.delete(prep.setupKey);
 			deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: false, dead: true, error: msg, processed: i, records });
 		};
+		const t0 = nowMs();
 		// wasm run_compact (newer pkg): the compact record comes back from the
 		// engine directly (~1 KB/seed instead of ~2 MB of frames parsed here).
 		// i32-range seeds only: beyond that wasm-bindgen's i32 coercion would
 		// change the seed echoed in the record, so those seeds keep the old path.
-		const useCompact = m.mode === 'compact' && prepared.canCompact;
+		const useCompact = m.mode === 'compact' && prep.canCompact;
 		for (let i = 0; i < m.seeds.length; i++) {
 			const seed = m.seeds[i];
 			if (useCompact && seed >= -2147483648 && seed <= 2147483647) {
 				let text: string;
 				try {
-					text = prepared.race.run_compact!(seed, prepared.trackSkillId ?? '', prepared.secondPlayerIndex ?? -1);
+					text = prep.race.run_compact!(seed, prep.trackSkillId ?? '', prep.secondPlayerIndex ?? -1);
 				} catch (e: any) {
 					const msg = String(e && e.message || e);
 					if (isDeadlyError(msg)) { deadly(msg, i); return; }
@@ -331,7 +391,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			}
 			let text: string;
 			try {
-				text = prepared.race.run(seed);
+				text = prep.race.run(seed);
 			} catch (e: any) {
 				const msg = String(e && e.message || e);
 				if (isDeadlyError(msg)) { deadly(msg, i); return; }
@@ -354,9 +414,9 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 				records.push({ seed, error: `reply parse failed: ${String(e && e.message || e)}` });
 				continue;
 			}
-			records.push(m.mode === 'full' ? extractFull(reply, seed, prepared.secondPlayerIndex) : extractCompact(reply, seed, prepared.trackSkillId, prepared.secondPlayerIndex));
+			records.push(m.mode === 'full' ? extractFull(reply, seed, prep.secondPlayerIndex) : extractCompact(reply, seed, prep.trackSkillId, prep.secondPlayerIndex));
 		}
-		deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: true, records });
+		deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: true, records, runMs: nowMs() - t0 });
 	}
 
 	return {
@@ -367,7 +427,9 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			if (msg.type === 'prepare') void handlePrepare(msg as PrepareMsg);
 			else if (msg.type === 'run') handleRun(msg as RunMsg);
 		},
-		/** Test/host hook: whether a preparation is currently held (affinity assertions). */
-		get preparedKey(): string | null { return prepared ? prepared.setupKey : null; },
+		/** Test/host hook: the most-recently-used held preparation (affinity assertions). */
+		get preparedKey(): string | null { return prepared.size ? Array.from(prepared.keys()).pop()! : null; },
+		/** Test/host hook: every held setupKey, most-recently-used first. */
+		get heldKeys(): string[] { return heldKeys(); },
 	};
 }

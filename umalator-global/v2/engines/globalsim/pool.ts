@@ -1,19 +1,25 @@
 /**
  * GlobalSim worker pool + seed scheduler (Phase 4, §4.1, decision D2).
  *
- * N Web Workers, each holding one globalsim-wasm instance (§4.2 — one
- * PreparedRace at a time per worker). Jobs are (setup, ≤CHUNK seeds) chunks;
- * every completed chunk streams its compact per-seed records back through
- * onChunk, so aggregates grow while the run proceeds.
+ * N Web Workers, each holding one globalsim-wasm instance. Jobs are
+ * (setup, ≤CHUNK seeds) chunks; every completed chunk streams its compact
+ * per-seed records back through onChunk, so aggregates grow while the run
+ * proceeds.
  *
- * ## Preparation affinity
+ * ## Preparation affinity (§H: per-worker LRU, key-affine scheduling)
  *
- * A worker re-prepares only when the next job's setupKey differs from the
- * setup it currently holds ("roster/skills/course/gate"). The scheduler
- * prefers a queued job matching a free worker's current preparation; the
- * compare facade feeds jobs grouped by setupKey so a worker usually runs
- * several consecutive chunks on one preparation (auto-gate mode: ≤9 setups
- * per variant — one per gate — instead of one per seed).
+ * Each worker keeps a small LRU of prepared races keyed by setupKey
+ * ("roster/skills/course/gate"; cap: workerCore PREPARED_LRU) and reports
+ * the held keys on every `prepared` reply, which the slot mirrors in
+ * `held`. A job for a held key runs bare (no prepare round-trip); dispatch
+ * prefers, for each idle worker, a queued job matching ANY held key (most
+ * recent first), so a worker never re-prepares while a gate block it can
+ * run bare is still queued — a seed batch that reuses setups (bandit
+ * rungs, chart rounds) lands on the workers that already hold them, and a
+ * cold prepare happens only when the whole queue misses the LRU. Callers
+ * keep the blocks contiguous by feeding jobs grouped by setupKey (the
+ * compare facade, the chart per-skill groups, the optimizer's sorted
+ * ensure-batch).
  *
  * ## Crash policy
  *
@@ -156,6 +162,27 @@ export interface GlobalsimPool {
 	abort(): void;
 	/** Number of live workers (tests). */
 	size(): number;
+	/**
+	 * §H timing ledger (accumulated across batches): worker-measured prepare
+	 * and run ms. prepareMs times PreparedRace construction (the engine
+	 * prepare), runMs the per-seed run loop (engine + reply parse). The
+	 * §H acceptance is prepareMs < 10% of runMs on a real-engine run;
+	 * workers that do not report timings simply add nothing.
+	 */
+	timing(): PoolTiming;
+}
+
+export interface PoolTiming {
+	/** Preparations built across all batches. */
+	prepares: number;
+	/** Worker-measured PreparedRace construction time (ms). */
+	prepareMs: number;
+	/** Successful chunks (jobs run). */
+	chunks: number;
+	/** Worker-measured run-loop time (ms), the prepare-share denominator. */
+	runMs: number;
+	/** Per-seed records streamed back on successful chunks. */
+	records: number;
 }
 
 interface Queued { job: PoolJob; requeues: number }
@@ -163,7 +190,10 @@ interface Queued { job: PoolJob; requeues: number }
 interface Slot {
 	gen: number;                 // bumped on every worker (re)creation to ignore stale messages
 	worker: WorkerLike | null;
-	preparedKey: string | null;
+	/** §H: setupKeys the worker's preparation LRU holds, most-recently-used
+	 *  first — mirrored from the worker's `prepared` replies. Empty until the
+	 *  first successful prepare; reset whenever the worker is (re)created. */
+	held: string[];
 	inflight: Queued | null;
 	expecting: 'prepared' | 'chunk' | null;
 }
@@ -270,6 +300,8 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	let running: { resolve: () => void; reject: (e: Error) => void } | null = null;
 	let disposed = false;
 	let aborted = false;
+	// §H: worker-reported timing ledger (see GlobalsimPool.timing).
+	const timingLedger: PoolTiming = { prepares: 0, prepareMs: 0, chunks: 0, runMs: 0, records: 0 };
 
 	// ── shared-budget plumbing (see the worker budget block above) ──────────────
 	// `held` = permits this pool owns: one per live slot PLUS any permit reserved
@@ -362,7 +394,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	}
 
 	function makeSlot(): Slot {
-		const slot: Slot = { gen: 0, worker: null, preparedKey: null, inflight: null, expecting: null };
+		const slot: Slot = { gen: 0, worker: null, held: [], inflight: null, expecting: null };
 		attachWorker(slot);
 		slots.push(slot);
 		return slot;
@@ -372,7 +404,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		slot.gen++;
 		const gen = slot.gen;
 		slot.worker = opts.factory();
-		slot.preparedKey = null;
+		slot.held = [];
 		slot.expecting = null;
 		if (opts.skillData !== undefined) slot.worker.postMessage({ type: 'skillData', skillData: opts.skillData });
 		slot.worker.addEventListener('message', (e: { data: any }) => { if (!disposed && !aborted && slot.gen === gen) onWorkerMessage(slot, e.data); });
@@ -387,7 +419,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		slot.expecting = null;
 		try { slot.worker?.terminate(); } catch { /* already gone */ }
 		slot.worker = null;
-		slot.preparedKey = null;
+		slot.held = [];   // a recreated worker holds no preparations
 		if (failed) {
 			if (failed.requeues >= 1) {
 				// Second failure of the same chunk → job error (§4.1).
@@ -411,21 +443,30 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			if (slot.expecting !== 'prepared' || data.id !== job.id) return;
 			slot.expecting = null;
 			if (data.ok === true) {
-				slot.preparedKey = job.setupKey;
+				// Mirror the worker's preparation LRU (§H). A worker that does
+				// not report `held` (older core, scripted fakes) is modelled as
+				// holding only what it just prepared — single-preparation
+				// semantics, the conservative reading.
+				slot.held = Array.isArray(data.held) ? data.held.slice() : [job.setupKey];
+				if (typeof data.prepareMs === 'number' && Number.isFinite(data.prepareMs)) {
+					timingLedger.prepares++;
+					timingLedger.prepareMs += data.prepareMs;
+				}
 				slot.expecting = 'chunk';
-				slot.worker!.postMessage({ type: 'run', jobId: job.id, seeds: job.seeds, mode: job.mode });
+				slot.worker!.postMessage({ type: 'run', jobId: job.id, setupKey: job.setupKey, seeds: job.seeds, mode: job.mode });
 			} else if (data.dead === true) {
 				failWorker(slot, `prepare failed (dead): ${data.error}`);
 			} else {
 				// Input-level prepare failure — a retry would fail identically.
 				const msg = `prepare failed: ${data.error}`;
 				slot.inflight = null;
-				// Invalidate the cached preparation: workerCore.handlePrepare
-				// frees the held PreparedRace before building the next one, so
-				// a failed prepare can leave the worker with NO preparation.
-				// Keeping the old key here would make dispatch bare-run the
-				// next matching job into a "no preparation" failure — forever.
-				slot.preparedKey = null;
+				// Mirror the failure response too: the LRU core keeps the
+				// OTHER preparations (it only drops the re-prepared key), and
+				// a core that reports no `held` is modelled the conservative
+				// old way (a failed prepare may have left NO preparation) —
+				// clearing here is what stops dispatch bare-running a stale
+				// key into a "no preparation" failure, forever.
+				slot.held = Array.isArray(data.held) ? data.held.slice() : [];
 				errors.push({ jobId: job.id, error: msg });
 				opts.onJobError?.(job, msg);
 				dispatch();
@@ -437,6 +478,11 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			slot.expecting = null;
 			if (data.ok === true) {
 				slot.inflight = null;
+				if (typeof data.runMs === 'number' && Number.isFinite(data.runMs)) {
+					timingLedger.chunks++;
+					timingLedger.runMs += data.runMs;
+				}
+				timingLedger.records += Array.isArray(data.records) ? data.records.length : 0;
 				opts.onChunk?.(job, data.records || []);
 			} else if (data.dead === true) {
 				// failWorker consumes slot.inflight (requeue or job error).
@@ -454,18 +500,27 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		}
 	}
 
-	/** Give every idle worker a job, preferring its held preparation. */
+	/** Give every idle worker a job, preferring ANY preparation it holds. */
 	function dispatch(): void {
 		if (!running || disposed || aborted) return;
 		for (const slot of slots) {
 			if (slot.inflight || queue.length === 0) continue;
-			let idx = slot.preparedKey == null ? -1 : queue.findIndex(q => q.job.setupKey === slot.preparedKey);
+			// §H key-affine scheduling: a queued job for ANY held preparation
+			// (most-recently-used first) beats a cold prepare, even when a
+			// foreign job is at the queue head — the worker never waits on a
+			// preparation it cannot use. With the caller's setupKey grouping
+			// this keeps each gate block on a worker that already holds it.
+			let idx = -1;
+			for (const key of slot.held) {
+				idx = queue.findIndex(q => q.job.setupKey === key);
+				if (idx >= 0) break;
+			}
 			if (idx < 0) idx = 0;   // no affinity match: keep queue order (jobs are grouped by setupKey upstream)
 			const next = queue.splice(idx, 1)[0];
 			slot.inflight = next;
-			if (slot.preparedKey === next.job.setupKey) {
+			if (slot.held.includes(next.job.setupKey)) {
 				slot.expecting = 'chunk';
-				slot.worker!.postMessage({ type: 'run', jobId: next.job.id, seeds: next.job.seeds, mode: next.job.mode });
+				slot.worker!.postMessage({ type: 'run', jobId: next.job.id, setupKey: next.job.setupKey, seeds: next.job.seeds, mode: next.job.mode });
 			} else {
 				slot.expecting = 'prepared';
 				slot.worker!.postMessage({ type: 'prepare', id: next.job.id, setupKey: next.job.setupKey, request: next.job.request, trackSkillId: next.job.trackSkillId, secondPlayerIndex: next.job.secondPlayerIndex });
@@ -524,5 +579,6 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			r?.reject(new Error('globalsim pool aborted'));
 		},
 		size(): number { return slots.length; },
+		timing(): PoolTiming { return { ...timingLedger }; },
 	};
 }
