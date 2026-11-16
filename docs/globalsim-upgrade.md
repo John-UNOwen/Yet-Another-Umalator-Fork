@@ -4,6 +4,11 @@ How to bump the vendored engine (`vendor/GlobalSim` submodule) from one release
 to the next (currently **v77**, commit `27a4d13`). Every step has a Windows
 PowerShell form and a Linux/CI form; run one form or the other, not both.
 
+Before bumping: the submodule currently tracks the fork's `paired-draws`
+branch, not an upstream tag — read
+[Fork deviation: the paired-draws submodule](#fork-deviation-the-paired-draws-submodule)
+first.
+
 The invariants this runbook protects (integration plan §7): the pinned submodule
 is consumed unmodified, the validated runtime profile is copied verbatim from
 the example, and every layer below it (goldens, acceptance suites, coverage
@@ -260,6 +265,46 @@ chore: upgrade GlobalSim to vNN (submodule, profile, goldens)
 ```
 
 Then open the PR — CI is the gate.
+
+## Fork deviation: the paired-draws submodule
+
+`vendor/GlobalSim` does not sit on an upstream tag. It tracks the
+**`paired-draws` branch of `John-UNOwen/GlobalSim`** (this fork's engine
+fork), built on top of the pinned v77 commit `27a4d13`. Step 1's
+"never track a branch" rule is about upstream tags; this branch is the
+fork's own work, so the branch pin is deliberate.
+
+The branch adds one request flag, `pairedRandomStreams` (omitted unless the
+app asks for it). With the flag the in-race random stream is keyed by
+(seed, runner) and each skill's initialization windows and wisdom lottery by
+(seed, runner, skill), so adding one skill no longer reshuffles another
+runner's draws: two builds run over the same seeds share the whole field and
+differ only in the changed skill's own draws.
+
+The mode each surface uses:
+
+| Surface | Mode |
+|---|---|
+| Skill Optimizer (Stage A-G) | paired, always |
+| Skill Chart | paired, always |
+| Compare | retail by default; the "Paired seeds (lower noise)" switch opts in |
+
+Acceptance numbers, measured on the branch:
+
+- requests without the flag reply **byte-identical** to a build of the pinned
+  upstream commit `27a4d13` (`"pairedRandomStreams": false` replies byte-identical
+  too; re-checked 2026-11-16 against the baseline binary),
+- `cargo test --release`: 171 passed / 171,
+- median ρ 0.974 and paired σΔ(ℓ) 0.175 L (300 seeds, course 10504, 15-skill
+  base; the optimizer's README "Noise calibration record" carries the
+  1000-seed re-measurement and the field-vs-build split),
+- distributions unchanged: the outcome marginals match retail mode at 1 %
+  (optimizer README, "Paired-draws mode (engine fork)").
+
+Rebuilding the wasm wrapper against the branch is step 5 unchanged: wasm-pack
+**0.15.1** with the wasm32 target, then `wasm-pack build --target web
+--release --out-dir pkg` in `globalsim-wasm`. `globalsim-wasm/pkg/` is
+generated output and gitignored — never committed.
 
 ## Decision record: panic strategy
 

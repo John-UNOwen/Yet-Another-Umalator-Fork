@@ -3,16 +3,17 @@
  * effort preset. Everything the search pipeline sizes itself with lives here;
  * stages read config, never magic numbers.
  *
- * Effort presets (plan §11 table, verbatim):
+ * Effort presets (plan §11 table; G seeds and batch cap re-sized from the
+ * paired noise record, README.md 2026-11-16 — the presets run paired):
  *
- * |              | Quick          | Standard (default)   | Thorough            |
- * | δ_min (L)    | 0.05           | 0.03                 | 0.02                |
- * | K restarts   | 1              | 3                    | 5                   |
- * | D_MAX_ITERS  | 1              | 4                    | 6                   |
- * | Beam B       | —              | —                    | 6                   |
- * | G seeds      | 1,000 / 2,000  | 3,000 / 10,000       | 5,000 / 20,000      |
- * | batch cap    | 2,000          | 5,000                | 10,000              |
- * | surrogate    | off            | on                   | on                  |
+ * |              | Quick        | Standard (default) | Thorough          |
+ * | δ_min (L)    | 0.05         | 0.03               | 0.02              |
+ * | K restarts   | 1            | 3                  | 5                 |
+ * | D_MAX_ITERS  | 1            | 4                  | 6                 |
+ * | Beam B       | —            | —                  | 6                 |
+ * | G seeds      | 200 / 800    | 500 / 2,000        | 1,000 / 4,000     |
+ * | batch cap    | 400          | 1,000              | 2,000             |
+ * | surrogate    | off          | on                 | on                |
  *
  * `untilStopped` runs at Thorough sizes with no wall-clock deadline: the loop
  * keeps iterating local search and extends Stage G verification up to
@@ -24,7 +25,8 @@ import type { AggregationKind, EffortPreset, ObjectiveKind } from './types';
 
 export interface EffortConfig {
 	preset: EffortPreset;
-	/** Smallest improvement worth chasing / reporting as not-a-tie, in lengths. */
+	/** Smallest improvement worth chasing / reporting as not-a-tie, in lengths.
+	 *  A judgment floor, not a noise size, so the paired re-size left it alone. */
 	deltaMinL: number;
 	/** Stage C restart points (K near-optimal knapsack starts). */
 	restarts: number;
@@ -57,10 +59,18 @@ export interface EffortConfig {
 
 const SCREEN_COMMON = {
 	// Chart-parity (§8 Stage B reuses the chart's two-round filter): 25 + 175.
+	// Kept for chart parity; at the paired σΔ = 0.16 L the round-1 SE is
+	// 0.16/√25 = 0.032 L, already at the Standard δ_min.
 	screenRound1Seeds: 25,
 	screenRound2Seeds: 175,
+	// Round-1 keep filter, chart-parity (lengths). Paired measurement (README
+	// 2026-11-16): never-firing adds have σΔ exactly 0 (6/12), so the 0.1 L sd
+	// floor filters them while active adds (σΔ = 0.16 L) pass.
 	screenFilterMaxL: 0.1,
 	screenFilterSpreadL: 0.1,
+	// §7.3 noise calibration seeds (base + ~4 variants → ~2k races). Kept at
+	// 400: σ̂ carries ~3.5% relative error (1/√2n) at any σ, and the seeds are
+	// reused from cache by Stage B.
 	noiseSeeds: 400,
 	noiseVariants: 4,
 };
@@ -68,21 +78,28 @@ const SCREEN_COMMON = {
 export const QUICK: EffortConfig = {
 	preset: 'quick',
 	deltaMinL: 0.05, restarts: 1, dMaxIters: 1, fMaxRounds: 0, beam: 0,
-	gSeedsMin: 1000, gSeedsCap: 2000, batchCap: 2000, surrogate: false,
+	// Paired record σΔ = 0.16 L: (2·1.96·0.16/0.05)² = 158 seeds resolve δ_min,
+	// rounded up to 200; the cap is 4× (resolves δ_min/2), batchCap 2× per
+	// candidate for multiple-comparison slack.
+	gSeedsMin: 200, gSeedsCap: 800, batchCap: 400, surrogate: false,
 	timeBudgetMs: 60_000, ...SCREEN_COMMON,
 };
 
 export const STANDARD: EffortConfig = {
 	preset: 'standard',
 	deltaMinL: 0.03, restarts: 3, dMaxIters: 4, fMaxRounds: 3, beam: 0,
-	gSeedsMin: 3000, gSeedsCap: 10000, batchCap: 5000, surrogate: true,
+	// Same sizing as Quick at δ_min = 0.03: (2·1.96·0.16/0.03)² = 437, rounded
+	// up to 500; cap 4× (0.014 L), batchCap 2×.
+	gSeedsMin: 500, gSeedsCap: 2000, batchCap: 1000, surrogate: true,
 	timeBudgetMs: 5 * 60_000, ...SCREEN_COMMON,
 };
 
 export const THOROUGH: EffortConfig = {
 	preset: 'thorough',
 	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, fMaxRounds: 4, beam: 6,
-	gSeedsMin: 5000, gSeedsCap: 20000, batchCap: 10000, surrogate: true,
+	// Same sizing at δ_min = 0.02: (2·1.96·0.16/0.02)² = 983, rounded up to
+	// 1000; cap 4× (0.010 L), batchCap 2×.
+	gSeedsMin: 1000, gSeedsCap: 4000, batchCap: 2000, surrogate: true,
 	timeBudgetMs: 20 * 60_000, ...SCREEN_COMMON,
 };
 
@@ -90,7 +107,8 @@ export const THOROUGH: EffortConfig = {
 export const UNTIL_STOPPED: EffortConfig = {
 	preset: 'untilStopped',
 	deltaMinL: 0.02, restarts: 5, dMaxIters: 6, fMaxRounds: 4, beam: 6,
-	gSeedsMin: 5000, gSeedsCap: 20000, batchCap: 10000, surrogate: true,
+	// THOROUGH's sizes (paired record, see its comment), unbounded in time.
+	gSeedsMin: 1000, gSeedsCap: 4000, batchCap: 2000, surrogate: true,
 	timeBudgetMs: Infinity, ...SCREEN_COMMON,
 };
 

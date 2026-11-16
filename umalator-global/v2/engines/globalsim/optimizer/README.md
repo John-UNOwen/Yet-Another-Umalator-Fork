@@ -64,13 +64,38 @@ base horse (40 seeds × 3 builds, node + real wasm via the worker pool):
 
 Seed-budget implication: a paired comparison needs
 `n ≈ (2·1.96·σΔ/δ)²` ≈ 6.6k seeds to resolve δ = 0.03 L — the §11 Stage G
-seed counts are sized exactly for this band, and screening therefore ranks by
+seed counts were sized for this band (the 2026-11-16 paired block below
+replaces that sizing), and screening therefore ranks by
 ℓ differences with bandit allocation instead of raw win/lose (§6.1).
 
 Throughput (globalsim-wasm/README.md): 6.3–9.4 ms per 9-runner race in Chrome
 → ~1,000 races/s at 8 threads; a Standard run is ~110–180k races ≈ 2–3 min
 (§10). Recompute with `npm run test:optimizer` (the calibration test prints
 fresh numbers).
+
+Paired-mode re-measurement (2026-11-16, native `race_engine_rs_v2.exe`, same
+course and mob field, 15-skill base + 12 single-skill adds, 1000 seeds per
+arm, both stream modes over the same seed list, lead in lengths at 20 m/s):
+
+| Number | Retail | Paired |
+|---|---|---|
+| σ(ℓ) of one build | 0.82 L | 0.77 L |
+| median σΔ(ℓ) of active adds | 1.07 L | 0.16 L |
+| median ρ of the two arms on shared seeds | 0.115 | 0.980 |
+| seed-shared (race) part, √(ρ·σA·σB) | 0.27 L | 0.76 L |
+| per-arm (build draws) part, σΔ/√2 | 0.75 L | 0.11 L |
+| adds with Δ exactly 0 | 1 of 12 | 6 of 12 |
+
+Split-half σΔ is stable (paired halves 0.154 / 0.147, retail halves
+1.064 / 1.071). Paired keys replay the field for a shared seed (ρ 0.980), so
+the 0.76 L race part cancels and only the 0.11 L per-arm build draws survive;
+in retail mode the field does not replay across builds of one seed (ρ 0.115),
+so seed-pairing there cancels almost nothing and σΔ stays near √2·σ(ℓ). Seed
+budget: `n ≈ (2·1.96·σΔ/δ)²` — δ = 0.03 L costs ~440 paired seeds where
+retail needs ~19.5k. The `config.ts` presets are sized from the paired
+column, since Stage A-G and the Skill Chart run paired; the retail column is
+what Compare traffic still runs on until the user switches on "Paired seeds
+(lower noise)".
 
 ## Prerequisite skills spend SP and measure as free
 
@@ -124,8 +149,9 @@ Stage A-G runs paired, and so does the Skill Chart; Compare stays retail until t
 seeds (lower noise)" switch is on. `cache.ts` namespaces search and verify per mode
 (`nsWithMode`), so a value measured one way is never folded into a stat from the other, and
 setupKeys carry the mode so a prepared worker is not reused across modes. Seed lists stay
-mode-independent, so search and verify seeds remain disjoint (P3). Config sizing still comes
-from the retail-mode noise record below and needs re-deriving from paired noise (§J.3).
+mode-independent, so search and verify seeds remain disjoint (P3). Config
+sizing comes from the paired record above; the arithmetic is in the
+`config.ts` preset comments.
 
 ## Tests
 
