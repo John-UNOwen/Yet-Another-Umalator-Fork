@@ -28,6 +28,7 @@ import { ci95 } from './engines/globalsim/metrics';
 import type { WorkerFactory } from './engines/globalsim/pool';
 import { loadGlobalsimCourseIds } from './engines/globalsim/courses';
 import { calculateSkillCost } from './skill-chart-utils';
+import { pickCareerDump, type CareerImport } from './career-import';
 import { convertUmaStateForWorker } from './simulation-utils';
 import { HorseState } from '../../components/HorseDefTypes';
 import { Grade, GroundCondition } from '../../uma-skill-tools/RaceParameters';
@@ -63,6 +64,9 @@ export interface OptimizerPaneProps {
 	/** "Open in Compare": hand the recommended build's added skills to the app,
 	 *  which merges them onto a copy of the current uma as Uma 2 (optional). */
 	onOpenInCompare?: (addedSkillIds: string[]) => void;
+	/** A Hachimi career dump was imported: the app owns the uma and hint state, so
+	 *  it applies those (stats, aptitudes, outfit, learned skills, hint levels). */
+	onImportCareer?: (imp: CareerImport) => void;
 }
 
 /** skillnames values are arrays like ["JP", "EN"] — prefer last (EN), same as skill-chart-pane. */
@@ -225,6 +229,27 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		});
 
 	const stop = () => ctrlRef.current?.stop();
+
+	// ── career dump import ────────────────────────────────────────────────────
+	/** The offer pool from an imported Hachimi career dump, kept as a set so the
+	 *  selection is re-cut whenever `candidates` changes (the imported uma
+	 *  re-derives that list, and it lands after this handler returns). */
+	const [poolFilter, setPoolFilter] = useState<Set<string> | null>(null);
+	const [career, setCareer] = useState<CareerImport | null>(null);
+	useEffect(() => {
+		if (!poolFilter || !candidates.length) return;
+		setChosen(new Set(candidates.filter((id) => poolFilter.has(id))));
+	}, [poolFilter, candidates]);
+
+	const importCareer = async () => {
+		if (runningRef.current) return;
+		const imp = await pickCareerDump();
+		if (!imp) return;
+		props.onImportCareer?.(imp); // outfit, stats, aptitudes, learned skills, hint levels
+		if (imp.budget != null) setBudget(imp.budget);
+		setPoolFilter(imp.offered.length ? new Set(imp.offered) : null);
+		setCareer(imp);
+	};
 
 	const run = async () => {
 		if (runningRef.current || !skillData || !workerFactory) return;
@@ -488,6 +513,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				<div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
 					<input style={{ ...inputStyle, flex: '1 1 180px' }} placeholder="Filter skills…" value={filter}
 						disabled={running} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
+					<button type="button" class="v2-optimizer-import" style={inputStyle} disabled={running}
+						title="Load a Hachimi career dump: sets the uma from that career (outfit, stats, aptitudes, mood, learned skills), takes its SP budget and hint levels, and limits the pool to the skills the game was offering"
+						onClick={importCareer}>Import career dump…</button>
 					<button type="button" style={inputStyle} disabled={running}
 						onClick={() => setChosen((prev) => new Set([...prev, ...filtered]))}>Select all</button>
 					<button type="button" style={inputStyle} disabled={running} onClick={() => setChosen(new Set())}>Clear</button>
@@ -495,6 +523,22 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 						{chosen.size} chosen · Σcost {chosenCost} SP
 					</span>
 				</div>
+				{career && (
+					<div class="v2-optimizer-career" style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
+						<span>{career.summary}</span>
+						{poolFilter && <span style={{ opacity: 0.7 }}> · pool limited to what that career was offering</span>}
+						{career.warnings.length > 0 && (
+							<details style={{ display: 'inline', marginLeft: 6 }}>
+								<summary style={{ display: 'inline', cursor: 'pointer', opacity: 0.8 }}>
+									{career.warnings.length} import note{career.warnings.length > 1 ? 's' : ''}
+								</summary>
+								<ul style={{ margin: '4px 0 0', paddingLeft: 20, opacity: 0.75 }}>
+									{career.warnings.map((w) => <li>{w}</li>)}
+								</ul>
+							</details>
+						)}
+					</div>
+				)}
 				<div class="v2-optimizer-candidate-list"
 					style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid rgba(128,128,128,0.3)', borderRadius: 6, padding: 4 }}>
 					{filtered.map((id) => {

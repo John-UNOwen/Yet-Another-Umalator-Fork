@@ -66,6 +66,7 @@ import { V2ResultsPane, CompareResults, RaceSnapshot, calcStats } from "./result
 import { VelocityOverlay } from "./velocity-overlay";
 import { SkillChartPane } from "./skill-chart-pane";
 import { OptimizerPane } from "./optimizer-pane";
+import type { CareerImport } from "./career-import";
 import { SkillChartDetail } from "./skill-chart-detail";
 // import { PasswordGate } from "./PasswordGate";
 import { FeedbackDrawer } from "./feedback-drawer";
@@ -100,6 +101,7 @@ import {
   savePreferences,
   copyShareableUrl,
   deserializeStateFromHash,
+  validateAndParseUmaJson,
   COLOR_PALETTES,
   type ColorPalette,
 } from "./storage";
@@ -692,6 +694,24 @@ function App() {
     });
     setActiveUmaTab(2);
   }, [uma1]);
+
+  // A Hachimi career dump imported from the Skill Optimizer. The dump describes a
+  // trained uma that exists, so it replaces the fields it carries (outfit, star and
+  // unique level, stats, aptitudes, running style, mood, learned skills) and merges
+  // its hint levels into the shared hint state the chart and optimizer both cost with.
+  // The merged build goes back through the app's own validator, so a dump with a
+  // bad value in it cannot push a stat out of range; if validation rejects it, the
+  // previous uma is left alone.
+  const handleImportCareer = useCallback((imp: CareerImport) => {
+    setUma1((prev) => validateAndParseUmaJson({ ...prev, ...imp.uma }) ?? prev);
+    if (imp.hints.size) {
+      setSkillHints((prev) => {
+        const next = new Map(prev);
+        for (const [id, level] of imp.hints) next.set(id, level);
+        return next;
+      });
+    }
+  }, []);
 
   // Skill info popover state
   const [popoverSkillId, setPopoverSkillId] = useState<string | null>(null);
@@ -2013,6 +2033,7 @@ function App() {
                     hints={skillHints}
                     seed={seed}
                     onOpenInCompare={handleOpenInCompare}
+                    onImportCareer={handleImportCareer}
                   />
                 ) : (
                   /* RESULTS - Compare mode */
