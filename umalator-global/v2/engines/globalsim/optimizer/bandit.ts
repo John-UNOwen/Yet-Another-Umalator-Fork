@@ -1,19 +1,25 @@
 /**
  * Seed allocation for a batch of candidates vs one incumbent (SKILL-OPTIMIZER-PLAN
- * §9, LUCB form):
+ * §9, LUCB form with the §D indifference zone):
  *
  *  - every candidate starts at the first rung (50 seeds, or whatever the
  *    transposition cache already holds — ensure() skips cached positions for
  *    free, so cached builds start with more);
- *  - each round the next chunk goes to the candidate with the highest UCB on
- *    Δ vs the incumbent, plus its closest rival (the next-highest UCB —
- *    LUCB-style; the rival is what keeps the resolution honest);
  *  - candidates are dropped when their optimistic Δ (mean + β·SE, β shrinking
- *    with the seed total — conservative early, §9) can no longer reach 0 or
- *    the current best Δ; if more than MAX_ALIVE survive, the weakest UCBs are
- *    dropped too (cost bound);
+ *    with the seed total, conservative early per §9) falls under δ_min, the
+ *    indifference zone (§D.1): if the best case is below the smallest
+ *    improvement worth chasing, no more races get spent trying to find one.
+ *    This, not a small cap, sizes the alive set. Candidates that can no
+ *    longer reach the current best Δ (LUCB cut on the leader's lower bound)
+ *    drop too; if more than BANDIT_MAX_ALIVE still survive, the weakest UCBs
+ *    are cut as a cost backstop and counted in `capCut` (§D.4) so a batch
+ *    ending at the cap is visible instead of silent;
+ *  - each round, every kept candidate grows by an exponential rung floored
+ *    at 8 threads × chunk (§D.2), so one batch keeps the pool busy (the old
+ *    top-2-per-round starved it to two builds of tiny jobs);
  *  - end when one candidate's lower bound beats 0 and every rival's upper
- *    bound (resolved winner), when all are dropped, or at the batch seed cap.
+ *    bound (resolved winner), when nothing clears δ_min any more, or at the
+ *    batch seed cap.
  *
  * Every candidate's last measured Δ — eliminated included — is returned in
  * `measured`: it is a valid paired estimate at its seed count, and the
@@ -21,7 +27,7 @@
  * (×1.5), so a batch converges in O(log cap) rounds regardless of alive size.
  */
 
-import { BANDIT_CHUNK_SIZE, EffortConfig } from './config';
+import { BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, EffortConfig } from './config';
 import { BuildRefLite, PairedDiff, SearchEvaluator } from './evaluator';
 import { SeedValue } from './types';
 
@@ -53,6 +59,9 @@ export interface BanditResult {
 	survivors: BanditOutcome[];
 	/** Every candidate ever measured, including eliminated ones. */
 	measured: BanditOutcome[];
+	/** Candidates the alive cap cut during this batch (§D.4). > 0 means the
+	 *  cap, not the indifference zone, ended the batch. The caller logs it. */
+	capCut: number;
 }
 
 interface Row {
@@ -64,8 +73,6 @@ interface Row {
 }
 
 const Z = 1.96;
-/** Cost bound: never carry more than this many live candidates in a batch. */
-const MAX_ALIVE = 14;
 
 /** §9's shrinking β: conservative (≈2.8) at 50 seeds, Z at ≥300. */
 const beta = (n: number) => Z * Math.sqrt(Math.min(2, 300 / Math.max(1, n)));
@@ -74,7 +81,7 @@ const beta = (n: number) => Z * Math.sqrt(Math.min(2, 300 / Math.max(1, n)));
 export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Promise<BanditResult> {
 	const seen = new Set<string>([o.incumbent.id]);
 	const cands = o.candidates.filter(c => !seen.has(c.id) && (seen.add(c.id), true));
-	if (!cands.length) return { survivors: [], measured: [] };
+	if (!cands.length) return { survivors: [], measured: [], capCut: 0 };
 	const cap = o.cfg.batchCap;
 	const start = Math.min(cap, o.startSeeds ?? BANDIT_CHUNK_SIZE * 5);
 
@@ -91,6 +98,8 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 	}
 	let alive = cands;
 	let lastN = start;
+	let capCut = 0;
+	const deltaMin = o.cfg.deltaMinL;
 	for (;;) {
 		const rows: Row[] = [];
 		for (const c of alive) {
@@ -100,17 +109,20 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 			Object.assign(row, { build: c, mean: d.mean, sem: d.sem, n: d.n, survived: true });
 			rows.push(row);
 		}
-		// Drop: optimistic Δ can't reach 0, nor the current best Δ (LUCB cut
-		// on the leader's lower bound), nor (cost bound) stay in the top UCBs.
+		// Drop: the indifference zone (§D.1: the optimistic Δ can no longer
+		// reach δ_min, so there is no improvement worth chasing), the LUCB
+		// rival cut (can't reach the leader's lower bound), and as a cost
+		// backstop the alive cap, whose cut is counted for the caller (§D.4).
 		const up = (r: Row) => r.mean + beta(r.n) * (r.sem || 0);
 		const leader = rows.length ? rows.reduce((a, b) => (b.mean > a.mean ? b : a)) : null;
 		const lcb = leader ? leader.mean - beta(leader.n) * (leader.sem || 0) : 0;
 		const ranked = [...rows].sort((a, b) => up(b) - up(a) || (a.build.id < b.build.id ? -1 : 1));
 		const kept: Row[] = [];
 		for (const r of ranked) {
-			const viable = up(r) > 0 && (r === leader || up(r) >= lcb) && kept.length < MAX_ALIVE;
-			if (viable) kept.push(r);
-			else r.survived = false;
+			if (up(r) < deltaMin) { r.survived = false; continue; }
+			if (r !== leader && up(r) < lcb) { r.survived = false; continue; }
+			if (kept.length >= BANDIT_MAX_ALIVE) { r.survived = false; capCut++; continue; }
+			kept.push(r);
 		}
 		// Resolved: the best survivor's lower bound beats 0 AND every rival's
 		// upper bound.
@@ -123,20 +135,14 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 				break;
 			}
 		}
-		if (!kept.length) break;
-		// LUCB allocation: the top-UCB candidate grows by an exponential
-		// chunk, and so does its closest rival when different.
-		const grow = (r: Row) => Math.min(cap, Math.max(r.n + BANDIT_CHUNK_SIZE, Math.ceil(r.n * 1.5)));
-		const chosen: Row[] = [];
-		for (const r of kept) {
-			if (r.n < cap) chosen.push(r);
-			if (chosen.length >= 2) break;
-		}
+		if (!kept.length) break; // nothing clears δ_min any more (§D.1)
+		// §D.2: every kept candidate's interval still straddles the decision
+		// threshold, so every one grows one rung (not just the top two). The
+		// rung floor of 8 threads × chunk keeps one batch big enough to
+		// saturate the pool. The ×1.5 keeps it at O(log cap) rounds.
+		const grow = (r: Row) => Math.min(cap, Math.max(r.n + BANDIT_RUNG_MIN_SEEDS, Math.ceil(r.n * 1.5)));
+		const chosen = kept.filter(r => r.n < cap);
 		if (!chosen.length) { alive = kept.map(r => r.build); break; } // everyone capped
-		if (chosen.length === 1) {
-			const rival = kept.find(r => r !== chosen[0] && r.n < cap);
-			if (rival) chosen.push(rival);
-		}
 		const reqs = [];
 		for (const r of chosen) {
 			const newN = grow(r);
@@ -148,10 +154,10 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 		o.onRound?.(kept.length, lastN);
 		alive = kept.map(r => r.build);
 	}
-	return done(best);
+	return { ...done(best), capCut };
 }
 
-function done(best: Map<string, Row>): BanditResult {
+function done(best: Map<string, Row>): Omit<BanditResult, 'capCut'> {
 	const measured = [...best.values()].filter(r => r.n > 0).map(toOutcome);
 	const survivors = measured.filter(m => m.survived).sort((a, b) => b.diff.mean - a.diff.mean || (a.build.id < b.build.id ? -1 : 1));
 	return { survivors, measured };

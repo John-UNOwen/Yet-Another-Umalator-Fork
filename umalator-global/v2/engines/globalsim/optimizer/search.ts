@@ -9,8 +9,8 @@
 
 import { banditVsIncumbent } from './bandit';
 import {
-	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA, SURROGATE_MIN_FIT, SURROGATE_MIN_R2,
-	SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
+	BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
+	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
 import { BuildRefLite, calibrateNoise, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
@@ -479,10 +479,15 @@ async function runSingleScenario(
 				if (!toMeasure.length) { dbg('D pruned all cands, locally optimal'); break; }
 			}
 			dbg('D s', s, 'it', it, 'X', X.id || '(base)', 'cands', cands.length, dSm ? '→' + toMeasure.length : '');
-			const outcomes = (await banditVsIncumbent(ev, {
+			const bres = await banditVsIncumbent(ev, {
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
 				candidates: toMeasure.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
-			})).measured; // eliminated candidates' numbers feed the re-solve too (§8D)
+			});
+			const outcomes = bres.measured; // eliminated candidates' numbers feed the re-solve too (§8D)
+			if (bres.capCut) { // §D.4: the alive cap bound this batch, not the indifference zone
+				dbg('  D alive cap cut', bres.capCut, 'candidates beyond', BANDIT_MAX_ALIVE);
+				emit('incontext', `restart ${s + 1}/${startBuilds.length} · alive cap cut ${bres.capCut}`, provisional(X));
+			}
 			applyMeasured(outcomes, dropOf, addedOf);
 			for (const out of outcomes) surrHarvest(out.build);
 			surrHarvest(X); surrRefit();
@@ -498,13 +503,27 @@ async function runSingleScenario(
 			if (Y.id === X.id) { dbg('  Y==X, stop'); break; } // the build stopped changing
 			dbg('  re-solve Y', Y.id || '(base)');
 			// Adopt only on a significant improvement (lower CI bound > 0, §8D).
-			const held = Math.min(cfg.batchCap, Math.max(150, filled(ev, NS_SEARCH, si, X)));
-			const pos = Array.from({ length: held }, (_, i) => i);
-			await ev.ensure([
-				{ ns: NS_SEARCH, scenarioIdx: si, build: X, positions: pos },
-				{ ns: NS_SEARCH, scenarioIdx: si, build: Y, positions: pos },
-			]);
-			const d = ev.paired(NS_SEARCH, si, Y, X, searchPick);
+			// §D.3: sequential test, one candidate. Grow Y vs X in rungs and
+			// stop as soon as the CI excludes 0 either way or Y's 95% upper
+			// bound falls under δ_min (indifference zone: the best case is
+			// below what is worth chasing, so no more races). The 150-seed
+			// first rung already rejects a dead candidate on the paired record:
+			// 1.96·0.16/√150 = 0.026 L under the Standard δ_min of 0.03 L, so
+			// seeds only grow on real close calls.
+			let d: PairedDiff | null = null;
+			let held = Math.min(cfg.batchCap, Math.max(150, filled(ev, NS_SEARCH, si, X)));
+			for (;;) {
+				const pos = Array.from({ length: held }, (_, i) => i);
+				await ev.ensure([
+					{ ns: NS_SEARCH, scenarioIdx: si, build: X, positions: pos },
+					{ ns: NS_SEARCH, scenarioIdx: si, build: Y, positions: pos },
+				]);
+				d = ev.paired(NS_SEARCH, si, Y, X, searchPick);
+				if (!d || held >= cfg.batchCap) break;
+				if (d.ci95[0] > 0 || d.ci95[1] < 0) break; // significant either way, §8D
+				if (d.ci95[1] < cfg.deltaMinL) break; // Y cannot show an improvement worth having
+				held = Math.min(cfg.batchCap, Math.max(held + BANDIT_RUNG_MIN_SEEDS, Math.ceil(held * 1.5)));
+			}
 			dbg('  adopt test Δ', d ? d.mean.toFixed(3) : 'null', 'ci', d ? JSON.stringify(d.ci95.map(x => +x.toFixed(3))) : '');
 			let adoptedNow = false;
 			if (d && d.ci95[0] > 0) {
@@ -561,10 +580,15 @@ async function runSingleScenario(
 					else if (mv.adds.length === 1) addedOf.set(mv.b.id, mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
 					else if (mv.adds.length === 2) addedOf.set(mv.b.id, { opt: mv.adds[0], pairWith: mv.adds[1] });
 				}
-				const outcomes = (await banditVsIncumbent(ev, {
+				const bres = await banditVsIncumbent(ev, {
 					ns: NS_SEARCH, scenarioIdx: si, incumbent: E,
 					candidates: batch.map(m => m.b).sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
-				})).measured;
+				});
+				const outcomes = bres.measured;
+				if (bres.capCut) { // §D.4: batch wider than the alive cap
+					dbg('  F alive cap cut', bres.capCut, 'candidates beyond', BANDIT_MAX_ALIVE);
+					emit('local', `restart ${s + 1}/${startBuilds.length} · alive cap cut ${bres.capCut}`, provisional(E));
+				}
 				applyMeasured(outcomes, dropOf, addedOf);
 				for (const out of outcomes) surrHarvest(out.build);
 				surrHarvest(E); surrRefit();

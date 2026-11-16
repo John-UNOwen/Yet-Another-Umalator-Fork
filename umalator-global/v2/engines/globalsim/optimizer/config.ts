@@ -130,6 +130,25 @@ export const CHUNK_SIZE = 25;
 export const BANDIT_CHUNK_SIZE = 10;
 /** Bandit first allocation per candidate (§9: "start each candidate at 50 seeds"). */
 export const BANDIT_START_SEEDS = 50;
+/** Bandit alive cap (§D.4). A backstop, not the sizing: the indifference
+ *  zone (§D.1) drops every candidate whose UCB on Δ vs the incumbent falls
+ *  under δ_min, and that is what bounds the alive set. Sized on the paired
+ *  record (README 2026-11-16: σΔ = 0.16 L, race part 0.76 L cancels): an
+ *  unimproving candidate stays alive while β·σΔ/√n > δ_min, that is until
+ *  n ≈ 1.96·√300·0.16/δ_min ≈ 181 seeds at δ_min = 0.03 L. So a full
+ *  40-alive batch spends at most 40 × 181 ≈ 7.2k seeds on dead moves plus
+ *  ~440 seeds ((2·1.96·0.16/0.03)², the δ_min resolve count) per survivor
+ *  and for the incumbent: a batch of the whole alive set converges for
+ *  well under 10k seeds. A batch that ends at the cap would spend
+ *  40 × batchCap (41k at Standard) with no resolution, so bandit.ts
+ *  reports it (capCut) and search.ts logs it: a capped batch means the
+ *  indifference zone stopped separating this neighbourhood. */
+export const BANDIT_MAX_ALIVE = 40;
+/** Floor on one candidate's growth per bandit round (§D.2): 8 threads (the
+ *  8-core sizing machine of the presets) × the pool chunk (CHUNK_SIZE = 25),
+ *  so a growth batch hands every worker at least one full chunk even with a
+ *  single survivor. */
+export const BANDIT_RUNG_MIN_SEEDS = 8 * CHUNK_SIZE;
 /** Successive-halving ladder inside bandit batches (§9). */
 export const BANDIT_LADDER = [50, 100, 200, 400, 800, 1600, 3200];
 /** Stage E acquisition κ (predicted gain + κ·SE). */
