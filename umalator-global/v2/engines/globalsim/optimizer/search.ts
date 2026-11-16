@@ -88,6 +88,17 @@ const isTie = (ci: [number, number]) => ci[0] <= 0 && ci[1] >= 0;
 /** Harness-gated trace (the oracle test toggles it for one instance). */
 const dbg = (...a: unknown[]) => { if ((globalThis as any).OPT_DBG) console.error('[opt]', ...a); };
 
+/** Harness-gated traces for the oracle tests (like OPT_DBG): every Stage D
+ *  adoption (with its path) and every restart's final build. */
+const traceAdopt = (b: BuildRefLite, via: 'resolve' | 'fallback'): void => {
+	const a = (globalThis as any).OPT_ADOPTIONS as { build: BuildRefLite; via: string }[] | undefined;
+	if (a) a.push({ build: b, via });
+};
+const traceRestartEnd = (b: BuildRefLite): void => {
+	const a = (globalThis as any).OPT_RESTART_ENDS as BuildRefLite[] | undefined;
+	if (a) a.push(b);
+};
+
 /** Count measured (non-null, non-err) slots of a cached build. */
 function filled(ev: SearchEvaluator, ns: string, si: number, b: BuildRefLite): number {
 	let n = 0;
@@ -163,6 +174,10 @@ async function runSingleScenario(
 		const sp = costOf(space, b.selection, true);
 		return { build: b, sp, leftover: space.budget - sp, skillCount: b.selection.length, obj, provisional: true };
 	};
+
+	// §3.B.2: every restart's final build; the shortlist always includes them
+	// (Stage G can only choose among the builds it is given).
+	const restartEnds: BuildRefLite[] = [];
 
 	// ── Stage 0: noise calibration (§7.3; search-namespace seeds, reused later) ──
 	const base = remember(refOf([]));
@@ -240,7 +255,7 @@ async function runSingleScenario(
 		};
 	};
 
-	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage B: screening chart — out-of-context v⁰ (chart-parity filter) ──
 	emit('screen', `screening ${space.options.filter(o => !o.forced).length} options`);
@@ -276,7 +291,7 @@ async function runSingleScenario(
 		}
 	}
 	dbg('v0', [...v0.entries()].map(([k, v]) => k + ':' + v.mean.toFixed(2) + '±' + v.sem.toFixed(2)).join(' '));
-	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage C: starting builds by multiple-choice knapsack ──────────────────
 	emit('knapsack');
@@ -289,7 +304,10 @@ async function runSingleScenario(
 		forcedId: opts.find(o => o.forced)?.id,
 	}));
 	dbg('starts');
-	const startBuilds: BuildRefLite[] = [base];
+	// §3.B.4: restarts start from the knapsack solutions and opening-book
+	// entries only — an empty restart just re-runs restart 1's first re-solve
+	// and wastes a restart slot.
+	const startBuilds: BuildRefLite[] = [];
 	for (const sol of mckpTopK(knapGroups(), space.budget, Math.max(1, cfg.restarts))) {
 		const b = remember(refOf(selFromKnap(sol.selection.values())));
 		if (!startBuilds.some(s => s.id === b.id)) startBuilds.push(b);
@@ -305,7 +323,7 @@ async function runSingleScenario(
 		if (!affordable(space, b.selection)) continue;
 		if (!startBuilds.some(s => s.id === b.id)) startBuilds.push(b);
 	}
-	emit('knapsack', `${startBuilds.length} restart points`, provisional(startBuilds[startBuilds.length - 1]));
+	emit('knapsack', `${startBuilds.length} restart points`, startBuilds.length ? provisional(startBuilds[startBuilds.length - 1]) : undefined);
 
 	// ── Stage E: surrogate model state (§8 E) ─────────────────────────────────
 	// Every cached build with a decent search-ℓ estimate becomes a training
@@ -491,15 +509,23 @@ async function runSingleScenario(
 			let adoptedNow = false;
 			if (d && d.ci95[0] > 0) {
 				X = Y;
+				assertFeasible(space, X.selection); // §3.B.1: an over-budget build can never be X
+				traceAdopt(X, 'resolve');
 				adoptedNow = true;
 			} else {
 				// Fallback (plan §8F "adopt the best significant improvement"
 				// honored inside D): a bandit survivor with a significant Δ is a
 				// safer step than the combined re-solve; hill-climb one move.
-				const sure = outcomes.filter(out => out.survived && out.diff.n >= 2 && out.diff.ci95[0] > 0)
+				// §3.B.1: only AFFORDABLE survivors qualify — over-budget "X + j"
+				// candidates are measured for their knapsack numbers, never
+				// adopted (they walked X out of budget and lost the restart).
+				const sure = outcomes.filter(out => out.survived && out.diff.n >= 2 && out.diff.ci95[0] > 0
+					&& affordable(space, out.build.selection))
 					.sort((a, b) => b.diff.mean - a.diff.mean);
 				if (sure.length) {
 					X = sure[0].build;
+					assertFeasible(space, X.selection);
+					traceAdopt(X, 'fallback');
 					adoptedNow = true;
 					dbg('  fallback adopt', X.id || '(base)', sure[0].diff.mean.toFixed(3));
 				}
@@ -562,16 +588,19 @@ async function runSingleScenario(
 			if (!ranked.length) break;
 			frontier = ranked.slice(0, beamW);
 			X = frontier[0];
+			assertFeasible(space, X.selection); // §3.B.1: X stays affordable at every adoption
 			remember(X);
 			if (X.id !== prevBest) { emit('local', `local adopted`, provisional(X)); prevBest = X.id; }
 			else if (!anyAdopt) break; // nothing moved and no elite improved ⇒ converged (§8F stop)
 		}
 		remember(X);
+		restartEnds.push(X);
+		traceRestartEnd(X);
 	}
-	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage G: verification on fresh seeds (the only numbers reported) ──────
-	const short = shortlistBy(ev, si, evaluated, objective, vs, 5, space);
+	const short = shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 5, space);
 	return verify(short, cfg.gSeedsMin, cfg.gSeedsCap, false);
 }
 
@@ -694,17 +723,42 @@ async function verifyAcross(
 	};
 }
 
-/** Top-k evaluated builds by cached search objective (deterministic order).
- *  Feasibility is a hard gate here: over-budget neighbours are evaluated for
- *  their knapsack numbers only and must never reach the report (§13.3). */
-function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, BuildRefLite>, objective: ObjectiveKind, vs: BuildRefLite | undefined, k: number, space: BuildSpace): BuildRefLite[] {
-	return [...evaluated.values()]
+/** Minimum search seeds a build must have to be ranked into the shortlist by
+ *  its lower confidence bound (§3.B.2): below this the mean is mostly luck. */
+const SHORTLIST_MIN_SEEDS = 200;
+
+/**
+ * The shortlist feeding Stage G (§3.B.2). Stage G can only choose among the
+ * builds it is given, so:
+ *  - every restart's final feasible build and the global incumbent always make
+ *    it (mandatory slots);
+ *  - the remaining slots are filled by LOWER CONFIDENCE BOUND (mean − 1.96·SE)
+ *    restricted to well-measured builds (n ≥ SHORTLIST_MIN_SEEDS);
+ *  - raw search means are never ranked across builds with wildly different
+ *    seed counts — that is how lucky 50-seed bandit strays crowded out the
+ *    well-measured restart ends.
+ * Feasibility is a hard gate throughout: over-budget neighbours are evaluated
+ * for their knapsack numbers only and must never reach the report (§13.3).
+ * Deterministic order.
+ */
+function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, BuildRefLite>, restartEnds: readonly BuildRefLite[], objective: ObjectiveKind, vs: BuildRefLite | undefined, k: number, space: BuildSpace): BuildRefLite[] {
+	const measured = [...evaluated.values()]
 		.filter(b => affordable(space, b.selection))
 		.map(b => ({ b, obj: ev.objective(NS_SEARCH, si, b, objective, vs) }))
-		.filter(x => x.obj && x.obj.n > 0 && Number.isFinite(x.obj.mean))
-		.sort((x, y) => y.obj!.mean - x.obj!.mean || (x.b.id < y.b.id ? -1 : 1))
-		.slice(0, k)
-		.map(x => x.b);
+		.filter(x => x.obj && x.obj.n > 0 && Number.isFinite(x.obj!.mean));
+	const out: BuildRefLite[] = [];
+	const take = (b: BuildRefLite) => { if (!out.some(o => o.id === b.id)) out.push(b); };
+	for (const e of restartEnds) if (affordable(space, e.selection)) take(e);
+	// The global incumbent (the best search objective measured so far) keeps a
+	// slot even below the seed floor; it is one raw-mean pick, not a ranking.
+	const incumbent = measured.sort((x, y) => y.obj!.mean - x.obj!.mean || (x.b.id < y.b.id ? -1 : 1))[0];
+	if (incumbent) take(incumbent.b);
+	const fill = measured
+		.filter(x => x.obj!.n >= SHORTLIST_MIN_SEEDS && !out.some(o => o.id === x.b.id))
+		.map(x => ({ b: x.b, lcb: x.obj!.mean - 1.96 * (Number.isFinite(x.obj!.sem) ? x.obj!.sem : 0) }))
+		.sort((x, y) => y.lcb - x.lcb || (x.b.id < y.b.id ? -1 : 1));
+	for (const f of fill) { if (out.length >= k) break; take(f.b); }
+	return out;
 }
 
 /** Tie flag vs the recommendation itself (post tie-break reorder). */

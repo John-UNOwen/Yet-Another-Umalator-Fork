@@ -95,3 +95,53 @@ test('mckpTopK: distinct feasible solutions, first is the optimum', t => {
 	}
 	return t.end();
 });
+
+// §3.B.3: the K starts must be NEAR-optimal restart points. Before the fix the
+// cumulative "forbid every item of each previous solution" loop made restart 2
+// avoid all of restart 1's skills (measured: Jaccard overlap 0.00 with the
+// optimum's solution and far worse starts); the fix re-solves excluding ONE
+// pick at a time with a ≥ 3-picks diversity rule, which measures avg overlap
+// 0.71 (pairs up to 0.81) and every start within 4% of the optimum's value.
+test('mckpTopK starts overlap heavily and differ by >= 3 picks (§3.B.3)', t => {
+	const rnd = lcg(0xBEEF01);
+	let full = 0, pairs = 0, sumJac = 0, minJac = 1, minDiff = Infinity, worstRel = 1;
+	for (let inst = 0; inst < 12; inst++) {
+		// Realistic regime: ~30 skill families of 2–3 tiers, budget ≈ the 15
+		// cheapest options × 1.2 — the optimum buys most of the budget, exactly
+		// where the old forbidding loop starved restarts 2..K.
+		const groups: KnapGroup[] = [];
+		const allCost: number[] = [];
+		const nG = 30 + Math.floor(rnd() * 5);
+		for (let g = 0; g < nG; g++) {
+			const options = Array.from({ length: 2 + Math.floor(rnd() * 2) }, (_, i) => {
+				const cost = 20 + Math.floor(rnd() * 120);
+				allCost.push(cost);
+				return { id: `g${g}o${i}`, cost, value: Math.round(rnd() * 1000) / 10 };
+			});
+			groups.push({ groupId: `g${g}`, options });
+		}
+		allCost.sort((a, b) => a - b);
+		const budget = Math.round(allCost.slice(0, 15).reduce((a, c) => a + c, 0) * 1.2);
+		const top = mckpTopK(groups, budget, 4);
+		if (top.length < 4) { console.log(`  §3.B.3 inst ${inst}: only ${top.length} starts found`); continue; }
+		full++;
+		const opt = mckpSolve(groups, budget)!;
+		const sets = top.map(s => new Set(s.ids));
+		for (let a = 0; a < sets.length; a++) for (let b = a + 1; b < sets.length; b++) {
+			let inter = 0, d = 0;
+			for (const x of sets[a]) { if (sets[b].has(x)) inter++; else d++; }
+			for (const x of sets[b]) if (!sets[a].has(x)) d++;
+			const j = inter / (sets[a].size + sets[b].size - inter);
+			sumJac += j; pairs++;
+			minJac = Math.min(minJac, j);
+			minDiff = Math.min(minDiff, d);
+		}
+		for (const s of top) worstRel = Math.min(worstRel, s.value / opt.value);
+	}
+	console.log(`  §3.B.3: full=${full}/12 avgJaccard=${(sumJac / pairs).toFixed(3)} minJaccard=${minJac.toFixed(3)} minPicksDiff=${minDiff} worstValue/Opt=${worstRel.toFixed(3)}`);
+	t.ok(full >= 10, `full K=4 found on most instances (full=${full}/12)`);
+	t.ok(minDiff >= 3, `every pair of starts differs by >= 3 picks (min=${minDiff})`);
+	t.ok(sumJac / pairs >= 0.6, `starts overlap heavily (avgJaccard=${(sumJac / pairs).toFixed(3)}, was 0.00 pre-fix)`);
+	t.ok(worstRel >= 0.9, `every start is near-optimal (worst value = ${(worstRel * 100).toFixed(1)}% of the optimum, was ~34% pre-fix)`);
+	return t.end();
+});
