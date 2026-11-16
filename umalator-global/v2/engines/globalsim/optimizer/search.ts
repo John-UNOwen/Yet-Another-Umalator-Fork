@@ -11,7 +11,7 @@ import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf } from './bandit';
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
 	DEAD_SKILL_MIN_SEEDS,
-	EffortConfig, KAPPA, LAMBDA_MAXIMIN,
+	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
 import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, statsOf } from './evaluator';
@@ -323,16 +323,45 @@ async function runSingleScenario(
 		return leaner;
 	};
 
-	const planned = cfg.noiseSeeds * (1 + cfg.noiseVariants)
-		+ space.options.length * (cfg.screenRound1Seeds + cfg.screenRound2Seeds)
-		+ cfg.restarts * cfg.dMaxIters * cfg.batchCap + 6 * cfg.gSeedsMin;
-	const emit = (stage: OptimizerProgress['stage'], note?: string, best?: ScoredBuild) => onProgress({
-		stage, racesRun: ev.racesRun(), racesPlanned: planned, elapsedMs: Date.now() - t0,
-		etaMs: ev.racesRun() > 100
-			? Math.round((Date.now() - t0) / ev.racesRun() * Math.max(0, planned - ev.racesRun()))
-			: undefined,
-		best, note,
-	});
+	// ── §K: the race plan behind the progress bar / ETA ───────────────────────
+	// The old plan (`restarts × dMaxIters × batchCap`) assumed a capped climb
+	// that no longer exists: the §C climb has no round cap. What bounds the
+	// search now is the per-restart climbRaces budget (config: "keep race
+	// budgets instead"), the dMaxIters-capped Stage D rounds, and the ladder's
+	// own stopping condition, so the plan reflects those: a preset budget per
+	// not-yet-run restart up front, replaced by the MEASURED per-restart cost
+	// once restarts complete (the running estimate), plus the verification
+	// slack. untilStopped (climbRaces = Infinity) has no budget to plan from:
+	// no ETA until the first restart ends tells us what a restart costs (the
+	// anytime UI already tolerates a missing etaMs / racesPlanned).
+	const perRestartPlan = (): number | undefined =>
+		Number.isFinite(cfg.climbRaces) ? cfg.dMaxIters * cfg.batchCap + cfg.climbRaces : undefined;
+	let startCount = Math.max(1, cfg.restarts); // Stage C replaces it with the real restart count
+	let searchRaces0 = 0; // races spent before the restart loop starts
+	const restartRaceMarks: number[] = []; // total races at each completed restart
+	const planOf = (races: number): number | undefined => {
+		const done = restartRaceMarks.length;
+		const rest = Math.max(0, startCount - done);
+		if (rest > 0) {
+			const per = done ? (restartRaceMarks[done - 1] - searchRaces0) / done : perRestartPlan();
+			return per === undefined ? undefined : Math.round(races + per * rest);
+		}
+		// All restarts in: what remains is Stage G verification (pool ≈ 5 + vs,
+		// gSeedsMin each; any growth beyond that stays visible in racesRun).
+		const at = done ? restartRaceMarks[done - 1] : searchRaces0;
+		return Math.round(at + Math.max(races - at, 6 * cfg.gSeedsMin));
+	};
+	const emit = (stage: OptimizerProgress['stage'], note?: string, best?: ScoredBuild): void => {
+		const races = ev.racesRun();
+		const planned = planOf(races);
+		onProgress({
+			stage, racesRun: races, racesPlanned: planned ?? 0, elapsedMs: Date.now() - t0,
+			etaMs: planned !== undefined && races > 100
+				? Math.round((Date.now() - t0) / races * Math.max(0, planned - races))
+				: undefined,
+			best, note,
+		});
+	};
 	const provisional = (b: BuildRefLite): ScoredBuild | undefined => {
 		const obj = ev.objective(NS_SEARCH, si, b, objective, vs);
 		if (!obj || obj.n === 0 || !Number.isFinite(obj.mean)) return undefined;
@@ -348,6 +377,23 @@ async function runSingleScenario(
 	// (2-for-2 among the 8 lowest-value owned × the 8 best free) was clean too.
 	const peakCerts = new Map<string, { p1: boolean; p2: boolean }>();
 
+	// §K: what the cache must never evict (handoff §K, the pin-less
+	// evict(new Set()) that CACHE_PIN_TOP was written for): the current
+	// incumbent (every bandit rung compares against it), every restart end
+	// (the shortlist's mandatory slots), and the Stage G shortlist once it
+	// exists (verification grows the same slots round by round). Re-registered
+	// at every incumbent change and at Stage G; the evaluator enforces the
+	// CACHE_PIN_TOP cap per namespace.
+	const pinnedShort = new Set<string>();
+	const pinSearch = (inc?: BuildRefLite): void => {
+		if (!ev.pinBuilds) return;
+		const ids = new Set<string>();
+		if (inc) ids.add(inc.id);
+		for (const b of restartEnds) ids.add(b.id);
+		for (const id of pinnedShort) ids.add(id);
+		ev.pinBuilds(NS_SEARCH, si, [...ids]);
+	};
+
 	// ── Stage 0: noise calibration (§7.3; search-namespace seeds, reused later) ──
 	const base = remember(refOf([]));
 	emit('noise');
@@ -361,6 +407,14 @@ async function runSingleScenario(
 	const verify = async (short: BuildRefLite[], nMin: number, nCap: number, stoppedEarly: boolean): Promise<OptimizerResult> => {
 		const pool = [...short];
 		if (vs && !pool.some(b => b.id === vs.id)) pool.push(vs); // gainVsCurrent needs the reference row verified too
+		// §K: pin the verification pool (every growth round re-ensures the same
+		// slots, so an eviction is a re-fetch), and keep the shortlist's search
+		// data warm too (orderingCorrelation / bestActivations read it here).
+		if (ev.pinBuilds) {
+			for (const b of pool) pinnedShort.add(b.id);
+			ev.pinBuilds(NS_VERIFY, si, pool.map(b => b.id));
+			pinSearch();
+		}
 		const rowsOf = (b: BuildRefLite) => ({ obj: ev.objective(NS_VERIFY, si, b, objective, vs), stats: ev.stats(NS_VERIFY, si, b) });
 		const rankedOf = () => pool
 			.map(b => ({ b, ...rowsOf(b) }))
@@ -543,6 +597,10 @@ async function runSingleScenario(
 	//    from each start while the budget remains; global best across them) ──
 	startBuilds.forEach((b, i) => dbg('start', i, b.id || '(base)'));
 	const histAdopted = new Set<string>(); // §8F history heuristic: skills that already paid off
+	// §K: the running-estimate baseline: everything before the loop is measured
+	// now; the loop's forward plan uses the real restart count.
+	searchRaces0 = ev.racesRun();
+	startCount = startBuilds.length;
 	for (let s = 0; s < startBuilds.length; s++) {
 		if (ctrl.stopped()) break;
 		if (Date.now() - t0 > cfg.timeBudgetMs) { dbg('time budget hit at restart', s); break; }
@@ -600,9 +658,58 @@ async function runSingleScenario(
 			if (Date.now() - t0 > cfg.timeBudgetMs) break;
 			// §E: sell known-dead skills before weighing the round (free).
 			X = sellDead(X);
+			pinSearch(X); // §K: the incumbent of this round's ladders is pinned
 			emit('incontext', `restart ${s + 1}/${startBuilds.length} round ${it + 1}/${cfg.dMaxIters}`, provisional(X));
+			// ── §K: over-budget adds are measured for the knapsack re-solve ────
+			// An over-budget "X+j" is never adopted (the fallback filter below
+			// refuses it); its only consumer is the value the re-solve sees for
+			// j. So measure one only when its value could actually change that
+			// solution (§K.3, after §I.5: "measure only options whose
+			// predictions are uncertain or near the cutoff"; with a budget for
+			// ~20 skills nearly every plain add is over-budget, and measuring
+			// the lot was the expensive part). One probe solve answers it:
+			// the re-solve's groups at the same values, but j valued OPTIMISTIC
+			// (predictDiff(X+j, X).mean + the displaced pick's ctxVal +
+			// PRUNE_KAPPA·SE, the same α/β optimism the §I.5 prior cut uses).
+			// Knapsack solutions are monotone in item values: an option that
+			// loses at its optimistic value loses at its true one too and can
+			// never enter the solution, so measuring it changes nothing (an
+			// option that cannot even fit the capacity is cut the same way:
+			// mckpSolve drops it from the DP before the first cell). No model,
+			// or one that has not seen these builds: measure. A model may only
+			// certify what it has seen, and a weak fit carries huge SEs
+			// (predScale, §I), so it self-silences here.
+			const dSm = surrModel();
+			// In-context value for the re-solve (see the re-solve comment
+			// below). id + group parameters: the space's option list and the
+			// re-solve's item view share one value function.
+			const dValue = (id: string, groupId: string): number => {
+				if (value.has(id) || !dSm || !dSm.covers(X.selection)) return ctxVal(id);
+				const opt = space.byId.get(id);
+				if (!opt) return ctxVal(id);
+				const b = withOption(X.selection, opt);
+				if (!dSm.covers(b.selection)) return ctxVal(id);
+				const covering = X.selection.find(x => space.byId.get(x)?.groupId === groupId);
+				return dSm.predictDiff(b.selection, X.selection).mean + (covering ? ctxVal(covering) : 0);
+			};
+			let dView: KnapGroup[] | null = null; // the re-solve's groups, pre-bandit values (lazily, first probe only)
+			const overBudgetCut = (o: OptOption, b: BuildRefLite, covering: string | undefined): boolean => {
+				const raw = surrogate;
+				if (!raw || !raw.covers(X.selection) || !raw.covers(b.selection)) return false;
+				const pd = raw.predictDiff(b.selection, X.selection);
+				const vOpt = pd.mean + (covering ? ctxVal(covering) : 0) + PRUNE_KAPPA * pd.se;
+				dView ??= knapGroups().map(g => ({ ...g, options: g.options.map(x => ({ ...x, value: dValue(x.id, g.groupId) })) }));
+				const probe: KnapGroup[] = dView.map(g => g.groupId === o.groupId
+					? { ...g, options: g.options.map(x => x.id === o.id ? { ...x, value: vOpt } : x) }
+					: g);
+				const sol = mckpSolve(probe, space.budget);
+				if (!sol || sol.selection.get(o.groupId) === o.id) return false; // still wins optimistically (or no opinion): measure
+				dbg('  §K over-budget skip', o.id, 'optimistic value', vOpt.toFixed(3), 'cannot take the re-solve');
+				return true;
+			};
 			// Neighbourhood: drop each owned pick, add each uncovered option
-			// (over-budget adds evaluated too — the number feeds the re-solve).
+			// (over-budget adds evaluated too, their numbers feed the re-solve;
+			// §K: only the ones that can change it).
 			const cands: BuildRefLite[] = [];
 			const dropOf = new Map<string, string>(); // build id → dropped option
 			const addedOf = new Map<string, { opt: string; replaced?: string; pairWith?: string }>();
@@ -619,6 +726,7 @@ async function runSingleScenario(
 				const b = remember(withOption(X.selection, o));
 				if (addDead(b, o.id)) continue; // §E never-add: recorded never to fire in this build
 				const covering = X.selection.find(x => space.byId.get(x)?.groupId === o.groupId);
+				if (!affordable(space, b.selection) && overBudgetCut(o, b, covering)) continue; // §K
 				addedOf.set(b.id, covering ? { opt: o.id, replaced: covering } : { opt: o.id });
 				cands.push(b);
 			}
@@ -658,7 +766,6 @@ async function runSingleScenario(
 			// as before. This decides what to simulate (P1) — the re-solve
 			// below still runs on measured values plus the model's in-context
 			// values (§I.5).
-			const dSm = surrModel();
 			dbg('D s', s, 'it', it, 'X', X.id || '(base)', 'cands', cands.length);
 			const bres = await banditVsIncumbent(ev, {
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
@@ -682,16 +789,12 @@ async function runSingleScenario(
 			// the incumbent's own skills — replaces the out-of-context v⁰
 			// (adding back the displaced pick's value, same arithmetic as
 			// applyMeasured). Uncovered options keep the old v⁰ fallback.
-			const dValue = (o: OptOption): number => {
-				if (value.has(o.id) || !dSm || !dSm.covers(X.selection)) return ctxVal(o.id);
-				const b = withOption(X.selection, o);
-				if (!dSm.covers(b.selection)) return ctxVal(o.id);
-				const covering = X.selection.find(x => space.byId.get(x)?.groupId === o.groupId);
-				return dSm.predictDiff(b.selection, X.selection).mean + (covering ? ctxVal(covering) : 0);
-			};
+			// (The value function itself, dValue, is defined with the §K
+			// probe above; it reads the `value` map, so calling it now sees
+			// this round's measurements.)
 			const groups: KnapGroup[] = knapGroups().map(g => ({
 				...g,
-				options: g.options.map(o => ({ ...o, value: dValue(o) })),
+				options: g.options.map(o => ({ ...o, value: dValue(o.id, g.groupId) })),
 			}));
 			const sol = mckpSolve(groups, space.budget);
 			const Y = sol ? remember(refOf(selFromKnap(sol.selection.values()))) : X;
@@ -934,6 +1037,7 @@ async function runSingleScenario(
 					await ev.ensure([{ ns: NS_SEARCH, scenarioIdx: si, build: Xc, positions: Array.from({ length: DEAD_SKILL_MIN_SEEDS }, (_, i) => i) }]);
 					Xc = sellDead(Xc);
 				}
+				pinSearch(Xc); // §K: the climb's incumbent is pinned for this round's ladders
 				if (climbOut()) return { X: Xc, p1: false, p2: false };
 				const moves = n1Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted, surrScore(Xc), addDead);
 				if (!moves.length) return { X: Xc, p1: true, p2: true }; // degenerate space: X is the only build
@@ -974,6 +1078,8 @@ async function runSingleScenario(
 		restartEnds.push(X);
 		traceRestartEnd(X);
 		peakCerts.set(X.id, { p1: peak.p1, p2: peak.p2 });
+		pinSearch(X); // §K: the end just reached is pinned from here on
+		restartRaceMarks.push(ev.racesRun()); // §K ETA: this restart's measured cost is now the estimate for the rest
 	}
 	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
@@ -1109,6 +1215,11 @@ export function aggregatedEvaluator(
 				for (const id in a.fired) m.fired[id] = (m.fired[id] ?? 0) + a.fired[id];
 			}
 			return out;
+		},
+		pinBuilds(ns, _si, identities) {
+			// The virtual scenario pins every real one: ensure fans out to the
+			// same slots, so eviction must not clear them either (§K).
+			for (const si of sis) ev.pinBuilds?.(ns, si, identities);
 		},
 		dispose() { ev.dispose(); },
 	};
@@ -1454,10 +1565,13 @@ function movesFrom(
  * = tier move), 2-for-1 (every owned pair out, every free option in — this is
  * the upgrade-and-sell shape: sell a filler, buy the higher tier), 1-for-2
  * (every owned option out, every affordable pair of free options in), and the
- * SP refill move (a drop followed by its best affordable add — it is one of the
- * swaps, so it is enumerated too). Everything budget-feasible must be reachable
- * in one move: no move caps, no estimate pruning — the bandit's indifference
- * zone (§D) screens, nothing else decides what deserves seeds.
+ * §K refill move: a drop with its FULL top-up, the best-estimated affordable
+ * add bought over and over until nothing is affordable: a single-add refill
+ * can leave SP unspent that another affordable option could have bought, and
+ * three-or-more-add refills have no other representative in the move space.
+ * Everything budget-feasible must be reachable in one move: no move caps, no
+ * estimate pruning — the bandit's indifference zone (§D) screens, nothing
+ * else decides what deserves seeds.
  */
 function n1Moves(
 	space: BuildSpace,
@@ -1488,6 +1602,34 @@ function n1Moves(
 		for (let a = 0; a < free.length; a++) for (let c = a + 1; c < free.length; c++)
 			if (free[a].groupId !== free[c].groupId)
 				raw.push({ drops: [i], adds: [free[a].id, free[c].id] });
+	// §K refill: a drop with its full top-up. Sell i, then buy the
+	// best-estimated affordable free add again and again until nothing is
+	// affordable, so the resulting build leaves no SP that another affordable
+	// option could still spend. (Single-add refills are swaps and two-add ones
+	// are 1-for-2 above; those cover i's group re-opening too. Deeper refills
+	// are this move's alone.) Greedy by ctxVal, the in-context number, ties by
+	// id; `free` excludes what X already owns, so i is never re-bought.
+	for (const i of owned) {
+		const sel = Xsel.filter(x => x !== i);
+		const adds: string[] = [];
+		for (;;) {
+			const used = new Set(sel.map(x => space.byId.get(x)?.groupId));
+			const spare = space.budget - costOf(space, sel, true);
+			let best: OptOption | undefined;
+			for (const o of free) {
+				if (used.has(o.groupId) || o.cost > spare) continue;
+				if (!best) best = o;
+				else {
+					const vBest = ctxVal(best.id), vO = ctxVal(o.id);
+					if (vO > vBest || (vO === vBest && o.id < best.id)) best = o;
+				}
+			}
+			if (!best) break;
+			sel.push(best.id);
+			adds.push(best.id);
+		}
+		if (adds.length) raw.push({ drops: [i], adds });
+	}
 	return movesFrom(space, X, raw, ctxVal, deltaMinL, hist, surr, addDead);
 }
 

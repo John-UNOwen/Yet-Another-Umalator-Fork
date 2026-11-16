@@ -539,6 +539,77 @@ test('shortlist contains the best-μ restart end on every instance (§3.B.2)', a
 	t.end();
 });
 
+// §K: the ETA plan must reflect the real stopping condition (the §C per-restart
+// climbRaces budget on top of the dMaxIters-capped Stage D plan), not the old
+// fixed `restarts × dMaxIters × batchCap` climb plan. Everything else equal,
+// moving the climbRaces budget moves the plan by exactly that delta times the
+// number of restarts still ahead; with no race budget at all (untilStopped-like
+// climbRaces = Infinity) the run reports no plan and no ETA until a completed
+// restart provides the running estimate.
+test('§K ETA: the plan tracks the real per-restart budgets', async t => {
+	const inst = genInstance(4242);
+	const base = { ...TEST_CFG, restarts: 2, dMaxIters: 4, batchCap: 300 };
+	const firstIncontext = async (cfg: EffortConfig): Promise<OptimizerProgress | undefined> => {
+		const ev = new OracleEval(inst);
+		const ctrl = createController();
+		let seen: OptimizerProgress | undefined;
+		await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: cfg },
+			ctrl, (x: OptimizerProgress) => { if (!seen && x.stage === 'incontext') { seen = x; ctrl.stop(); } });
+		ev.dispose();
+		return seen;
+	};
+	const small = await firstIncontext({ ...base, climbRaces: 10_000 });
+	const big = await firstIncontext({ ...base, climbRaces: 40_000 });
+	t.ok(small && big, 'both runs reported an incontext progress event');
+	const delta = (big?.racesPlanned ?? 0) - (small?.racesPlanned ?? 0);
+	t.ok(delta > 0 && delta % 30_000 === 0,
+		`the plan moves with the §C climbRaces budget, a whole-restart multiple of the 30,000-race difference (Δ=${delta})`);
+	const nob = await firstIncontext({ ...base, climbRaces: Infinity });
+	t.ok(nob && nob.racesPlanned === 0 && nob.etaMs === undefined, 'no race budget (untilStopped-like) and no measured restart yet: no plan, no ETA');
+	t.end();
+});
+
+// §K refill: a drop's full top-up is the only move that reaches "sell one,
+// buy the rest" builds beyond two adds. The hand-made instance below is
+// adversarial for the old move space: the incumbent {exp} is a local peak for
+// every 1-for-1 and 1-for-2 shape (each cheap skill alone or in pairs is
+// worth 0, so every such move is a loss), and only buying ALL THREE cheap
+// skills at once (+2 L) pays off. The full-top-up refill move is the one that
+// reaches {a,b,c}; without it the run reports {exp}.
+test('§K refill: the full-top-up move reaches drop-and-buy-many builds', async t => {
+	const options: OptOption[] = [
+		{ id: 'exp', groupId: 'gExp', cost: 100, tierIndex: 0, forced: false },
+		{ id: 'a', groupId: 'gA', cost: 30, tierIndex: 0, forced: false },
+		{ id: 'b', groupId: 'gB', cost: 30, tierIndex: 0, forced: false },
+		{ id: 'c', groupId: 'gC', cost: 30, tierIndex: 0, forced: false },
+	];
+	const groups = new Map<string, OptOption[]>();
+	for (const o of options) groups.set(o.groupId, [...(groups.get(o.groupId) ?? []), o]);
+	const space: BuildSpace = {
+		ownedByGroup: new Map(), fixedIds: [], forcedCost: 0,
+		options, byId: new Map(options.map(o => [o.id, o] as const)), groups, budget: 100, warnings: [],
+	};
+	const inst: Instance = {
+		space,
+		// A three-way effect the pair model cannot see: each cheap skill alone
+		// or any pair is worth 0, only all three together are worth +2 L.
+		mu: (identity: string) => {
+			const s = new Set(identity ? identity.split(',') : []);
+			if (s.has('a') && s.has('b') && s.has('c')) return 2;
+			return s.has('exp') ? 1 : 0;
+		},
+		ranked: [],
+		dead: new Set<string>(),
+	};
+	const ev = new OracleEval(inst, 0); // exact evaluator: adoption tests need no seed margin
+	const res = await runOptimizer(
+		ev, { space, scenarioIdx: 0, objective: 'meanLead', aggregation: 'mean', effort: TEST_CFG, searchCurrency: 'lead' },
+		createController(), () => undefined);
+	ev.dispose();
+	t.equal(res.best.build.id, 'a,b,c', 'the recommendation is the refill build, not the {exp} local peak');
+	t.end();
+});
+
 // §13.1 second clause: on 30–40-option instances (no longer enumerable in test
 // time) the optimizer must reach within δ_min of a strong external baseline —
 // random restarts + exhaustive add/drop/swap hill climbing on the exact μ

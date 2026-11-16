@@ -115,8 +115,8 @@ const base = { id: simIdentity(space, []), selection: [] as string[] };
 const add1 = { id: simIdentity(space, [candidates[0]]), selection: [candidates[0]] };
 const add2 = { id: simIdentity(space, [candidates[1]]), selection: [candidates[1]] };
 
-const mkEval = () => createEvaluator({
-	workerFactory: factory, threads: 2, space, baseHorse: horse, scenarios, baseSeed: BASE_SEED, skillData: mergedTable,
+const mkEval = (cacheCapBytes?: number) => createEvaluator({
+	workerFactory: factory, threads: 2, space, baseHorse: horse, scenarios, baseSeed: BASE_SEED, skillData: mergedTable, ...(cacheCapBytes != null ? { cacheCapBytes } : {}),
 });
 const positions = Array.from({ length: SEEDS }, (_, i) => i);
 
@@ -163,6 +163,31 @@ test('ensure fills the cache exactly once (P7 cache reuse)', async t => {
 	t.equal(ev.racesRun(), SEEDS * 3, 'cache hit for base/add1; only add2 ran');
 	const st = ev.stats(NS_SEARCH, 0, base);
 	t.ok(st && st.n === SEEDS && Number.isFinite(st.lead.mean), 'base stats complete with finite mean lead');
+	t.end();
+});
+
+test('§K: pinBuilds exempts pinned entries from LRU eviction', async t => {
+	// Size the budget just under three entries (entries differ only by key
+	// length), then push the cache over cap with a third fill: the LRU victim
+	// is the base, but add1, pinned and older than add2, must survive the
+	// pass that drops unpinned data.
+	const probe = mkEval();
+	await probe.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }]);
+	const cap = 3 * probe.cacheStats().estimatedBytes - 100;
+	probe.dispose();
+
+	const evPin = mkEval(cap);
+	await evPin.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }]);
+	await evPin.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: add1, positions }]);
+	t.equal(evPin.cacheStats().evictions, 0, 'two entries fit the budget');
+	evPin.pinBuilds?.(NS_SEARCH, 0, [add1.id]);
+	await evPin.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: add2, positions }]);
+	const stP = evPin.cacheStats();
+	t.ok(stP.evictions >= 1, `the over-cap eviction pass ran (evictions=${stP.evictions})`);
+	t.equal(evPin.slots(NS_SEARCH, 0, add1.id).length, SEEDS, 'pinned add1 survives eviction despite being the older entry');
+	t.equal(evPin.slots(NS_SEARCH, 0, add2.id).length, SEEDS, 'fresh add2 stays (cap met after the eviction)');
+	t.equal(evPin.slots(NS_SEARCH, 0, base.id).length, 0, 'unpinned LRU base evicted');
+	evPin.dispose();
 	t.end();
 });
 

@@ -28,7 +28,7 @@ import { buildGlobalsimChartJobs } from '../chart';
 import { globalsimSeedList } from '../compare';
 import { ci95, leadMarginL, SeedCompactRecord } from '../metrics';
 import { createGlobalsimPool, GlobalsimPool, PoolJob, PoolTiming, resolveThreadCount, WorkerFactory } from '../pool';
-import { CACHE_CAP_BYTES, EffortConfig, VERIFY_SALT } from './config';
+import { CACHE_CAP_BYTES, CACHE_PIN_TOP, EffortConfig, VERIFY_SALT } from './config';
 import { EvalCache, NS_SEARCH, NS_VERIFY, nsWithMode } from './cache';
 import { BuildSpace, forcedOptions } from './space';
 import {
@@ -108,6 +108,16 @@ export interface SearchEvaluator {
 	 * search's §E rules then stand down (no telemetry, no claims).
 	 */
 	activations?(ns: string, scenarioIdx: number, identity: string): ActivationTelemetry | null;
+	/**
+	 * §K: exempt this (namespace, scenario)'s builds' cache entries from LRU
+	 * eviction (what a long untilStopped run must not lose: the incumbent the
+	 * bandit compares every rung against, the restart ends the shortlist is
+	 * built from, and the shortlist Stage G grows). Each call REPLACES that
+	 * scope's pin set (stale pins become evictable again); other scopes keep
+	 * theirs. At most CACHE_PIN_TOP identities per scope stay pinned. The
+	 * synthetic evaluators of the search tests may omit the method.
+	 */
+	pinBuilds?(ns: string, scenarioIdx: number, identities: readonly string[]): void;
 	/** Release anything external (pool/threads). Cache semantics end here. */
 	dispose(): void;
 }
@@ -245,6 +255,24 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 
 	const listKey = (ns: string, si: number) => `${ns}|${si}`;
 	const sid = (si: number) => String(si);
+
+	// §K: what cache.evict must never touch, registered through pinBuilds and
+	// composed through keyFor (the cache keys carry the stream-mode namespace,
+	// so the pin is registered in the same mode the data was measured in).
+	// Keyed per (ns, scenario) scope: a pin call replaces its own scope only.
+	const pinScopes = new Map<string, Set<string>>();
+	const pinKeys = new Set<string>();
+	function setPins(ns: string, si: number, identities: readonly string[]): void {
+		const scope = listKey(ns, si);
+		for (const k of pinScopes.get(scope) ?? []) pinKeys.delete(k);
+		const keys = new Set<string>();
+		for (const id of identities) {
+			if (keys.size >= CACHE_PIN_TOP) break; // the top-N stay; the rest are evictable
+			keys.add(cache.keyFor(cns(ns), sid(si), id));
+		}
+		pinScopes.set(scope, keys);
+		for (const k of keys) pinKeys.add(k);
+	}
 
 	/** Search list: globalsimSeedList over a scenario-salted base. */
 	function getList(ns: string, si: number): number[] {
@@ -398,8 +426,9 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 					}
 				}
 			}
-			// Keep the table bounded; the search pins its own top builds elsewhere.
-			cache.evict(new Set());
+			// Keep the table bounded; the search pins what it must not evict
+			// (incumbent, restart ends, shortlist — §K).
+			cache.evict(pinKeys);
 			return { jobErrors: res.errors };
 		},
 		slots(ns, si, identity) {
@@ -408,6 +437,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 		activations(ns, si, identity) {
 			return cache.activationOf(cns(ns), sid(si), identity);
 		},
+		pinBuilds(ns, si, identities) { setPins(ns, si, identities); },
 		racesRun() { return races; },
 		cacheStats: () => cache.stats(),
 		poolTiming: () => pool?.timing() ?? { prepares: 0, prepareMs: 0, chunks: 0, runMs: 0, records: 0 },
