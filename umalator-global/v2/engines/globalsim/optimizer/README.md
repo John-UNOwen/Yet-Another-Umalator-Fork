@@ -105,12 +105,20 @@ engine work, since GlobalSim keeps per-phase aggregates only
 ## Paired-draws mode (engine fork)
 
 The submodule points at the fork's `paired-draws` branch. Its `pairedRandomStreams` request
-flag takes every skill's and runner's draws from a stream keyed by (seed, runner, skill), so
-adding one skill no longer reshuffles the rest of the race. Measured on the native binary,
+flag keys the in-race stream by (seed, runner) and each skill's initialization windows and
+wisdom lottery by (seed, runner, skill), so a skill change no longer reshuffles another
+runner's draws. Measured on the native binary,
 300 seeds, course 10504, a 15-skill base: median ρ 0.103 to 0.974, median paired σΔ(ℓ) 1.10
 to 0.18 L, and skills that never fire score Δ exactly 0 (13/13, against 6/6 in retail mode).
 Requests without the flag stay byte-identical to upstream v77, checked against a build of the
-pinned commit. On the 3000 m course (10810) ρ reaches 0.909 but σΔ stays near 1 L.
+pinned commit. On the 3000 m course (10810) ρ reaches 0.909 but σΔ stays near 1 L; the length
+conversion there is still the mile one, so that figure is in the wrong units.
+
+Paired mode does not move the outcome distribution: on 20 000 races per arm (course 10504,
+15-skill base, seeds disjoint from retail) every runner's finish-rank marginal, finish-time
+marginal and the field margin match retail at 1 % (Holm, χ² and tie-corrected KS, with a
+retail-vs-retail control arm); finish times tie in 6 of 40 000 retail races and 14 of 40 000
+paired, so index tie-breaking is not a channel between the modes.
 
 Stage A-G runs paired, and so does the Skill Chart; Compare stays retail until the "Paired
 seeds (lower noise)" switch is on. `cache.ts` namespaces search and verify per mode
