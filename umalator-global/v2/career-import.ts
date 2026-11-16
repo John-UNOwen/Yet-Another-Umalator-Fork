@@ -329,6 +329,8 @@ export function pickCareerDump(): Promise<CareerImport | null> {
 		const input = document.createElement('input');
 		input.type = 'file';
 		input.accept = '.json,application/json';
+		// Cancelling the dialog fires `cancel`, never `change`.
+		input.addEventListener('cancel', () => resolve(null));
 		input.onchange = async () => {
 			const file = (input.files && input.files[0]) || null;
 			if (!file) { resolve(null); return; }
