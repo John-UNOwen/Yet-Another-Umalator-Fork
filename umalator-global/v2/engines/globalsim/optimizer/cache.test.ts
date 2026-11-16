@@ -37,7 +37,7 @@ test('namespaces isolate search from verification (P3)', t => {
 });
 
 test('evict: LRU order, pinned exemption, byte accounting', t => {
-	// Each entry of 8 slots ≈ 128 + key + 256 bytes; the cap fits ~2 of them.
+	// Each entry of 8 slots ≈ 128 + key + 8·SLOT_BYTES; the cap fits ~2 of them.
 	const c = new EvalCache(estimateBytes('x', 8) * 3);
 	c.set(NS_SEARCH, 'x', 'A', 7, v(1)); // insert order A, B, C (8-slot entries)
 	c.set(NS_SEARCH, 'x', 'B', 7, v(1));
@@ -49,9 +49,10 @@ test('evict: LRU order, pinned exemption, byte accounting', t => {
 	t.ok(c.peek(NS_SEARCH, 'x', 'A'), 'MRU A kept');
 	t.ok(!c.peek(NS_SEARCH, 'x', 'B'), 'LRU B evicted first');
 	// Pinned exemption: pin the LRU identity via the cache's own key builder.
-	// (Three 394-byte entries over an 800-byte cap ⇒ exactly one eviction:
-	// pinned E is skipped, F goes, G survives under the cap.)
-	const c2 = new EvalCache(800);
+	// (Three equal entries over a cap that fits two and a half ⇒ exactly one
+	// eviction: pinned E is skipped, F goes, G survives under the cap.)
+	const entryBytes = estimateBytes(new EvalCache(0).keyFor(NS_SEARCH, 'x', 'E'), 8);
+	const c2 = new EvalCache(Math.floor(entryBytes * 2.5));
 	c2.set(NS_SEARCH, 'x', 'E', 7, v(1));
 	c2.set(NS_SEARCH, 'x', 'F', 7, v(1));
 	c2.set(NS_SEARCH, 'x', 'G', 7, v(1));

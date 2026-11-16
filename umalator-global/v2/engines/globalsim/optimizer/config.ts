@@ -185,7 +185,8 @@ export const KAPPA = 1.5;
 export const PRUNE_KAPPA = 2;
 /** Blend aggregation λ: (1−λ)·mean + λ·min. */
 export const LAMBDA_MAXIMIN = 0.3;
-/** Transposition-table byte budget (§7.1: ~100 MB, ~50 B/seed-record). */
+/** Transposition-table byte budget: real heap, ≈96 B per cached seed slot
+ *  (cache.ts SLOT_BYTES), so 100 MB ≈ 1M seed slots. */
 export const CACHE_CAP_BYTES = 100 * 1024 * 1024;
 /** Eviction exempt: the current top-N build keys stay cached. */
 export const CACHE_PIN_TOP = 50;

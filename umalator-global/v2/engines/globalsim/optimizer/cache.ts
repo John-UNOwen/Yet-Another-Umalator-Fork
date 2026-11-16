@@ -9,7 +9,8 @@
  *   list (§7.1 "indexed by seed position"), not arrival order — so merging
  *   chunks is deterministic under any thread count / completion order (§13.4).
  * - Raw SeedCompactRecords are folded to SeedValue on arrival (tail grid
- *   consumed by leadMarginL and dropped): ~40 B/seed, 100 MB ≈ 2M+ seeds.
+ *   consumed by leadMarginL and dropped): ≈96 B/seed of real heap
+ *   (SLOT_BYTES), 100 MB ≈ 1M seeds.
  * - Eviction: LRU, exempting the pinned top-N keys (§14 Phase-1 memory cap).
  */
 
@@ -48,24 +49,26 @@ export interface CacheStats {
 	evictions: number;
 }
 
+/** Measured V8 heap per filled seed slot: the 6-field SeedValue object plus
+ *  its array slot (≈96 B with --expose-gc; the old 32 B booked a third). */
+export const SLOT_BYTES = 96;
 /** Rough per-entry byte estimate: slot array + key + object overhead. The §E
  *  activation fold is accounted separately (actBytes), not in this formula. */
 export function estimateBytes(key: string, slots: number): number {
-	return 128 + key.length * 2 + slots * 32;
+	return 128 + key.length * 2 + slots * SLOT_BYTES;
 }
 
 /** Bytes booked for a folded activation report (skeleton + one bucket per id). */
 function actBytes(a: ActivationTelemetry | null): number {
 	if (!a) return 0;
-	return 96 + 40 * (Object.keys(a.counts).length + Object.keys(a.fired).length);
+	// Two dictionary-mode buckets per id measured ≈1.75× the old 40 B guess.
+	return 96 + 70 * (Object.keys(a.counts).length + Object.keys(a.fired).length);
 }
 
 export class EvalCache {
 	private map = new Map<string, CacheEntry>(); // Map iteration order = LRU order
 	private bytes = 0;
 	private evictions = 0;
-	/** Seed counts requested per (ns, scenario) — search-list growth bookkeeping. */
-	readonly seedDemand = new Map<string, number>();
 
 	constructor(readonly capBytes: number) { }
 
@@ -93,7 +96,7 @@ export class EvalCache {
 				const grow = slots - e.values.length;
 				e.values.length = slots;
 				e.values.fill(null, e.values.length - grow);
-				this.bytes += grow * 32;
+				this.bytes += grow * SLOT_BYTES;
 			}
 			this.map.set(k, e);
 		} else {
