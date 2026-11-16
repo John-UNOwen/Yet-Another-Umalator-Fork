@@ -193,6 +193,67 @@ test('runners emitted in canonical order; playerHorseIndex follows the tested um
 	t.end();
 });
 
+test('order and playerHorseIndex never depend on the skill lists (paired-draws keying)', t => {
+	// pairedRandomStreams keys each runner's engine substreams by its index in
+	// request.horses, so the same seed only stays paired across builds while the
+	// ordering — and the player index — follow gateIndex alone, whatever skills
+	// each runner carries. Every runner here holds an identifying skill, so each
+	// emitted horse can be traced back to the input runner it came from.
+	const base = {
+		courseId: 10504, groundCondition: GroundCondition.Good, weather: Weather.Sunny,
+		season: Season.Spring, time: Time.Midday, seed: 7,
+	};
+	const runner = (gateIndex: number, ids: string[], isPlayer = false) => ({
+		horse: horse().set('skills', SkillSet(ids)), gateIndex, isPlayer,
+	});
+	const skillIds = (h: any) => (h.skills as any[]).map(s => s.skillId);
+	const build = (runners: any[]) => {
+		const res = buildGlobalSimRequest({ ...base, runners }, CONFIG);
+		t.ok(res.ok, 'request valid');
+		if (res.ok === false) return null;
+		return res.value as any;
+	};
+
+	const a = build([
+		runner(6, ['200011', '202171'], true), // the tested uma: gate 6, most skills
+		runner(1, ['201251']),
+		runner(4, ['202181']),
+	]);
+	if (!a) return t.end();
+	t.deepEqual(a.horses.map((h: any) => h.gateIndex), [1, 4, 6], 'ascending gateIndex');
+	t.equal(a.playerHorseIndex, 2, 'player position after the gate sort');
+	t.deepEqual(skillIds(a.horses[0]), ['201251'], 'gate 1 travels with its own skills');
+	t.deepEqual(skillIds(a.horses[1]), ['202181'], 'gate 4 travels with its own skills');
+	t.deepEqual(skillIds(a.horses[a.playerHorseIndex]), ['200011', '202171'],
+		'playerHorseIndex points at the player horse itself, not just a number');
+
+	// Same gates, same input order, same player — skills redistributed. Neither
+	// the emitted order nor playerHorseIndex may react to that.
+	const b = build([
+		runner(6, [], true),
+		runner(1, ['200011', '202171']),
+		runner(4, ['201251']),
+	]);
+	if (!b) return t.end();
+	t.deepEqual(b.horses.map((h: any) => h.gateIndex), a.horses.map((h: any) => h.gateIndex),
+		'ordering is unchanged when skill lists change');
+	t.equal(b.playerHorseIndex, a.playerHorseIndex, 'playerHorseIndex is unchanged when skill lists change');
+	t.deepEqual(skillIds(b.horses[0]), ['200011', '202171'], 'the moved skills follow their runner gate');
+
+	// Same field again, player moved to another runner: the index follows the
+	// player, so it cannot be an artefact of one fixed gate.
+	const c = build([
+		runner(6, ['200011', '202171']),
+		runner(1, ['201251'], true),
+		runner(4, ['202181']),
+	]);
+	if (!c) return t.end();
+	t.deepEqual(c.horses.map((h: any) => h.gateIndex), [1, 4, 6], 'ordering still ascending');
+	t.equal(c.playerHorseIndex, 0, 'playerHorseIndex follows the player to gate 1');
+	t.deepEqual(skillIds(c.horses[c.playerHorseIndex]), ['201251'], 'and points at that runner');
+	t.end();
+});
+
 // ── 3. validation failures (typed results, never exceptions) ─────────────────
 
 test('pairedRandomStreams: emitted only when paired; default request byte-identical', t => {
