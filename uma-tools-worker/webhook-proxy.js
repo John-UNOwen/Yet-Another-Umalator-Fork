@@ -13,9 +13,12 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com';
 const ALLOWED_GEMINI_PATH = /^\/v1(beta)?\/models\/[^/]+:(streamGenerateContent|generateContent)$/;
 
 // Origins allowed to use the OCR proxy. localhost/127.0.0.1 (any port) for dev.
+// umalator.app is upstream's Cloudflare Pages app; john-unowen.github.io is this fork's
+// GitHub Pages origin, kept so a revived worker accepts both.
 function isAllowedOrigin(origin) {
   if (!origin) return false;
   if (origin === 'https://umalator.app' || origin === 'https://dev.umalator.app') return true;
+  if (origin === 'https://john-unowen.github.io') return true;
   return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
