@@ -564,7 +564,6 @@ export interface Preferences {
 	glassMode: boolean;
 	colorPalette: ColorPalette;
 	notificationDismissed: string; // ID of the last dismissed notification, or '' if none
-	tourCompleted: boolean;
 	uiScale: number; // UI scale percentage (80-120, default 100)
 }
 
@@ -573,7 +572,6 @@ const DEFAULT_PREFERENCES: Preferences = {
 	glassMode: false,
 	colorPalette: 'sage-green',
 	notificationDismissed: '',
-	tourCompleted: false,
 	uiScale: 100,
 };
 
@@ -616,7 +614,6 @@ export function loadPreferences(): Preferences {
 			glassMode: typeof json.glassMode === 'boolean' ? json.glassMode : DEFAULT_PREFERENCES.glassMode,
 			colorPalette,
 			notificationDismissed: typeof json.notificationDismissed === 'string' ? json.notificationDismissed : DEFAULT_PREFERENCES.notificationDismissed,
-			tourCompleted: typeof json.tourCompleted === 'boolean' ? json.tourCompleted : DEFAULT_PREFERENCES.tourCompleted,
 			uiScale: typeof json.uiScale === 'number' && json.uiScale >= 80 && json.uiScale <= 120 ? json.uiScale : DEFAULT_PREFERENCES.uiScale,
 		};
 	} catch (e) {

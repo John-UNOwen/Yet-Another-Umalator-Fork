@@ -26,9 +26,8 @@
  * ## Thread-count option
  *
  * Persisted at THREADS_STORAGE_KEY: 'auto' = clamp(hardwareConcurrency − 1,
- * 1..8), or a fixed 1..16. Phase 7 settings will surface this; the pool
- * resolves it here (resolveThreadCount) and the UI control in sim-settings
- * reads/writes it.
+ * 1..MAX_THREADS), or a fixed 1..MAX_THREADS. The pool resolves it here
+ * (resolveThreadCount) and the UI control in sim-settings reads/writes it.
  *
  * ## Testability (§4.1, Phase 4 test (e))
  *
@@ -42,10 +41,11 @@
  */
 
 export const THREADS_STORAGE_KEY = 'umalator_v2_globalsim_threads';
-export const AUTO_THREADS_MAX = 6;   // Auto caps at 6: mid-chart the renderer peaks ~1.65 GB
-	// at 8 workers on the skill-bearing baseline field (~120 MB/worker browser-side) and
-	// users hit "Out of Memory"; 6 measured ~1.39 GB. Explicit settings go to MAX_THREADS.
-export const MAX_THREADS = 16;       // user option range 1..16
+export const MAX_THREADS = 32;       // worker ceiling: user option range 1..32
+export const AUTO_THREADS_MAX = MAX_THREADS;  // Auto = every core minus the UI thread (hc−1, up to MAX_THREADS).
+	// A browser worker for the skill sim does not grow the tab's memory with worker count, so the
+	// old "cap at 6" (renderer Out of Memory at 8 workers on the ~120 MB/worker baseline field)
+	// no longer applies. Dial it back in Advanced if a machine still runs out of memory.
 
 export type ThreadsOption = 'auto' | number;
 
@@ -77,10 +77,11 @@ export function resolveThreadCount(opt: ThreadsOption = loadThreadsOption()): nu
 }
 
 /**
- * Auto with a local sim server behind the workers: the browser-memory reason
- * for AUTO_THREADS_MAX is gone (each worker is one JSON-pipe connection), so
- * Auto may use every core (up to MAX_THREADS; the server forks one child per
- * worker and the machine's own RAM is the only limit).
+ * Thread count honoring whether a local sim server backs the workers. Auto now
+ * reaches the same ceiling either way: in-browser the sim's memory no longer
+ * scales with worker count, and with the server each worker is just a JSON-pipe
+ * connection so the tab's heap ceiling is off the table too. The server-aware
+ * hook stays for clarity; explicit settings are unchanged.
  */
 export function serverAwareThreadCount(opt: ThreadsOption, serverBacked: boolean): number {
 	return opt === 'auto'
@@ -173,9 +174,9 @@ interface Slot {
 // the optimizer evaluator — and any two of those running at once, since the
 // three modes gate independently) used to size its OWN pool to `threads`
 // workers with no knowledge of the others, so N concurrent panes could hold
-// N × threads live wasm workers (each ~120 MB browser-side — the memory wall
-// that caps AUTO_THREADS_MAX). The budget is the one shared accounting point
-// the pools had no way to share: it caps the TOTAL live workers across every
+// N × threads live wasm workers. That oversubscribes the machine's cores (and
+// stacked tab heap on the heavy skill-bearing baseline field), so the budget is
+// the one shared accounting point the pools had no way to share: it caps the TOTAL live workers across every
 // live pool at the configured thread budget, so overlapping runs SHARE the
 // budget instead of each taking a full pool.
 //

@@ -6,7 +6,7 @@
  * Licensed under GPL-3.0-or-later
  */
 
-import { h } from 'preact';
+import { h, Fragment } from 'preact';
 import { CustomSelect, Tooltip } from './components';
 import { BASE_PATH } from '../../components/base-path';
 import { GroundCondition } from '../../uma-skill-tools/RaceParameters';
@@ -52,7 +52,19 @@ export const GATE_OPTIONS = [
 	...Array.from({ length: 9 }, (_, g) => ({ value: g, label: `Gate ${g + 1}` })),
 ];
 
-export function CompactConditions({
+/** Ground + weather/season/time icon selectors only (no GlobalSim field controls). */
+interface ConditionGroupsProps {
+	ground: number;
+	setGround: (v: number) => void;
+	weather: number;
+	setWeather: (v: number) => void;
+	season: number;
+	setSeason: (v: number) => void;
+	time: number;
+	setTime: (v: number) => void;
+}
+
+export function ConditionGroups({
 	ground,
 	setGround,
 	weather,
@@ -61,10 +73,9 @@ export function CompactConditions({
 	setSeason,
 	time,
 	setTime,
-	globalsimField,
-}: CompactConditionsProps) {
+}: ConditionGroupsProps) {
 	return (
-		<div class="v2-conditions">
+		<>
 			<CustomSelect
 				value={ground}
 				onChange={(val) => setGround(val as number)}
@@ -122,41 +133,79 @@ export function CompactConditions({
 					</Tooltip>
 				))}
 			</div>
-			<div class="v2-globalsim-field">
-				<CustomSelect
-					value={globalsimField.preset}
-					onChange={(val) => globalsimField.setPreset(val as string)}
-					options={globalsimField.presets}
-					className="v2-field-preset-select"
-				/>
-				<CustomSelect
-					value={globalsimField.gate}
-					onChange={(val) => globalsimField.setGate(val as number | 'auto')}
-					options={GATE_OPTIONS}
-					className="v2-field-gate-select"
-				/>
-				{globalsimField.showLayout && globalsimField.layout && globalsimField.setLayout && (
-					<div
-						class="v2-mode-toggle v2-field-layout-toggle"
-						title="Mob field: each build races alone against 8 mobs, so margins isolate the builds. Head-to-head: both umas share one race against 7 mobs (mirrored gate pairs, both races averaged), so debuffs, blocking and duels between your builds count — at 2 races per seed."
+		</>
+	);
+}
+
+/** GlobalSim mob-field controls (mob preset, gate, compare layout toggle). */
+export function GlobalsimFieldControls({
+	globalsimField,
+}: {
+	globalsimField: CompactConditionsProps['globalsimField'];
+}) {
+	return (
+		<div class="v2-globalsim-field">
+			<CustomSelect
+				value={globalsimField.preset}
+				onChange={(val) => globalsimField.setPreset(val as string)}
+				options={globalsimField.presets}
+				className="v2-field-preset-select"
+			/>
+			<CustomSelect
+				value={globalsimField.gate}
+				onChange={(val) => globalsimField.setGate(val as number | 'auto')}
+				options={GATE_OPTIONS}
+				className="v2-field-gate-select"
+			/>
+			{globalsimField.showLayout && globalsimField.layout && globalsimField.setLayout && (
+				<div
+					class="v2-mode-toggle v2-field-layout-toggle"
+					title="Mob field: each build races alone against 8 mobs, so margins isolate the builds. Head-to-head: both umas share one race against 7 mobs (mirrored gate pairs, both races averaged), so debuffs, blocking and duels between your builds count — at 2 races per seed."
+				>
+					<button
+						type="button"
+						class={globalsimField.layout === 'mob' ? 'active' : ''}
+						onClick={() => globalsimField.setLayout('mob')}
 					>
-						<button
-							type="button"
-							class={globalsimField.layout === 'mob' ? 'active' : ''}
-							onClick={() => globalsimField.setLayout('mob')}
-						>
-							Mob field
-						</button>
-						<button
-							type="button"
-							class={globalsimField.layout === 'h2h' ? 'active' : ''}
-							onClick={() => globalsimField.setLayout('h2h')}
-						>
-							Head-to-head
-						</button>
-					</div>
-				)}
-			</div>
+						Mob field
+					</button>
+					<button
+						type="button"
+						class={globalsimField.layout === 'h2h' ? 'active' : ''}
+						onClick={() => globalsimField.setLayout('h2h')}
+					>
+						Head-to-head
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
+export function CompactConditions({
+	ground,
+	setGround,
+	weather,
+	setWeather,
+	season,
+	setSeason,
+	time,
+	setTime,
+	globalsimField,
+}: CompactConditionsProps) {
+	return (
+		<div class="v2-conditions">
+			<ConditionGroups
+				ground={ground}
+				setGround={setGround}
+				weather={weather}
+				setWeather={setWeather}
+				season={season}
+				setSeason={setSeason}
+				time={time}
+				setTime={setTime}
+			/>
+			<GlobalsimFieldControls globalsimField={globalsimField} />
 		</div>
 	);
 }

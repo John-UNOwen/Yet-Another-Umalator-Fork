@@ -394,7 +394,7 @@ test('auto thread count clamps hardwareConcurrency−1 to [1, AUTO_THREADS_MAX]'
 	t.equal(autoThreadCount(2), 1);
 	t.equal(autoThreadCount(1), 1);
 	t.equal(autoThreadCount(5), 4);              // hc−1 below the cap passes through
-	t.equal(autoThreadCount(8), AUTO_THREADS_MAX);
+	t.equal(autoThreadCount(8), 7);              // hc−1 passes through — the ceiling is MAX_THREADS now
 	t.equal(autoThreadCount(64), AUTO_THREADS_MAX);
 	t.equal(autoThreadCount(64, MAX_THREADS), MAX_THREADS, 'server-backed auto may reach MAX_THREADS');
 	t.end();
@@ -420,7 +420,7 @@ test('threads option persists through localStorage and resolves', t => {
 	t.equal(store.get(THREADS_STORAGE_KEY), '12');
 	t.equal(loadThreadsOption(), 12);
 	t.equal(resolveThreadCount(12), 12);
-	t.equal(resolveThreadCount(999), MAX_THREADS, 'fixed option clamped to 16');
+	t.equal(resolveThreadCount(999), MAX_THREADS, 'fixed option clamped to MAX_THREADS');
 	t.equal(resolveThreadCount('auto'), autoThreadCount(), 'auto path');
 	saveThreadsOption('auto');
 	t.equal(store.get(THREADS_STORAGE_KEY), 'auto');

@@ -50,7 +50,6 @@ import {
 import { NotificationBanner } from "./components/NotificationBanner";
 import {
   Users,
-  HelpCircle,
   MessageSquare,
   Minus,
   Plus,
@@ -61,20 +60,19 @@ import {
   Wand2,
 } from "lucide-react";
 import { V2TrackSelect } from "./track-select";
-import { CompactConditions } from "./conditions";
+import { CompactConditions, ConditionGroups, GlobalsimFieldControls } from "./conditions";
 import { presets, visiblePresets, DEFAULT_PRESET } from "./presets";
 import { V2UmaPanel, UmaState, defaultUmaState } from "./uma-panel";
 import { TraineesTab } from "./trainees-tab";
 import { UmasTab, UmasTabState, initialUmasTabState } from "./roster/umas-tab";
 import { V2ResultsPane, CompareResults, RaceSnapshot, calcStats } from "./results-pane";
 import { VelocityOverlay } from "./velocity-overlay";
-import { TourProvider, TourOverlay } from "./tour";
 import { SkillChartPane } from "./skill-chart-pane";
 import { OptimizerPane } from "./optimizer-pane";
 import { SkillChartDetail } from "./skill-chart-detail";
 // import { PasswordGate } from "./PasswordGate";
 import { FeedbackDrawer } from "./feedback-drawer";
-import { SimulationSettings } from "./sim-settings";
+import { SimulationSettings, SimCommonControls, SimAdvancedControls } from "./sim-settings";
 import { loadGlobalsimSkillTable } from "./engines/globalsim/skills";
 import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
 import { runGlobalsimCompare } from "./engines/globalsim/compare";
@@ -113,7 +111,6 @@ import skilldata from "../skill_data.json";
 import skillnames from "../skillnames.json";
 import skillmeta from "../../skill_meta.json";
 import "./v2.css";
-import "./tour/tour.css";
 
 // Discord webhook for feedback submissions - configure via VITE_DISCORD_WEBHOOK environment variable
 const DISCORD_FEEDBACK_WEBHOOK = import.meta.env.VITE_DISCORD_WEBHOOK || '';
@@ -325,6 +322,8 @@ function App() {
   // The same seed and preset give the same field; "Auto" draws the tested uma's
   // gate per seed, identically for both races of a compare pair.
   const [globalsimFieldPreset, setGlobalsimFieldPreset] = useState("default");
+  // Collapsible "Advanced" strip in the header (threads / sim server / notices).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [globalsimGate, setGlobalsimGate] = useState<number | "auto">("auto");
   // Compare field layout: 'mob' isolates each build against 8 mobs; 'h2h'
   // races both umas together against 7 mobs (mirrored gate pairs). Compare
@@ -1393,8 +1392,7 @@ function App() {
 
   return (
     <Language.Provider value="en-global">
-      <TourProvider autoStart={true}>
-        <IntlProvider definition={STRINGS}>
+      <IntlProvider definition={STRINGS}>
           <div
             id="app-v2"
             class={`${darkMode ? "" : "light"} ${glassMode ? "glass" : ""} ${CC_DEV && yandereMode ? "yandere" : (colorPalette !== 'uma-green' ? colorPalette : '')} ${showNotification ? "v2-has-notification" : ""}`}
@@ -1444,29 +1442,30 @@ function App() {
               </div>
 
               <div class="v2-header-center">
-                <CompactConditions
-                  ground={ground}
-                  setGround={(v) => {
-                    setSelectedPresetId(null);
-                    setGround(v);
-                  }}
-                  weather={weather}
-                  setWeather={(v) => {
-                    setSelectedPresetId(null);
-                    setWeather(v);
-                  }}
-                  season={season}
-                  setSeason={(v) => {
-                    setSelectedPresetId(null);
-                    setSeason(v);
-                  }}
-                  time={time}
-                  setTime={(v) => {
-                    setSelectedPresetId(null);
-                    setTime(v);
-                  }}
-                  globalsimField={globalsimFieldConfig}
-                />
+                <div class="v2-conditions">
+                  <ConditionGroups
+                    ground={ground}
+                    setGround={(v) => {
+                      setSelectedPresetId(null);
+                      setGround(v);
+                    }}
+                    weather={weather}
+                    setWeather={(v) => {
+                      setSelectedPresetId(null);
+                      setWeather(v);
+                    }}
+                    season={season}
+                    setSeason={(v) => {
+                      setSelectedPresetId(null);
+                      setSeason(v);
+                    }}
+                    time={time}
+                    setTime={(v) => {
+                      setSelectedPresetId(null);
+                      setTime(v);
+                    }}
+                  />
+                </div>
               </div>
 
               <div class="v2-header-right">
@@ -1628,15 +1627,6 @@ function App() {
                         });
                       },
                     },
-                    {
-                      id: "restart-tour",
-                      label: "Restart Tour",
-                      icon: <HelpCircle size={16} />,
-                      onClick: () => {
-                        savePreferences({ tourCompleted: false });
-                        window.location.reload();
-                      },
-                    },
                   ]}
                 />
                 {/* Menu/apps dropdown: contains links to HP Calc, Docs, Events (to be added) */}
@@ -1668,28 +1658,50 @@ function App() {
                   ]}
                 />
               </div>
+
+              {/* Second header row: GlobalSim field + common sim params, with the
+                  Advanced toggle on the right (threads / sim server / notices). */}
+              <div class="v2-header-sub">
+                <div class="v2-header-sub-left">
+                  <GlobalsimFieldControls globalsimField={globalsimFieldConfig} />
+                  <SimCommonControls
+                    samples={samples}
+                    setSamples={setSamples}
+                    seed={seed}
+                    setSeed={setSeed}
+                    autoSeed={autoSeed}
+                    setAutoSeed={setAutoSeed}
+                    hideNotInGame={hideNotInGame}
+                    setHideNotInGame={setHideNotInGame}
+                  />
+                </div>
+                <button
+                  type="button"
+                  class={`v2-advanced-toggle ${advancedOpen ? "open" : ""}`}
+                  onClick={() => setAdvancedOpen(!advancedOpen)}
+                  aria-expanded={advancedOpen}
+                >
+                  {advancedOpen ? "Hide advanced" : "Advanced"}
+                </button>
+              </div>
             </header>
 
-            {/* SIMULATION SETTINGS BAR */}
-            <SimulationSettings
-              samples={samples}
-              setSamples={setSamples}
-              seed={seed}
-              setSeed={setSeed}
-              autoSeed={autoSeed}
-              setAutoSeed={setAutoSeed}
-              hideNotInGame={hideNotInGame}
-              setHideNotInGame={setHideNotInGame}
-              globalsimUncoveredCount={globalsimUncoveredCount}
-              threads={globalsimThreads}
-              setThreads={setGlobalsimThreads}
-              simServer={{
-                url: simServerUrl, setUrl: setSimServerUrl,
-                token: simServerToken, setToken: setSimServerToken,
-                online: simServerOnline, cores: simServerCores, tokenNeeded: simServerTokenNeeded,
-                check: () => { void checkSimServer(); },
-              }}
-            />
+            {/* ADVANCED strip (collapsible) */}
+            {advancedOpen && (
+              <div class="v2-advanced-strip">
+                <SimAdvancedControls
+                  globalsimUncoveredCount={globalsimUncoveredCount}
+                  threads={globalsimThreads}
+                  setThreads={setGlobalsimThreads}
+                  simServer={{
+                    url: simServerUrl, setUrl: setSimServerUrl,
+                    token: simServerToken, setToken: setSimServerToken,
+                    online: simServerOnline, cores: simServerCores, tokenNeeded: simServerTokenNeeded,
+                    check: () => { void checkSimServer(); },
+                  }}
+                />
+              </div>
+            )}
 
             {/* Content area wrapper for widescreen layout */}
             <div class="v2-content-area">
@@ -2267,9 +2279,6 @@ function App() {
               />
             )}
 
-            {/* Tour overlay - renders via portal */}
-            <TourOverlay />
-
             {/* Skill info popover */}
             {popoverSkillId && skillChartResults.has(popoverSkillId) && (
               <div
@@ -2527,17 +2536,6 @@ function App() {
                       >
                         Send Feedback
                       </Button>
-                      <Button
-                        variant="ghost"
-                        className="v2-mobile-settings-btn"
-                        onClick={() => {
-                          savePreferences({ tourCompleted: false });
-                          window.location.reload();
-                        }}
-                        icon={<HelpCircle size={14} />}
-                      >
-                        Restart Tour
-                      </Button>
                     </div>
                   </div>
                 </div>
@@ -2545,7 +2543,6 @@ function App() {
             )}
           </div>
         </IntlProvider>
-      </TourProvider>
     </Language.Provider>
   );
 }

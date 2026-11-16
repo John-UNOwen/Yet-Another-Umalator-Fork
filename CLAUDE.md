@@ -32,7 +32,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 │   │   ├── app-v2.tsx          # Main application
 │   │   ├── engines/globalsim/  # GlobalSim engine layer (worker, wasm bridge, modes)
 │   │   ├── components/         # V2-specific components
-│   │   ├── tour/               # Onboarding tour system
 │   │   ├── velocity-overlay.tsx
 │   │   ├── results-pane.tsx
 │   │   └── vite.config.ts      # V2 uses Vite
@@ -48,9 +47,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 │   └── master.mdb              # Global master.mdb (source of truth for in-game data)
 ├── uma-tools-worker/            # Cloudflare Worker for webhooks
 ├── components/                  # Shared UI components
-│   ├── RaceTrack.tsx
-│   ├── RacetrackCow.tsx         # Visual cow easter egg
-│   └── RacetrackCowMooCoins.tsx # MooCoins wrapper (dev only)
+│   └── RaceTrack.tsx
 └── skill-visualizer/            # Skill visualization tool
 ```
 
@@ -191,7 +188,6 @@ simulation.
 - Modern redesigned UI in `umalator-global/v2/`
 - Component-based architecture
 - Mobile-first responsive design
-- Guided onboarding tour
 - Modal dialogs, feedback drawer, mobile navigation
 - Built with esbuild (`build.mjs`); the deployed bundle comes from the Vite `dist/` build
 - Served at the site root (the old `/umalator-global/v2/` path 301s there)
@@ -223,12 +219,6 @@ v2/components/
 **Feature Modules:**
 ```
 v2/
-├── tour/               # Onboarding tour system
-│   ├── TourContext.tsx   # Tour state management
-│   ├── TourOverlay.tsx   # Tour UI overlay
-│   ├── TourTooltip.tsx   # Tour step tooltips
-│   ├── steps.ts          # Tour step definitions
-│   └── types.ts          # Tour types
 ├── feedback-drawer.tsx   # Discord feedback integration
 ├── mobile-nav.tsx        # Mobile navigation drawer
 ├── track-select.tsx      # Track/course selector
@@ -240,7 +230,6 @@ v2/
 ```
 
 **V2 Features:**
-- **Guided Tour**: Multi-step onboarding for new users
 - **URL State**: Shareable URLs via Copy Link (hash-based state serialization)
 - **Preset URLs**: `?preset=X` parameter for quick race loading
 - **Feedback System**: Discord webhook integration for user feedback
@@ -258,8 +247,6 @@ v2/
 
 **Race Visualization:**
 - `RaceTrack.tsx`: Interactive track visualization with corners, slopes, skill regions
-- `RacetrackCow.tsx`: Visual cow easter egg (walks, idles, sleeps)
-- `RacetrackCowMooCoins.tsx`: MooCoins investment wrapper (dev branch only)
 - `VelocityOverlay.tsx` (v2): SVG overlay for velocity/HP curves
 
 **Skill Management:**
@@ -636,39 +623,6 @@ npx wrangler secret put DISCORD_WEBHOOK  # Set real webhook URL
 
 ## Modern Features
 
-### Guided Onboarding Tour
-
-**Location:** `umalator-global/v2/tour/`
-
-**Components:**
-- `TourContext.tsx`: State management (current step, completed tours)
-- `TourOverlay.tsx`: Dark overlay with spotlight effect
-- `TourTooltip.tsx`: Step tooltip with controls
-- `steps.ts`: Tour step definitions
-- `types.ts`: TypeScript interfaces
-
-**Usage:**
-```tsx
-import { TourProvider, useTour } from './tour/TourContext';
-
-// Wrap app in TourProvider
-<TourProvider>
-  <App />
-</TourProvider>
-
-// Access tour state
-const { startTour, currentStep } = useTour();
-```
-
-**Tour Steps:**
-1. Welcome (header)
-2. Track & Course Selection
-3. Race Conditions
-4. Run Button
-5. Uma Configuration
-6. Skills Panel
-7. Results Panel
-
 ### Mobile Navigation
 
 **Component:** `v2/mobile-nav.tsx`
@@ -708,23 +662,6 @@ interface VelocityOverlayProps {
 - Now independently controlled via checkboxes
 
 ### Easter Eggs
-
-**RacetrackCow:**
-- Visual cow that walks, idles, and sleeps on the track
-- Click to change direction or wake up
-- Double-click to hide/show
-- Component: `components/RacetrackCow.tsx` (pure visual)
-- CSS: `components/RacetrackCow.css`
-
-**MooCoins System (Dev Only):**
-- Investment game wrapper around RacetrackCow
-- Earn MooCoins by walking
-- Trade ShnailCoin, RamenCoin, AderynCoin in MooMarket
-- Wallet copy/paste for sharing balances
-- Component: `components/RacetrackCowMooCoins.tsx` (dev branch only)
-- CSS: `components/RacetrackCowMooCoins.css`
-
-**Note**: On master branch, only the visual cow exists. MooCoins wrapper is dev-only.
 
 **Still In Love (Dev Only):**
 - Type "STILL" anywhere (not in an input field) to trigger yandere mode
@@ -812,8 +749,6 @@ The old v1 scheme — hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js
 
 - **master**: Production (`umalator.app`)
 - **dev**: Development preview (`dev.umalator.app`)
-
-**Note**: Dev branch includes MooCoins easter egg. Master has only the visual cow.
 
 ### Canva guides — `canva.umalator.app`
 
