@@ -88,8 +88,11 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
-  /* Header height - keep compact */
-  --header-height: 116px; /* two-row header (see .v2-header grid); drawer/main height calc */
+  /* Header height - a fallback only. The real bar wraps to two or three bands
+     depending on width and the Advanced strip adds another, so app-v2.tsx
+     measures it at runtime and overwrites this on :root. Consumers: the fixed
+     uma drawer's top/height below 1920px. */
+  --header-height: 116px;
 
   /* Drawer width - wide enough for 5 stat inputs */
   --drawer-width: 680px;
@@ -2035,10 +2038,15 @@ body {
 
 /* Widescreen mode: 1920px+ - persistent Uma drawer */
 @media (min-width: 1920px) {
-  /* App uses row layout for main area */
+  /* App uses row layout for main area. Pin the shell to the viewport height so
+     the panes below get "whatever is left" from flexbox: opening the Advanced
+     strip (or the bar wrapping to a third band) then shrinks the panes instead
+     of pushing their bottom below the fold. */
   #app-v2 {
     display: flex;
     flex-direction: column;
+    height: 100vh; /* fallback */
+    height: 100dvh;
   }
 
   /* Drawer becomes static, always visible, on the left */
@@ -2046,7 +2054,8 @@ body {
     position: static;
     left: 0 !important;
     top: 0;
-    height: calc(100vh - var(--header-height));
+    height: 100%;
+    min-height: 0;
     flex-shrink: 0;
     box-shadow: none;
     border-right: 1px solid var(--color-border);

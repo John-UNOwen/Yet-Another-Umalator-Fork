@@ -737,6 +737,47 @@ function App() {
     savePreferences({ notificationDismissed: NOTIFICATION_ID });
   }, []);
 
+  // Publish the real height of the header band (+ the open Advanced strip) as
+  // --header-height. Nothing static can match it: the control bar wraps to two
+  // or three bands by width, the strip toggles, and a dismissed banner shifts
+  // the bar down. The fixed uma drawer hangs itself from this var below 1920px,
+  // so a stale value buries its header under the bar and pushes its bottom off
+  // screen — which is what the fixed-height widescreen shell no longer needs.
+  useEffect(() => {
+    const root = document.documentElement;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const header = document.querySelector(".v2-header");
+      if (!header) return;
+      const strip = document.querySelector(".v2-advanced-strip");
+      const h = Math.round(
+        (header as HTMLElement).offsetTop +
+          header.getBoundingClientRect().height +
+          (strip?.getBoundingClientRect().height ?? 0),
+      );
+      if (h > 0) root.style.setProperty("--header-height", `${h}px`);
+    };
+    // Coalesce: a resize/zoom pass fires the observer many times per frame.
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(measure);
+    };
+    schedule();
+    const ro = new ResizeObserver(schedule);
+    for (const el of [
+      document.querySelector(".v2-header"),
+      document.querySelector(".v2-advanced-strip"),
+    ]) {
+      if (el) ro.observe(el);
+    }
+    window.addEventListener("resize", schedule);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener("resize", schedule);
+    };
+  }, [advancedOpen, showNotification]);
+
   // Mobile view change handler
   const handleMobileViewChange = useCallback((view: MobileView) => {
     setMobileView(view);
