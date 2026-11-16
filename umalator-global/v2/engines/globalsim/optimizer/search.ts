@@ -874,7 +874,10 @@ async function runSingleScenario(
 		// neighbourhood — drop, add, swap (same-group = tier move; also every
 		// drop's refill), 2-for-1 (which contains the upgrade-and-sell shape:
 		// sell a filler, buy the higher tier) and 1-for-2 — is enumerated every
-		// round, so everything budget-feasible is one move away. Screening is
+		// round — every build within one such move of X. That is NOT every
+		// feasible build: pure pair adds (two in, none out — Stage D races
+		// those) and 2-for-2 or wider moves (N2 / kicks) are outside it, so a
+		// certified 1-move peak certifies these move shapes only. Screening is
 		// the §D bandit with its indifference zone, run in waves of CLIMB_WAVE:
 		// bad moves die at the first rung, seeds go to contenders. Move order
 		// (surrogate acquisition / Σ ctxVal) only sequences the waves; it never
@@ -1542,9 +1545,10 @@ function movesFrom(
 	const out: FMove[] = [];
 	for (const mv of raw) {
 		const sel = applyMove(space, Xsel, mv.drops, mv.adds);
+		// Budget first: it is a sum, the identity is a sorted ~200-char join.
+		if (!affordable(space, sel)) continue;               // §13.3: never over budget
 		const b: BuildRefLite = { id: simIdentity(space, sel), selection: sel };
 		if (seen.has(b.id)) continue;
-		if (!affordable(space, sel)) continue;               // §13.3: never over budget
 		seen.add(b.id);
 		const added = sel.filter(s => !Xsel.includes(s));
 		const removed = Xsel.filter(s => !sel.includes(s));
@@ -1580,7 +1584,8 @@ function movesFrom(
  * add bought over and over until nothing is affordable: a single-add refill
  * can leave SP unspent that another affordable option could have bought, and
  * three-or-more-add refills have no other representative in the move space.
- * Everything budget-feasible must be reachable in one move: no move caps, no
+ * Pure pair adds (two in, none out) are not: see the note at the arm below.
+ * Every move of these shapes that fits the budget is offered: no move caps, no
  * estimate pruning — the bandit's indifference zone (§D) screens, nothing
  * else decides what deserves seeds.
  */
@@ -1597,8 +1602,24 @@ function n1Moves(
 	const free = space.options.filter(o => !o.forced && !Xsel.includes(o.id));
 	const owned = Xsel.filter(id => !space.byId.get(id)?.forced);
 	const raw: { drops: string[]; adds: string[] }[] = [];
+	// Exact post-move cost without building the move (applyMove semantics: an
+	// add also sells X's option in its own group). The two-add arms are
+	// O(owned × free²) — ~700k raw moves on the app's ~290-option pool, nearly
+	// all unaffordable on a full build — so they are budget-gated here, before
+	// any allocation, instead of canonicalized and thrown away in movesFrom.
+	const costOfId = (id: string) => space.byId.get(id)?.cost ?? 0;
+	const ownerOf = new Map<string, string>();
+	for (const id of Xsel) { const g = space.byId.get(id)?.groupId; if (g != null) ownerOf.set(g, id); }
+	const costX = costOf(space, Xsel, true);
+	const sold = (o: OptOption, dropped?: string) => { const w = ownerOf.get(o.groupId); return w != null && w !== dropped ? costOfId(w) : 0; };
+	const pairFits = (a: OptOption, c: OptOption, dropped?: string) =>
+		costX - (dropped ? costOfId(dropped) : 0) - sold(a, dropped) - sold(c, dropped) + a.cost + c.cost <= space.budget;
 	// add (includes refills: an add is a drop's other half done the other way)
 	for (const j of free) raw.push({ drops: [], adds: [j.id] });
+	// Pure pair adds (two in, none out) are deliberately NOT in N1: adding them
+	// was measured on search.oracle's §I instances to cost quality (instance 2:
+	// μ 2.090 → 1.893 with the surrogate on) and ~2× races. Stage D still races
+	// pair adds; the certificate below does not cover that class.
 	// drop
 	for (const i of owned) raw.push({ drops: [i], adds: [] });
 	// swap: 1-for-1 (cross-group; same-group = tier move; the refill move)
@@ -1611,7 +1632,7 @@ function n1Moves(
 	// "sell i, buy its better tier plus a filler" is part of the §C vocabulary.
 	for (const i of owned)
 		for (let a = 0; a < free.length; a++) for (let c = a + 1; c < free.length; c++)
-			if (free[a].groupId !== free[c].groupId)
+			if (free[a].groupId !== free[c].groupId && pairFits(free[a], free[c], i))
 				raw.push({ drops: [i], adds: [free[a].id, free[c].id] });
 	// §K refill: a drop with its full top-up. Sell i, then buy the
 	// best-estimated affordable free add again and again until nothing is
