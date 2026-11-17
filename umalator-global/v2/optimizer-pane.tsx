@@ -741,8 +741,25 @@ function OptimizerResults(props: {
 	const best = result.best;
 	const contribs = result.contributions?.length ? new Map(result.contributions.map((c) => [c.id, c])) : null;
 	const openCompare = () => onOpenInCompare?.([...best.build.selection]);
+	// Win rate and P(top-3) can only rank builds that sometimes win or place.
+	// An end-of-career uma with nothing bought yet often does neither against
+	// a full field, and then every row ties at 0.
+	const rateObjective = objective === 'p1' || objective === 'pTop3';
+	const allZero = rateObjective && result.shortlist.length > 0
+		&& result.shortlist.every((r) => r.obj.mean === 0);
+	const bestLead = Math.max(...result.shortlist.map((r) => r.stats?.lead.mean ?? -Infinity));
 	return (
 		<div class="v2-optimizer-results">
+			{allZero && (
+				<div class="v2-optimizer-notice" role="status"
+					style={{ border: '1px solid #d0a030', borderRadius: 6, padding: '6px 10px', marginBottom: 8, fontSize: 13 }}>
+					<strong style={{ color: '#d0a030' }}>No build {objective === 'p1' ? 'won' : 'placed in the top 3 in'} a single race against this field.</strong>{' '}
+					{Number.isFinite(bestLead) ? `The best one still finished ${fmtN(Math.abs(bestLead), 1)} lengths behind the winner. ` : ''}
+					That is normal at the end of a career with no skills bought yet, but it means {objLabel} cannot tell
+					these builds apart, so the rows below are a tie, not a ranking.
+					Set Objective to <strong>Mean lead ℓ</strong> to rank builds by how much ground they gain.
+				</div>
+			)}
 			<table class="v2-optimizer-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
 				<thead>
 					<tr>
