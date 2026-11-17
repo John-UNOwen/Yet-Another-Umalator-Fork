@@ -17,7 +17,7 @@ import { buildSpace, BuildSpace, activationCountSkill, simIdentity } from './eng
 import { BuildRefLite, createEvaluator, Evaluator } from './engines/globalsim/optimizer/evaluator';
 import { createController, runOptimizer, SearchController } from './engines/globalsim/optimizer/search';
 import { bookKey, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
-import { effortConfig } from './engines/globalsim/optimizer/config';
+import { CUSTOM_STARTS_MAX, DEFAULT_CUSTOM, effortConfig } from './engines/globalsim/optimizer/config';
 import type {
 	ActivationTelemetry, EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
 	ScenarioSpec, ScoredBuild,
@@ -152,6 +152,7 @@ const PRESETS: { id: EffortPreset; label: string }[] = [
 	{ id: 'quick', label: 'Quick' },
 	{ id: 'standard', label: 'Standard' },
 	{ id: 'thorough', label: 'Thorough' },
+	{ id: 'custom', label: 'Custom' },
 	{ id: 'untilStopped', label: 'Until stopped' },
 ];
 const STAGE_LABEL: Record<OptimizerProgress['stage'], string> = {
@@ -182,6 +183,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [budget, setBudget] = useState(10000);
 	const [objective, setObjective] = useState<ObjectiveKind>('p1');
 	const [preset, setPreset] = useState<EffortPreset>('standard');
+	/** Custom effort: starting builds and a time limit in minutes (0 = none). */
+	const [customStarts, setCustomStarts] = useState(DEFAULT_CUSTOM.starts);
+	const [customMinutes, setCustomMinutes] = useState(DEFAULT_CUSTOM.minutes);
 	const [seed, setSeed] = useState(props.seed);
 	const [useBook, setUseBook] = useState(true);
 	const [running, setRunning] = useState(false);
@@ -405,7 +409,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				ev,
 				{
 					space, scenarioIdx: 0, objective, aggregation: 'mean',
-					bookStarts, current, effort: effortConfig(preset),
+					bookStarts, current, effort: effortConfig(preset, { starts: customStarts, minutes: customMinutes }),
 				},
 				ctrl,
 				(p) => {
@@ -533,6 +537,20 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 						{PRESETS.map((p) => <option value={p.id}>{p.label}</option>)}
 					</select>
 				</div>
+				{preset === 'custom' && (
+					<div title="How many starting builds the search explores. Each one gets its own climb and up to 10 shake-ups, so more starts cover more of the build space and take longer.">
+						<label style={labelStyle}>Starting builds</label>
+						<input type="number" min={1} max={CUSTOM_STARTS_MAX} step={1} style={{ ...inputStyle, width: 70 }} value={customStarts}
+							disabled={running} onInput={(e) => setCustomStarts((e.target as HTMLInputElement).valueAsNumber as number)} />
+					</div>
+				)}
+				{preset === 'custom' && (
+					<div title="Search time limit in minutes. 0 means no limit: the run ends once every starting build is done. The final check on fresh seeds runs after the limit.">
+						<label style={labelStyle}>Time limit (min)</label>
+						<input type="number" min={0} step={5} style={{ ...inputStyle, width: 70 }} value={customMinutes}
+							disabled={running} onInput={(e) => setCustomMinutes((e.target as HTMLInputElement).valueAsNumber as number)} />
+					</div>
+				)}
 				<div>
 					<label style={labelStyle}>Seed</label>
 					<input type="number" step={1} style={{ ...inputStyle, width: 130 }} value={seed}

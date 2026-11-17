@@ -140,8 +140,27 @@ export const UNTIL_STOPPED: EffortConfig = {
 	timeBudgetMs: Infinity, ...SCREEN_COMMON,
 };
 
-export function effortConfig(preset: EffortPreset): EffortConfig {
+/** Custom effort: Thorough's sizes with the user's starting-build count and
+ *  time limit. A limit of 0 minutes means none: the run ends when every
+ *  starting build has had its climb and kicks. */
+export interface CustomEffort {
+	/** Starting builds (Stage C restarts), 1 to CUSTOM_STARTS_MAX. */
+	starts: number;
+	/** Time limit in minutes, 0 for none. */
+	minutes: number;
+}
+export const CUSTOM_STARTS_MAX = 50;
+export const DEFAULT_CUSTOM: CustomEffort = { starts: 10, minutes: 40 };
+
+export function customEffortConfig(c: CustomEffort): EffortConfig {
+	const starts = Math.max(1, Math.min(CUSTOM_STARTS_MAX, Math.round(Number(c.starts) || 1)));
+	const minutes = Math.max(0, Number(c.minutes) || 0);
+	return { ...THOROUGH, preset: 'custom', restarts: starts, timeBudgetMs: minutes > 0 ? minutes * 60_000 : Infinity };
+}
+
+export function effortConfig(preset: EffortPreset, custom: CustomEffort = DEFAULT_CUSTOM): EffortConfig {
 	switch (preset) {
+		case 'custom': return customEffortConfig(custom);
 		case 'quick': return QUICK;
 		case 'thorough': return THOROUGH;
 		case 'untilStopped': return UNTIL_STOPPED;

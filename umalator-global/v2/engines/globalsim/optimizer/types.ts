@@ -22,7 +22,7 @@ export type ObjectiveKind =
 
 export type AggregationKind = 'mean' | 'maximin' | 'blend';
 
-export type EffortPreset = 'quick' | 'standard' | 'thorough' | 'untilStopped';
+export type EffortPreset = 'quick' | 'standard' | 'thorough' | 'untilStopped' | 'custom';
 
 /** A scenario = one (mob preset, ground, weather, …) race setup (§6.3). */
 export interface ScenarioSpec {
