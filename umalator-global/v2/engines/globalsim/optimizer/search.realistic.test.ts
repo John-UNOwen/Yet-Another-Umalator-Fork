@@ -516,7 +516,7 @@ test('realistic regime: §C acceptance — gap vs the exact reference optimum + 
 	t.ok(onePerGroup, 'recommendation never repeats a group');
 	t.ok(teleAbsent, '§E: without reported activation counts the rules stand down (no activation report on the result)');
 	t.ok(contribShape, 'the worth report carries one row per skill of the recommendation');
-	t.ok(contribSkills > 0 && contribMeasured > 0,
+	t.ok(contribSkills > 0 && contribMeasured === contribSkills,
 		`the worth report measures ${contribMeasured} of ${contribSkills} recommended-skill drops (${contribUnresolved} of them with an interval over zero)`);
 
 	for (const setting of SETTINGS) {

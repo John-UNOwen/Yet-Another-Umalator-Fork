@@ -246,6 +246,12 @@ export const VERIFY_SALT = 0x51ed27e1;
  * many measured seeds the dead-skill rules simply do not fire.
  */
 export const DEAD_SKILL_MIN_SEEDS = 200;
+
+/** Seeds the per-skill worth report races for a drop the cache no longer holds
+ *  (evicted on a long run) or never raced (the recommendation was not a climb
+ *  end). 200 paired seeds resolve about 0.04 L at the measured σΔ, and a
+ *  20-skill build costs at most 4,000 races, a few seconds. */
+export const CONTRIB_SEEDS = 200;
 /** localStorage key: opening book (Stage A). */
 export const BOOK_STORAGE_KEY = 'umalator_v2_optimizer_book';
 

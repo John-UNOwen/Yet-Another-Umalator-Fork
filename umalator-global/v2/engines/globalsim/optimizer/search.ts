@@ -10,7 +10,7 @@
 import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf } from './bandit';
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
-	DEAD_SKILL_MIN_SEEDS,
+	CONTRIB_SEEDS, DEAD_SKILL_MIN_SEEDS,
 	EffortConfig, KAPPA, KICKS_PER_VISIT, LAMBDA_MAXIMIN, PRUNE_KAPPA, SEQ_ADOPT_Z,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
@@ -476,11 +476,24 @@ async function runSingleScenario(
 		// paired one build's lead with another build's win rate.
 		const both = lens.map((l, i) => [l, wins[i]] as const).filter(([l, w]) => Number.isFinite(l) && Number.isFinite(w));
 		const orderingCorrelation = spearman(both.map(([l]) => l), both.map(([, w]) => w));
-		// Per-skill worth of the recommendation, read from the search cache: the last
-		// local-search round raced this build minus one skill, so no extra races. Null
-		// where a drop was pruned before its first race or evicted, and the UI says so.
+		// Per-skill worth of the recommendation: this build against the same build
+		// minus one skill, on search seeds. The climb usually raced those drops
+		// already, but a long run evicts them from the cache and a tie-group pick
+		// may never have been a climb end. Any drop with fewer than CONTRIB_SEEDS
+		// shared seeds is raced here, so every row has a number. A stopped run
+		// skips the extra races and reports what the cache still holds.
+		const dropOf = (id: string) => refOf(best.build.selection.filter((x) => x !== id));
+		if (!ctrl.stopped()) {
+			const short = best.build.selection.filter((id) =>
+				(ev.paired(NS_SEARCH, si, best.build, dropOf(id), searchPick)?.n ?? 0) < CONTRIB_SEEDS);
+			if (short.length) {
+				emit('verify', `measuring ${short.length} skill${short.length === 1 ? '' : 's'}' worth`);
+				const positions = Array.from({ length: CONTRIB_SEEDS }, (_, i) => i);
+				await ev.ensure([best.build, ...short.map(dropOf)].map(b => ({ ns: NS_SEARCH, scenarioIdx: si, build: b, positions })));
+			}
+		}
 		const contributions = contributionsOf(best.build.selection, (id) => {
-			const without = refOf(best.build.selection.filter((x) => x !== id));
+			const without = dropOf(id);
 			return {
 				lead: ev.paired(NS_SEARCH, si, best.build, without, searchPick),
 				win: ev.paired(NS_SEARCH, si, best.build, without, (v) => v.win),
