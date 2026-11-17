@@ -8371,6 +8371,47 @@ tr:hover .v2-skill-hide-btn {
 
 .v2-opt-inline .v2-input-field { flex: 1; margin: 0; }
 
+/* One-line labels, so every input in a row of fields starts at the same height */
+.v2-opt-fields .v2-input-label,
+.v2-opt-effort .v2-input-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A field without an input box (saved builds): as tall as the number inputs
+   beside it (padding + one line of --font-lg + border = 40px) */
+.v2-opt-input-row { min-height: 40px; }
+
+/* The seed's dice button sits in the input's suffix slot, which ignores
+   clicks by default */
+.v2-opt-seed .v2-number-suffix {
+  right: 6px;
+  pointer-events: auto;
+}
+
+.v2-opt-seed-dice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.v2-opt-seed-dice:hover:not(:disabled) {
+  background: var(--color-primary);
+  color: var(--color-primary-text);
+}
+
+.v2-opt-seed-dice:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* Collapsible sections (advanced settings, notes, warnings) */
 .v2-opt-advanced {
   border-top: 1px solid var(--color-border-subtle);

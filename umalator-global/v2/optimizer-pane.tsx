@@ -788,13 +788,13 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				<details class="v2-opt-advanced">
 					<summary>Advanced settings{advancedChanged ? ' · changed' : ''}</summary>
 					<div class="v2-opt-fields">
-						<NumberInput label="Smallest gain worth chasing" value={advanced.deltaMinL} allowEmpty precision={3}
+						<NumberInput label="Smallest gain" value={advanced.deltaMinL} allowEmpty precision={3}
 							min={L.deltaMinL.min} max={L.deltaMinL.max} step={0.01} suffix="L" placeholder={String(cfgNow.deltaMinL)} disabled={running}
-							helperText="Lower finds smaller gains but each takes more races to prove"
+							helperText="Smaller gains are not chased. Lower finds more, but each takes more races to prove"
 							onChange={setAdv('deltaMinL')} />
-						<NumberInput label="Checking races per build" value={advanced.verifySeeds} allowEmpty
+						<NumberInput label="Checking races" value={advanced.verifySeeds} allowEmpty
 							min={L.verifySeeds.min} max={L.verifySeeds.max} step={500} placeholder={String(cfgNow.gSeedsMin)} disabled={running}
-							helperText="Grows up to 4× while the top two stay tied"
+							helperText="Per build. Grows up to 4× while the top two stay tied"
 							onChange={setAdv('verifySeeds')} />
 						<NumberInput label="Shake-ups per start" value={advanced.kicksPerStart} allowEmpty
 							min={L.kicksPerStart.min} max={L.kicksPerStart.max} step={1}
@@ -813,22 +813,23 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 							min={L.spreadNoise.min} max={L.spreadNoise.max} step={0.25} placeholder={String(SPREAD_NOISE)}
 							disabled={running || !wideSearch} helperText="Wider search only: noise on shuffled starts"
 							onChange={setAdv('spreadNoise')} />
+						<NumberInput label="Seed" value={seed} step={1} disabled={running} className="v2-opt-seed"
+							helperText="The same seed and settings repeat a run"
+							suffix={
+								<button type="button" class="v2-opt-seed-dice" disabled={running} title="New random seed" aria-label="New random seed"
+									onClick={() => setSeed(Math.floor(Math.random() * 0xffffffff))}>
+									<Dice5 size={16} />
+								</button>
+							}
+							onChange={(v) => setSeed(v ?? 0)} />
 						<div class="v2-input-field">
-							<label class="v2-input-label">Seed</label>
-							<div class="v2-opt-inline">
-								<NumberInput value={seed} step={1} disabled={running} onChange={(v) => setSeed(v ?? 0)} />
-								<Button size="sm" variant="secondary" disabled={running} title="New random seed"
-									icon={<Dice5 size={14} />} onClick={() => setSeed(Math.floor(Math.random() * 0xffffffff))}>{''}</Button>
-							</div>
-							<div class="v2-input-helper">The same seed and settings repeat a run</div>
-						</div>
-						<div class="v2-input-field">
-							<label class="v2-input-label">Saved builds for this race</label>
-							<div class="v2-opt-inline">
+							<label class="v2-input-label">Saved builds</label>
+							<div class="v2-opt-inline v2-opt-input-row">
 								<span class="v2-opt-muted">{savedBuilds} saved</span>
 								<Button size="sm" variant="ghost" disabled={running || !savedBuilds || !bk} icon={<Trash2 size={14} />}
 									onClick={() => { if (bk) { clearBook(bk); setBookTick((t) => t + 1); } }}>Forget</Button>
 							</div>
+							<div class="v2-input-helper">For this race. Used when "Use saved builds" is on</div>
 						</div>
 					</div>
 					{advancedChanged && (
