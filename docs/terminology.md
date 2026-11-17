@@ -2,6 +2,10 @@
 
 A glossary of terms used in Uma Musume and this simulator.
 
+The tables below name the on-screen labels. [JP ↔ Global Terminology](JP-GLOBAL-TERMINOLOGY.md)
+adds the romaji, the enum values and where each enum is defined. Edit the code-facing tables there,
+not here.
+
 ## Running Styles
 
 | Style | Japanese | Description |

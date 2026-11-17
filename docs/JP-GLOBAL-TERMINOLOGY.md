@@ -1,12 +1,12 @@
 # Uma Musume JP ↔ Global Terminology Reference
 
-**Purpose**: Internal reference for Claude Code when working with uma-skill-tools and umalator-global directories. This document maps Japanese game terminology to English equivalents used in the Global release.
+Maps Japanese game terms to the English the Global release uses, with the code enum behind each
+one. Take the on-screen labels from the files named below rather than typing them out: this table
+went stale once when the strings were copied by hand.
 
----
+## Core stats
 
-## Core Stats (Five Main Attributes)
-
-| Japanese | Romaji | English (Global) | Code Constant |
+| Japanese | Romaji | English (Global) | Code constant |
 |----------|--------|------------------|---------------|
 | スピード | supiido | Speed | `speed` |
 | スタミナ | sutamina | Stamina | `stamina` |
@@ -14,30 +14,39 @@
 | 根性 | konjou | Guts | `guts` |
 | 賢さ | kashikosa | Wit/Wisdom | `wisdom` |
 
----
+## Running styles (strategy)
 
-## Running Styles (Strategy)
+| Japanese | Romaji | English (Global) | Short | Code enum | Enum value |
+|----------|--------|------------------|-------|-----------|------------|
+| 逃げ | nige | **Front Runner** | Front | `Strategy.Nige` | 1 |
+| 先行 | senkou | **Pace Chaser** | Pace | `Strategy.Senkou` | 2 |
+| 差し | sasi | **Late Surger** | Late | `Strategy.Sasi` | 3 |
+| 追込 | oikomi | **End Closer** | End | `Strategy.Oikomi` | 4 |
+| 大逃げ | oonige | **Runaway** | — | `Strategy.Oonige` | 5 |
 
-| Japanese | Romaji | English (Global) | Code Enum | Enum Value |
-|----------|--------|------------------|-----------|------------|
-| 逃げ | nige | Front/Leader | `Strategy.Nige` | 1 |
-| 先行 | senkou | Stalker/Presser | `Strategy.Senkou` | 2 |
-| 差し | sasi | Late/Closer | `Strategy.Sasi` | 3 |
-| 追込 | oikomi | End/Chaser | `Strategy.Oikomi` | 4 |
-| 大逃げ | oonige | (Super Escape) | `Strategy.Oonige` | 5 |
+The enum is at [`uma-skill-tools/HorseTypes.ts:3`](../uma-skill-tools/HorseTypes.ts#L3). The
+labels come from `STRATEGIES` ([`umalator-global/v2/uma-panel.tsx:464`](../umalator-global/v2/uma-panel.tsx#L464))
+and are re-exported as `STRATEGY_LABELS`
+([`uma-panel.tsx:473`](../umalator-global/v2/uma-panel.tsx#L473)).
 
-**Location**: `uma-skill-tools/HorseTypes.ts:3`
+Notes:
 
-**Notes**:
-- `Oonige` is treated as equivalent to `Nige` in strategy matching logic
-- Global release uses "Front/Stalker/Late/End" but community also uses "Leader/Presser/Closer/Chaser"
+- Use the full label ("Pace Chaser") in prose and controls. The **Short** column is for compact
+  UI only, such as an aptitude grid column header.
+- Never show the romaji or the JP value (`Senkou`) in the Global UI.
+- `Oonige` is treated as equivalent to `Nige` in strategy matching logic.
+- Community translations and older copies of this table give "Front/Leader", "Stalker/Presser",
+  "Late/Closer" and "End/Chaser". None of those match the app or the Global release. Corrected
+  against the shipped UI on 2026-07-15.
+- `components/SkillList.tsx` carries a third vocabulary (Runner / Leader / Betweener / Chaser) in
+  its filter labels. Nothing in the v2 app reaches it: only `build-planner/`,
+  `skill-visualizer-global/` and `skill-visualizer-jp/` import `SkillList`. Do not copy those
+  strings into v2.
 
----
+## Aptitude grades
 
-## Aptitude Grades
-
-| Grade | Code Enum | Performance Impact |
-|-------|-----------|-------------------|
+| Grade | Code enum | Performance impact |
+|-------|-----------|--------------------|
 | S | `Aptitude.S` (0) | +5% Distance/Track, +10% Style |
 | A | `Aptitude.A` (1) | Baseline (no modifier) |
 | B | `Aptitude.B` (2) | -10% Distance/Track, -15% Style |
@@ -47,90 +56,86 @@
 | F | `Aptitude.F` (6) | ~-75% |
 | G | `Aptitude.G` (7) | ~-90% |
 
-**Location**: `uma-skill-tools/HorseTypes.ts:4`
+The enum is at [`uma-skill-tools/HorseTypes.ts:4`](../uma-skill-tools/HorseTypes.ts#L4). S-rank
+aptitude is worth roughly 100 to 200 extra effective stat points, depending on base stats.
 
-**Notes**: S-rank aptitude ≈ 100-200 extra effective stat points depending on base stats
+## Mood conditions
 
----
-
-## Mood Conditions
-
-| Japanese | Romaji | English (Global) | Code Value |
+| Japanese | Romaji | English (Global) | Code value |
 |----------|--------|------------------|------------|
-| 絶好調 | zekkocho | Great/Perfect | `2` (Mood) |
-| 好調 | kocho | Good | `1` |
-| 普通 | futsuu | Normal | `0` |
-| 不調 | fuchou | Bad | `-1` |
-| 絶不調 | zekkufuchou | Terrible/Awful | `-2` |
+| 絶好調 | zekkocho | **Great** | `2` |
+| 好調 | kocho | **Good** | `1` |
+| 普通 | futsuu | **Normal** | `0` |
+| 不調 | fuchou | **Bad** | `-1` |
+| 絶不調 | zekkufuchou | **Awful** | `-2` |
 
-**Type**: `Mood = -2 | -1 | 0 | 1 | 2`
-**Location**: `uma-skill-tools/RaceParameters.ts:1`
+The type is `Mood = -2 | -1 | 0 | 1 | 2`
+([`uma-skill-tools/RaceParameters.ts:1`](../uma-skill-tools/RaceParameters.ts#L1)). The labels
+come from `MOOD_OPTIONS` ([`umalator-global/v2/uma-panel.tsx:431`](../umalator-global/v2/uma-panel.tsx#L431)).
+Older copies listed "Great/Perfect" and "Terrible/Awful"; the shipped labels are **Great** and
+**Awful**. Corrected 2026-07-15.
 
----
+## Ground conditions
 
-## Ground Conditions
-
-| Japanese | Romaji | English (Global) | Code Enum | Enum Value |
+| Japanese | Romaji | English (Global) | Code enum | Enum value |
 |----------|--------|------------------|-----------|------------|
-| 良 | ryou | Firm* | `GroundCondition.Good` | 1 |
-| 稍重 | yaya-omo | Good* | `GroundCondition.Yielding` | 2 |
+| 良 | ryou | Firm\* | `GroundCondition.Good` | 1 |
+| 稍重 | yaya-omo | Good\* | `GroundCondition.Yielding` | 2 |
 | 重 | omo | Soft | `GroundCondition.Soft` | 3 |
 | 不良 | furyou | Heavy | `GroundCondition.Heavy` | 4 |
 
-**Location**: `uma-skill-tools/RaceParameters.ts:2`
+The enum is at [`uma-skill-tools/RaceParameters.ts:2`](../uma-skill-tools/RaceParameters.ts#L2).
 
-**⚠️ CRITICAL NAMING CONFUSION**:
-- Code uses `GroundCondition.Good` but this maps to 良 (firm/best conditions)
-- In Global UI, 良 = "Firm", 稍重 = "Good"
-- When reading JP documentation that says "良", code uses `GroundCondition.Good`
-- This is a legacy naming issue; the enum name doesn't match Global UI terminology
+The naming trips people up: the code calls 良 `GroundCondition.Good`, while the Global UI calls it
+"Firm" and calls 稍重 "Good". A JP document that says 良 means `GroundCondition.Good`. The enum
+name is legacy and does not match the Global UI.
 
----
+## Weather conditions
 
-## Weather Conditions
-
-| Japanese | Romaji | English (Global) | Code Enum | Enum Value |
+| Japanese | Romaji | English (Global) | Code enum | Enum value |
 |----------|--------|------------------|-----------|------------|
 | 晴れ | hare | Sunny | `Weather.Sunny` | 1 |
 | 曇り | kumori | Cloudy | `Weather.Cloudy` | 2 |
 | 雨 | ame | Rainy | `Weather.Rainy` | 3 |
 | 雪 | yuki | Snowy | `Weather.Snowy` | 4 |
 
-**Location**: `uma-skill-tools/RaceParameters.ts:3`
-
----
+The enum is at [`uma-skill-tools/RaceParameters.ts:3`](../uma-skill-tools/RaceParameters.ts#L3).
 
 ## Seasons
 
-| Japanese | Romaji | English | Code Enum | Enum Value |
-|----------|--------|---------|-----------|------------|
-| 春 | haru | Spring | `Season.Spring` | 1 |
-| 夏 | natsu | Summer | `Season.Summer` | 2 |
-| 秋 | aki | Autumn | `Season.Autumn` | 3 |
-| 冬 | fuyu | Winter | `Season.Winter` | 4 |
-| 桜花賞 | oukashow | Sakura (special) | `Season.Sakura` | 5 |
+| Japanese | Romaji | English | Code enum | Enum value | Region |
+|----------|--------|---------|-----------|------------|--------|
+| 春 | haru | Spring | `Season.Spring` | 1 | Both |
+| 夏 | natsu | Summer | `Season.Summer` | 2 | Both |
+| 秋 | aki | Autumn | `Season.Autumn` | 3 | Both |
+| 冬 | fuyu | Winter | `Season.Winter` | 4 | Both |
+| 桜花賞 | oukashow | Sakura (special) | `Season.Sakura` | 5 | **JP only** |
 
-**Location**: `uma-skill-tools/RaceParameters.ts:4`
+The enum is at [`uma-skill-tools/RaceParameters.ts:4`](../uma-skill-tools/RaceParameters.ts#L4).
+`Season.Sakura` exists in the enum but Global does not use it, so the app's picker offers the four
+seasons (`SEASON_LABELS` in
+[`umalator-global/v2/conditions.tsx:24`](../umalator-global/v2/conditions.tsx#L24)). Keep the row:
+this table documents the enum, not only the Global UI.
 
----
+## Time of day
 
-## Time of Day
+| Japanese | Romaji | English | Code enum | Enum value | Region |
+|----------|--------|---------|-----------|------------|--------|
+| (なし) | - | No Time | `Time.NoTime` | 0 | **JP only** |
+| 朝 | asa | Morning | `Time.Morning` | 1 | **JP only** |
+| 昼 | hiru | Midday | `Time.Midday` | 2 | Both |
+| 夕 | yuu | Evening | `Time.Evening` | 3 | Both |
+| 夜 | yoru | Night | `Time.Night` | 4 | Both |
 
-| Japanese | Romaji | English | Code Enum | Enum Value |
-|----------|--------|---------|-----------|------------|
-| (なし) | - | No Time | `Time.NoTime` | 0 |
-| 朝 | asa | Morning | `Time.Morning` | 1 |
-| 昼 | hiru | Midday | `Time.Midday` | 2 |
-| 夕 | yuu | Evening | `Time.Evening` | 3 |
-| 夜 | yoru | Night | `Time.Night` | 4 |
+The enum is at [`uma-skill-tools/RaceParameters.ts:5`](../uma-skill-tools/RaceParameters.ts#L5).
+`NoTime` and `Morning` exist in the enum but Global does not use them, so the picker offers
+Midday, Evening and Night. `TIME_LABELS`
+([`conditions.tsx:25`](../umalator-global/v2/conditions.tsx#L25)) is indexed `t - 2`. Keep the
+rows: this table documents the enum, not only the Global UI.
 
-**Location**: `uma-skill-tools/RaceParameters.ts:5`
+## Race grades
 
----
-
-## Race Grades
-
-| Japanese | English | Code Enum | Enum Value |
+| Japanese | English | Code enum | Enum value |
 |----------|---------|-----------|------------|
 | G1 | G1 | `Grade.G1` | 100 |
 | G2 | G2 | `Grade.G2` | 200 |
@@ -141,115 +146,100 @@
 | 新馬 | Debut | `Grade.Debut` | 900 |
 | デイリー | Daily | `Grade.Daily` | 999 |
 
-**Location**: `uma-skill-tools/RaceParameters.ts:6`
+The enum is at [`uma-skill-tools/RaceParameters.ts:6`](../uma-skill-tools/RaceParameters.ts#L6).
 
----
-
-## Distance Measurement
+## Distance measurement
 
 | Japanese | Romaji | English (Global) | Conversion |
 |----------|--------|------------------|------------|
 | バ身 | bashin | Horse Length(s) | 1 bashin = 2.5 meters |
 
-**Usage in code**: All distance/position measurements in simulation use this unit internally
+Distance and position inside the simulation use this unit. Real horse racing typically uses 2.4 m
+per horse length; Uma Musume uses 2.5 m, explained in the lore as the arm span of three horsegirl
+goddesses.
 
-**Note**: Real horse racing typically uses 2.4m per horse length, but Uma Musume uses 2.5m (explained in lore as "arm span of three horsegirl goddesses")
+## Phase system
 
----
+`Phase = 0 | 1 | 2 | 3`
+([`uma-skill-tools/CourseData.ts:3`](../uma-skill-tools/CourseData.ts#L3)). The solver switches
+phase by the fraction of the course run, and the velocity overlay labels the four phases Opening,
+Mid 1, Mid 2 and Final.
 
-## Phase System
+| Phase | Overlay label | When | What happens |
+|-------|---------------|------|--------------|
+| 0 | Opening | first 1/6 | Initial acceleration |
+| 1 | Mid 1 | 1/6 to 2/3 | Position establishing, most of the race |
+| 2 | Mid 2 | 2/3 to 5/6 | Holding position, tactics |
+| 3 | Final | last 1/6 | Last spurt (ラストスパート) |
 
-| Phase | Japanese | Description | Code Value |
-|-------|----------|-------------|------------|
-| 0 | 出走 | Start/Gate | `Phase.Start` |
-| 1 | 序盤 | Early Race | `Phase.Early` |
-| 2 | 終盤 | Final Stretch | `Phase.Final` |
+## Skill condition vocabulary
 
-**Note**: Phase 2 triggers "last spurt" (ラストスパート) calculations
+Terms that appear in skill activation conditions:
 
----
+| Term | Meaning |
+|------|---------|
+| `phase` | Race phase (0 start, 1 early, 2 middle, 3 final) |
+| `running_style` | Strategy/running style |
+| `is_lastspurt` | In the final sprint phase |
+| `corner` | Corner/turn section |
+| `straight` | Straight section |
+| `slope` | Hill/slope section |
+| `random` | Random activation type |
+| `accumulatetime` | Time elapsed condition |
+| `order` | Position in race order |
+| `order_rate` | Percentile position |
 
-## Skill Condition Terminology
+## Global and JP file organization
 
-Common terms in skill activation conditions:
+### `umalator-global/`
 
-| Japanese | Romaji | English Meaning |
-|----------|--------|-----------------|
-| phase | - | Race phase (0=start, 1=early, 2=final) |
-| running_style | - | Strategy/running style |
-| is_lastspurt | - | In final sprint phase |
-| corner | - | Corner/turn section |
-| straight | - | Straight section |
-| slope | - | Hill/slope section |
-| random | - | Random activation type |
-| accumulatetime | - | Time elapsed condition |
-| order | - | Position in race order |
-| order_rate | - | Percentile position |
+Global version build with English data. Key files: `skill_data.json` (English skill names and
+conditions), `skillnames.json` (English skill translations), `course_data.json` (course
+definitions), `umas.json` (character data with English names), `tracknames.json` (race track
+English names). `build.mjs` bundles it. The `make_global_*.pl` scripts generate the English data
+from `master.mdb`.
 
----
+### `uma-skill-tools/`
 
-## File Organization for Global vs JP
+The shared library (enums, course data, skill parsing, costs). Its own data lives in
+`uma-skill-tools/data/` and is JP data. The CLI tools run under `ts-node`.
 
-### umalator-global Directory
+### The `CC_GLOBAL` define
 
-- **Purpose**: Global version build with English data
-- **Key files**:
-  - `skill_data.json` - English skill names/conditions
-  - `skillnames.json` - English skill translations
-  - `course_data.json` - Course definitions
-  - `umas.json` - Character data (English names)
-  - `tracknames.json` - Race track English names
-- **Build**: Uses `build.mjs` with `CC_GLOBAL: 'true'` flag
-- **Data generation**: `make_global_*.pl` scripts generate English data from master.mdb
+Every build in this repo defines `CC_GLOBAL: 'true'`: `umalator-global/build.mjs:520`,
+`umalator-global/v2/vite.config.ts:155`, `umalator-global/skill-visualizer/build.mjs`,
+`umalator-global/mechanics-explorer/build.mjs` and `skill-visualizer-global/build.mjs`.
+`skill-visualizer-jp/build.mjs:31` defines `'false'`, the only build that does. Shared code reads
+the flag for translation strings, skill level labels, regional default stats and the language
+storage key.
 
-### uma-skill-tools Directory
+## Common development commands
 
-- **Purpose**: Core simulation library (language-agnostic)
-- **Data location**: `uma-skill-tools/data/` (typically JP data)
-- **Build**: Uses `ts-node` for CLI tools
+Find a course ID:
 
-### Build Flag Behavior
-
-The `CC_GLOBAL` constant (set by esbuild) controls:
-- Which translation strings to use
-- Which preset race events to show
-- Defaults to `false` for Node.js environments, `true`/`false` for browser builds
-
-**Location**: Check build scripts (`.mjs` files) for `define: {CC_GLOBAL: '...'}`
-
----
-
-## Common Development Patterns
-
-### Finding Course IDs
 ```bash
-# JP version
-cat uma-skill-tools/data/course_data.json | grep -i "tokyo"
-
-# Global version
-cat umalator-global/course_data.json | grep -i "tokyo"
+grep -i "tokyo" uma-skill-tools/data/course_data.json   # JP data
+grep -i "tokyo" umalator-global/course_data.json        # Global data
 ```
 
-### Finding Skill IDs
+Find a skill ID (`-d` prints IDs):
+
 ```bash
 cd uma-skill-tools
-ts-node tools/skillgrep.ts -d "skill name"  # -d flag shows IDs
+npx ts-node --transpile-only tools/skillgrep.ts -d "skill name"
 ```
 
-### Testing a Skill's バ身 Gain
+Measure a skill's バ身 gain over 500 samples:
+
 ```bash
 cd uma-skill-tools
-ts-node tools/gain.ts -c 10006 -m 2 -g good -s 200041 --nsamples 500
-# -c: course ID
-# -m: mood (2 = 絶好調/Great)
-# -g: ground (good = 良/Firm)
-# -s: skill ID
-# --nsamples: number of simulations
+npx ts-node --transpile-only tools/gain.ts -c 10006 -m 2 -g good -s 200041 --nsamples 500
 ```
 
----
+`-c` course ID, `-m` mood (`2` = 絶好調/Great), `-g` ground (`good` = 良/Firm), `-s` skill ID,
+`--nsamples` number of simulations.
 
-## References (Web Search Sources)
+## References
 
 - [GameTora Race Mechanics Handbook](https://gametora.com/umamusume/race-mechanics)
 - [GameTora Skill List](https://gametora.com/umamusume/skills)
