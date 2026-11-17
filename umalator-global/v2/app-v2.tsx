@@ -2056,6 +2056,7 @@ function App() {
                     course={courseData[courseId]}
                     courseId={courseId}
                     conditions={{ ground, weather, season, time }}
+                    onStrategyChange={(style) => handleUma1Change({ strategy: style as UmaState["strategy"] })}
                     mobPreset={
                       (mobPresets as any)[globalsimFieldPreset] ??
                       (mobPresets as any)["default"]

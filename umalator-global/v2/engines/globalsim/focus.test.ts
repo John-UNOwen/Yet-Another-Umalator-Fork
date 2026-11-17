@@ -201,3 +201,39 @@ test('the pool split accounts for every skill, and the position band no longer c
 	t.equal(off.length, split.kept.length + split.out.filter(e => e.kind !== 'engine').length, 'focus off: everything but engine gaps is back');
 	t.end();
 });
+
+test('the pool follows the focus running style', async t => {
+	(globalThis as any).CC_GLOBAL = true;
+	const { partitionPool, getBaseSkillsToTest } = await import('../../skill-chart-utils');
+	const uma: any = {
+		speed: 1200, stamina: 800, power: 900, guts: 500, wisdom: 900, strategy: 'Senkou',
+		distanceAptitude: 'A', surfaceAptitude: 'A', strategyAptitude: 'A', mood: 2,
+	};
+	const base = getBaseSkillsToTest(uma, false);
+	const known = new Set(Object.keys(merged as object));
+	const course = (courseFile as any)['10611'];
+	const split = (strategy: string) => partitionPool(base, { ...uma, strategy }, course, FIRM, known);
+	const senkou = split('Senkou');
+	const nige = split('Nige');
+	const oonige = split('Oonige');
+	const keptOf = (s: typeof senkou) => new Set(s.kept);
+
+	const moved = base.filter(id => keptOf(senkou).has(id) !== keptOf(nige).has(id));
+	t.ok(moved.length > 0, `the focus style moves ${moved.length} skills between Senkou and Nige`);
+	// factOut's running_style term and the window check's style-shaped atoms are the
+	// only reasons a skill may move, not ground, track, season, engine or parse.
+	const styleReason = (s: typeof senkou, id: string) => {
+		const e = s.out.find(x => x.id === id);
+		return !e || e.kind === 'window' || (e.kind === 'fact' && (e.term ?? '').startsWith('running_style'));
+	};
+	t.ok(moved.every(id => styleReason(senkou, id) && styleReason(nige, id)),
+		'moved skills: ' + moved.slice(0, 6)
+			.map(id => `${id} ${senkou.out.find(e => e.id === id)?.kind ?? 'kept'}/${nige.out.find(e => e.id === id)?.kind ?? 'kept'}`)
+			.join(' , '));
+	const nigeOnly = [...keptOf(nige)].filter(id => !keptOf(senkou).has(id));
+	const senkouOnly = [...keptOf(senkou)].filter(id => !keptOf(nige).has(id));
+	t.ok(nigeOnly.length > 0, `a Nige focus keeps ${nigeOnly.length} skills a Senkou focus cuts`);
+	t.ok(senkouOnly.length > 0, `a Senkou focus keeps ${senkouOnly.length} skills a Nige focus cuts`);
+	t.ok(nigeOnly.every(id => keptOf(oonige).has(id)), 'the Nige/Oonige alias keeps those under Oonige too');
+	t.end();
+});

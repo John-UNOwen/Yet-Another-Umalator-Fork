@@ -29,6 +29,7 @@ import type { WorkerFactory } from './engines/globalsim/pool';
 import { loadGlobalsimCourseIds } from './engines/globalsim/courses';
 import { applyExclusions, calculateSkillCost, factRescued, type PoolExclusion } from './skill-chart-utils';
 import { PoolExclusionList } from './pool-exclusions';
+import { STRATEGY_LABELS } from './uma-panel';
 import { pickCareerDump, type CareerImport } from './career-import';
 import { convertUmaStateForWorker } from './simulation-utils';
 import { HorseState } from '../../components/HorseDefTypes';
@@ -53,6 +54,10 @@ export interface OptimizerPaneProps {
 	courseId: string | number;
 	/** Current UI race-condition values (same numeric enums the app holds). */
 	conditions: { ground: number; weather: number; season: number; time: number };
+	/** Running-style focus: writes uma.strategy, the one value both the pool
+	 *  filter (skill-chart-utils partitionPool) and the search's races read, so
+	 *  they cannot end up filtered for one style and raced for another. */
+	onStrategyChange?: (style: string) => void;
 	mobPreset: MobPreset;
 	/** Fixed gate field index (app-v2 globalsimGate, "auto" → undefined): the
 	 *  optimizer must race on the SAME gate the main sim / compare uses, not
@@ -266,10 +271,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		evRef.current = null;
 	}, []);
 
-	// candidates arrives async (the skill table loads after mount): when the
-	// list first becomes non-empty, default to everything chosen. After that,
-	// a skill put back from the exclusion list joins the selection, and a skill
-	// that leaves the pool leaves the selection, so a run never searches it.
+	// candidates arrives async (the skill table loads after mount): the first
+	// non-empty list defaults to all chosen. A skill newly in the pool (put back,
+	// or freed by a focus change) then joins the selection, and one leaving drops out.
 	const seededRef = useRef(false);
 	const pooledRef = useRef<Set<string>>(new Set());
 	useEffect(() => {
@@ -282,10 +286,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			setChosen(new Set(candidates));
 			return;
 		}
-		const putBack = new Set(excluded.map((e) => e.id));
 		setChosen((prev) => {
 			const next = new Set([...prev].filter((id) => now.has(id)));
-			for (const id of candidates) if (!before.has(id) && putBack.has(id)) next.add(id);
+			for (const id of candidates) if (!before.has(id)) next.add(id);
 			return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
 		});
 	}, [candidates, excluded]);
@@ -560,6 +563,14 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<label style={labelStyle}>SP budget</label>
 					<input type="number" min={0} step={50} style={{ ...inputStyle, width: 90 }} value={budget}
 						disabled={running} onInput={(e) => setBudget((e.target as HTMLInputElement).valueAsNumber as number)} />
+				</div>
+				<div>
+					<label style={labelStyle}>Running style</label>
+					<select style={inputStyle} disabled={running} value={uma.strategy}
+						title="The style the pool is filtered for and the search races. This is the uma's own style, so the Uma drawer shows the same value."
+						onChange={(e) => props.onStrategyChange?.((e.target as HTMLSelectElement).value)}>
+						{Object.entries(STRATEGY_LABELS).map(([v, l]) => <option value={v}>{l}</option>)}
+					</select>
 				</div>
 				<div>
 					<label style={labelStyle}>Objective</label>

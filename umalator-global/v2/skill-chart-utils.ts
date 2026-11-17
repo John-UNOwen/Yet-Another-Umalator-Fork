@@ -234,7 +234,7 @@ export interface PoolSplit {
  * reason for every drop, so no skill leaves a pool silently.
  *
  * The fact rules (focus.ts) run first. The TypeScript check then runs without the
- * per-strategy position band, which is a guess about race behaviour and not a fact.
+ * position band (a guess, not a fact), though its parser still reads the uma's style.
  * Last, skills the engine table does not cover are dropped, because the engine
  * would reject them.
  */
