@@ -523,7 +523,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			<div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
 				<h2 style={{ margin: 0 }}>Skill Optimizer</h2>
 				<span style={{ fontSize: 12, opacity: 0.7 }}>
-					SP-budgeted skill-build search vs a {mobPreset?.name ? `${mobPreset.name} field` : '9-runner field'} — reported numbers come from fresh verification seeds.
+					SP-budgeted skill-build search vs a {mobPreset?.name ? (/field$/i.test(mobPreset.name) ? mobPreset.name : `${mobPreset.name} field`) : '9-runner field'} — reported numbers come from fresh verification seeds.
 				</span>
 			</div>
 
