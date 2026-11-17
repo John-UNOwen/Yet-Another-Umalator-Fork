@@ -20,7 +20,7 @@ ScaledDuration = BaseDuration × min(0.8 + DistanceFromTop / 62.5m, 1.6)
 
 **Skills**: 110521, 910521
 
-## MultiplyRemainHp — Type 1 (3)
+## MultiplyRemainHp type 1 (3)
 
 Duration scales with remaining HP at activation time.
 
@@ -37,7 +37,7 @@ Duration scales with remaining HP at activation time.
 
 **Skills**: Mejiro Bright (100741), Mejiro McQueen
 
-## MultiplyRemainHp — Type 2 (7)
+## MultiplyRemainHp type 2 (7)
 
 Same concept, different thresholds.
 
@@ -55,7 +55,7 @@ Same concept, different thresholds.
 
 Duration increases by 1 second for each successful overtake while the skill is active, up to 3 times. The increased duration also scales with course distance (same as base duration).
 
-## MultiplyBlockedSideMaxContinueTimePhaseMiddleRun — Type 1 (5)
+## MultiplyBlockedSideMaxContinueTimePhaseMiddleRun type 1 (5)
 
 Duration scales with how long the uma has been blocked during mid-race.
 
@@ -66,8 +66,8 @@ Duration scales with how long the uma has been blocked during mid-race.
 | Blocked < 6s | 3.0× |
 | Blocked ≥ 6s | 4.0× |
 
-Same logic as the ability value counterpart — see [Ability Value Scaling](ability-value-scaling.md).
+Same logic as the ability value counterpart, see [Ability Value Scaling](ability-value-scaling.md).
 
-## MultiplyBlockedSideMaxContinueTimePhaseMiddleRun — Type 2 (6)
+## MultiplyBlockedSideMaxContinueTimePhaseMiddleRun type 2 (6)
 
 No case for it in `getDurationScalingMultiplier` ([`RaceSolver.ts:1421-1423`](../uma-skill-tools/RaceSolver.ts#L1421-L1423)), so the multiplier stays 1.0.

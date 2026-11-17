@@ -22,7 +22,7 @@ went stale once when the strings were copied by hand.
 | 先行 | senkou | **Pace Chaser** | Pace | `Strategy.Senkou` | 2 |
 | 差し | sasi | **Late Surger** | Late | `Strategy.Sasi` | 3 |
 | 追込 | oikomi | **End Closer** | End | `Strategy.Oikomi` | 4 |
-| 大逃げ | oonige | **Runaway** | — | `Strategy.Oonige` | 5 |
+| 大逃げ | oonige | **Runaway** | (none) | `Strategy.Oonige` | 5 |
 
 The enum is at [`uma-skill-tools/HorseTypes.ts:3`](../uma-skill-tools/HorseTypes.ts#L3). The
 labels come from `STRATEGIES` ([`umalator-global/v2/uma-panel.tsx:464`](../umalator-global/v2/uma-panel.tsx#L464))
@@ -32,7 +32,9 @@ and are re-exported as `STRATEGY_LABELS`
 Notes:
 
 - Use the full label ("Pace Chaser") in prose and controls. The **Short** column is for compact
-  UI only, such as an aptitude grid column header.
+  UI only, such as an aptitude grid column header. Those short labels come from
+  [`umalator-global/v2/roster/roster-filter-panel.tsx:17`](../umalator-global/v2/roster/roster-filter-panel.tsx#L17),
+  which has no entry for Oonige.
 - Never show the romaji or the JP value (`Senkou`) in the Global UI.
 - `Oonige` is treated as equivalent to `Nige` in strategy matching logic.
 - Community translations and older copies of this table give "Front/Leader", "Stalker/Presser",
@@ -72,7 +74,7 @@ aptitude is worth roughly 100 to 200 extra effective stat points, depending on b
 The type is `Mood = -2 | -1 | 0 | 1 | 2`
 ([`uma-skill-tools/RaceParameters.ts:1`](../uma-skill-tools/RaceParameters.ts#L1)). The labels
 come from `MOOD_OPTIONS` ([`umalator-global/v2/uma-panel.tsx:431`](../umalator-global/v2/uma-panel.tsx#L431)).
-Older copies listed "Great/Perfect" and "Terrible/Awful"; the shipped labels are **Great** and
+Older copies listed "Great/Perfect" and "Terrible/Awful". The shipped labels are **Great** and
 **Awful**. Corrected 2026-07-15.
 
 ## Ground conditions
@@ -155,7 +157,7 @@ The enum is at [`uma-skill-tools/RaceParameters.ts:6`](../uma-skill-tools/RacePa
 | バ身 | bashin | Horse Length(s) | 1 bashin = 2.5 meters |
 
 Distance and position inside the simulation use this unit. Real horse racing typically uses 2.4 m
-per horse length; Uma Musume uses 2.5 m, explained in the lore as the arm span of three horsegirl
+per horse length. Uma Musume uses 2.5 m, explained in the lore as the arm span of three horsegirl
 goddesses.
 
 ## Phase system

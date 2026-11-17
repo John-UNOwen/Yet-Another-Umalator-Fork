@@ -101,10 +101,11 @@ The adjusted number (637) would be **terrible advice** because:
 ## Validation
 
 Test with 1200 stamina on Hanshin 3200m (wisdom 1000):
-- Base calc says need 1,243 stamina for full spurt
-- With 1,200 stamina → 43 HP short
-- Simulator shows **96% full spurt rate**
-- The 96% (not 100%) confirms downhill mode helps most runs but not all
+
+- The base calculation calls for 1,243 stamina for a full spurt.
+- At 1,200 stamina the uma is 43 HP short.
+- The simulator shows a **96% full spurt rate**.
+- The 96%, rather than 100%, shows downhill mode helps most runs but not all.
 
 ## References
 
