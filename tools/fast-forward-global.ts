@@ -27,7 +27,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { formatDrift, liveSkillDrift, mdbIds, openMasterMdb, DriftReport } from './skill-drift';
 import { program } from 'commander';
 
 // ============================================================================
@@ -82,6 +82,7 @@ const MANIFEST_FILE_NAME = 'fast-forward-log.json';
 interface MasterMdbDelta {
 	umasNotOnGlobal: number[];   // chara IDs in JSON but not in master.mdb (fast-forwarded ahead)
 	skillsNotOnGlobal: number[]; // skill IDs in JSON but not in master.mdb
+	drift: DriftReport;          // live skills whose definition no longer matches master.mdb
 }
 
 /**
@@ -93,12 +94,13 @@ function diffJsonAgainstMasterMdb(args: {
 	jsonUmas: Record<string, any>;
 	jsonSkills: Record<string, any>;
 }): MasterMdbDelta | null {
-	if (!fs.existsSync(GLOBAL_MASTER_MDB)) return null;
+	let db: any = null;
 	try {
-		const charaRaw = execSync(`sqlite3 "${GLOBAL_MASTER_MDB}" "SELECT id FROM chara_data"`, { encoding: 'utf-8' });
-		const skillRaw = execSync(`sqlite3 "${GLOBAL_MASTER_MDB}" "SELECT id FROM skill_data"`, { encoding: 'utf-8' });
-		const liveCharaIds = new Set(charaRaw.trim().split('\n').map(s => parseInt(s, 10)).filter(n => !isNaN(n)));
-		const liveSkillIds = new Set(skillRaw.trim().split('\n').map(s => parseInt(s, 10)).filter(n => !isNaN(n)));
+		// node:sqlite (tools/skill-drift.ts), so no sqlite3 CLI is needed.
+		db = openMasterMdb(GLOBAL_MASTER_MDB);
+		if (!db) return null;
+		const liveCharaIds = mdbIds(db, 'chara_data');
+		const liveSkillIds = mdbIds(db, 'skill_data');
 
 		const umasNotOnGlobal: number[] = [];
 		for (const id of Object.keys(args.jsonUmas)) {
@@ -110,10 +112,12 @@ function diffJsonAgainstMasterMdb(args: {
 			const n = parseInt(id);
 			if (!liveSkillIds.has(n)) skillsNotOnGlobal.push(n);
 		}
-		return { umasNotOnGlobal, skillsNotOnGlobal };
+		return { umasNotOnGlobal, skillsNotOnGlobal, drift: liveSkillDrift(db, args.jsonSkills) };
 	} catch (e: any) {
 		console.warn(`  [warn] master.mdb cross-check failed: ${e.message}`);
 		return null;
+	} finally {
+		db?.close();
 	}
 }
 
@@ -933,6 +937,9 @@ async function main() {
 			console.log(`  ${umasNotOnGlobal.length} uma(s) in JSON but not yet on Global game (previously fast-forwarded)`);
 			console.log(`  ${skillsNotOnGlobal.length} skill(s) in JSON but not yet on Global game (previously fast-forwarded)`);
 		}
+		// Never fixed here: this tool only adds entries, so a live skill Cygames
+		// rebalanced stays stale until the merge is re-run.
+		for (const line of formatDrift(mdbDelta.drift)) console.log(line);
 	}
 
 	// 6. Write output files (or skip if dry-run)

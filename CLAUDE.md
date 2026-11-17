@@ -476,9 +476,15 @@ Global, plus ~850 fast-forwarded from JP. Two rules follow from that:
 - Match the file's existing format — tab indent, original top-level key order — or the diff
   becomes unreviewable whitespace churn.
 
-`fast-forward-global.ts` now **detects and reports this drift** on every run
-(`⚠️ [STALE DATA] N Global-live skill(s) no longer match master.mdb`). It cannot fix it —
-that warning is your cue to re-run the merge.
+`tools/skill-drift.ts` **detects and reports this drift**: `npm run check:skill-drift`
+compares every skill present in `docs/master.mdb` (precondition, condition, duration and
+effects, with the 1.2 patch applied) and prints
+`⚠️ [STALE DATA] N Global-live skill(s) no longer match master.mdb` plus each id and field.
+JP-only entries are never compared. `fast-forward-global.ts` prints the same report on every
+run. Neither rewrites `skill_data.json`: the warning is your cue to re-run the merge. Both
+read the mdb with Node's built-in `node:sqlite`, so the `sqlite3` CLI is not needed
+(`build.mjs` still shells out to it and falls back to the git remote without it).
+`npm run test:skill-drift` checks that planted drift is caught.
 
 ### Updating Global master.mdb
 
