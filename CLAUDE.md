@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Yet Another Umalator** is a Uma Musume race simulator built on **GlobalSim**, a full-field Rust race engine compiled to wasm and run in browser Web Workers. Forked from TheCing/uma-tools (Moomoolator), itself a hybrid fork of alpha123/umalator and kachi-dev/umalator.
 
-This fork is **Global/English only, GlobalSim only**: the JP app, the classic TypeScript engine and the HP calculator have been removed. It deploys to **GitHub Pages at <https://john-unowen.github.io/Yet-Another-Umalator-Fork/>** — see [Deployment](#deployment); the upstream `umalator.app` domain, Cloudflare Pages project and Functions belong to upstream and are not what this repo runs.
+This fork is **Global/English only, GlobalSim only**: the JP app, the classic TypeScript engine and the HP calculator have been removed. It deploys to **GitHub Pages at <https://john-unowen.github.io/Yet-Another-Umalator-Fork/>** (see [Deployment](#deployment)). The upstream `umalator.app` domain, Cloudflare Pages project and Functions belong to upstream and are not what this repo runs.
 
 ### Live Applications
 
@@ -18,7 +18,7 @@ This fork deploys **one** application. `.github/workflows/pages.yml` builds the 
 
 | Application | Where | Description |
 |------------|-----|-------------|
-| **Simulator (the whole site)** | <https://john-unowen.github.io/Yet-Another-Umalator-Fork/> | The v2 app — GlobalSim (wasm) engine, Compare / Skill / Optimizer modes, served at the Pages project root. |
+| **Simulator (the whole site)** | <https://john-unowen.github.io/Yet-Another-Umalator-Fork/> | The v2 app: GlobalSim (wasm) engine, Compare / Skill / Optimizer modes, served at the Pages project root. |
 | Events, skill visualizers, mechanics explorer, team trials, release timeline | source tree only | Not deployed: `pages.yml` copies none of them into `_site`. Building one locally works (`cd events && node build.mjs`), but a link to `/events/` on Pages 404s. Upstream hosts its own set at `umalator.app`. |
 
 GitHub Pages has no server components: `_redirects` and `functions/` are Cloudflare Pages artifacts that never execute here, the OCR proxy and Turnstile build empty (screenshot OCR needs the user's own Gemini key), and the feedback drawer is switched off (`VITE_ENABLE_FEEDBACK=false` in `umalator-global/v2/.env`, plus no webhook).
@@ -72,7 +72,7 @@ The dev server:
 - Auto-rebuilds on source changes
 - Strips `/uma-tools/` prefix from asset requests
 
-**Other Applications** (none of these are deployed by `pages.yml`; they build standalone):
+**Other Applications** (none of these are deployed by `pages.yml`, and they each build standalone):
 ```bash
 cd events && node build.mjs
 cd umalator-global/skill-visualizer && node build.mjs      # Global visualizer
@@ -169,7 +169,7 @@ All frontend apps use:
 - **D3.js** for charts and visualizations
 - **Immutable.js** for state management
 - **esbuild** for bundling (`umalator-global/build.mjs`)
-- **Vite** for the v2 app — dev server (HMR) and the deployed `dist/` build
+- **Vite** for the v2 app: dev server (HMR) and the deployed `dist/` build
 
 TypeScript config uses `"moduleResolution": "bundler"` and targets ES2018.
 
@@ -187,7 +187,7 @@ numbers.
 
 The classic TypeScript engine has been removed: the JP v1 app, the classic Global v1 app,
 the v2 classic worker (`v2/simulator.worker.ts`) and the HP/stamina calculator all went with
-it. There is no v1 left to compare against — `umalator-global/v2/` is the app, served at the
+it. There is no v1 left to compare against: `umalator-global/v2/` is the app, served at the
 site root, with three modes (Compare, Skill, Optimizer), all on GlobalSim.
 
 `uma-skill-tools/` is still imported (enums in `RaceParameters.ts`, course data,
@@ -199,7 +199,7 @@ simulation.
 - Component-based architecture
 - Mobile-first responsive design
 - Modal dialogs, feedback drawer, mobile navigation
-- Built with esbuild (`build.mjs`); the deployed bundle comes from the Vite `dist/` build
+- Built with esbuild (`build.mjs`). The deployed bundle comes from the Vite `dist/` build
 - Served at the site root (the old `/umalator-global/v2/` path 301s there)
 
 Everything else is shared as before:
@@ -284,13 +284,13 @@ v2/
 - Review screen allows editing before loading
 - API key stored in localStorage (optional)
 
-### OCR Pipeline (screenshot → uma)
+### OCR Pipeline (screenshot to uma)
 
 > **On this fork**: Pages builds with `OCR_PROXY_URL` and `TURNSTILE_SITEKEY` unset, so
 > `CC_OCR_PROXY` is empty, the proxy path is skipped and the modal always asks for the
 > user's own Gemini key. The `uma-tools-worker/` proxy and its origin allowlist
 > (`umalator.app`, `dev.umalator.app`, `localhost`) belong to upstream and are not deployed
-> here — reviving them means deploying your own worker and adding this fork's Pages origin to
+> here. Reviving them means deploying your own worker and adding this fork's Pages origin to
 > that allowlist. The mechanism below is kept as the reference for that.
 
 Imports a uma from a game screenshot via Google Gemini. Three consumers share the
@@ -298,31 +298,31 @@ flow across two environments:
 
 | Consumer | File | Env | Auth |
 |---|---|---|---|
-| v2 web modal | `components/GeminiOCR.ts` (shared lib) | Browser | Proxy (no key) → user-key fallback |
+| v2 web modal | `components/GeminiOCR.ts` (shared lib) | Browser | Proxy (no key), then the user's own key |
 | OCR proxy | `uma-tools-worker/webhook-proxy.js` | Cloudflare Worker | Server `GEMINI_API_KEY` secret |
 | Discord bot | `uma-tools-bot/src/gemini-ocr.ts` | Node | Server key |
 
-**SDK + model:** uses the unified **`@google/genai`** SDK against **`gemini-3.5-flash`**
-— a GA model with a **free tier** (vision + structured output). Do **not** use
+**SDK + model:** uses the unified **`@google/genai`** SDK against **`gemini-3.5-flash`**,
+a GA model with a free tier (vision + structured output). Do **not** use
 `gemini-flash-latest` (floating alias, no guaranteed free tier). **Model retirements
-break OCR with a 404 `NOT_FOUND` "no longer available to new users"** — `gemini-2.0-flash*`
+break OCR with a 404 `NOT_FOUND` "no longer available to new users"**: `gemini-2.0-flash*`
 shut down 2026-06-01, and `gemini-2.5-flash` was retired for new users ~2026-06 (that's why
-we moved to 3.5-flash on 2026-07-23). Prefer a stable free-tier **Flash** model; avoid the
-bleeding-edge one until its free tier is confirmed. The model is a `MODEL` constant in
-`components/GeminiOCR.ts` and `uma-tools-bot/src/gemini-ocr.ts` (2 places); the worker is
+the code moved to 3.5-flash on 2026-07-23). Prefer a stable free-tier Flash model and avoid
+the bleeding-edge one until its free tier is confirmed. The model is a `MODEL` constant in
+`components/GeminiOCR.ts` and `uma-tools-bot/src/gemini-ocr.ts` (2 places). The worker is
 model-agnostic.
 
 **Structured output:** the call sets `responseMimeType: 'application/json'` +
 `responseSchema` (the `OCRHorseData` shape, with `enum`s for aptitude/strategy), so
-Gemini returns guaranteed-valid JSON — no markdown-fence stripping needed. The strategy
-enum is the four on-screen styles (Nige/Senkou/Sasi/Oikomi); Oonige isn't screenshot-
-derivable, so the user sets it manually after import if needed.
+Gemini returns guaranteed-valid JSON, and no markdown-fence stripping is needed. The strategy
+enum is the four on-screen styles (Nige, Senkou, Sasi, Oikomi). Oonige is not
+screenshot-derivable, so the user sets it manually after import if needed.
 
 **Proxy:** the browser points the SDK at the worker via
 `httpOptions.baseUrl = OCR_PROXY_URL + '/gemini'`. The worker's `/gemini/*` route is a
 transparent reverse proxy: it forwards `/v1beta/models/<model>:generateContent` to
 Google, injecting `env.GEMINI_API_KEY` as `x-goog-api-key` (only inference paths are
-allowed; any client-sent key is ignored). Most users never need a key; if the proxy
+allowed, and any client-sent key is ignored). Most users never need a key. If the proxy
 fails, the client falls back to a user-supplied key (entered in the modal, optionally
 saved to `localStorage`). `OCR_PROXY_URL` is provided to the build via the
 `CC_OCR_PROXY` esbuild/vite define (from `OCR_PROXY_URL` in `.env.local`). After
@@ -330,12 +330,13 @@ deploying the worker, set the secret with `wrangler secret put GEMINI_API_KEY`.
 
 **Abuse protection:** the `/gemini` proxy is gated so only the real apps can spend the
 server key. The worker enforces (1) an **Origin allowlist** (`umalator.app`,
-`dev.umalator.app`, `localhost`) and (2) a **Cloudflare Turnstile** token — the browser
+`dev.umalator.app`, `localhost`) and (2) a **Cloudflare Turnstile** token. The browser
 gets a single-use token from `components/turnstile.ts` (a hidden Managed-mode widget) and
-sends it as the `X-Turnstile-Token` header; the worker verifies it via Turnstile
-`siteverify` before proxying. No token / failed check → `403` → the client's user-key
-fallback. Setup: create a Turnstile widget in the Cloudflare dashboard, put its **sitekey**
-in the Pages build env `TURNSTILE_SITEKEY` (public; baked in via `CC_TURNSTILE_SITEKEY`)
+sends it as the `X-Turnstile-Token` header. The worker verifies it via Turnstile
+`siteverify` before proxying. With no token, or a failed check, the worker returns `403`
+and the client falls back to its user key. Setup: create a Turnstile widget in the
+Cloudflare dashboard, put its **sitekey**
+in the Pages build env `TURNSTILE_SITEKEY` (public, baked in via `CC_TURNSTILE_SITEKEY`)
 and its **secret** in the worker via `wrangler secret put TURNSTILE_SECRET`. The worker
 fails closed (`503`) until `TURNSTILE_SECRET` is set. Local dev: Cloudflare's always-pass
 test pair (sitekey `1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`).
@@ -347,17 +348,18 @@ the new model has a free tier if you rely on the proxy).
 
 The Optimizer pane's **Import career dump…** button reads a Hachimi-Edge career dump
 (`career_<charaId>_<epoch>.json`, `"kind": "hachimi-career-dump"`, `"version": 1`) that
-Hachimi writes from the running game (menu "Dump career data"; it lands in `<exe dir>\hachimi\`).
-Reader: `umalator-global/v2/career-import.ts`; tests: `npm run test:career-import`.
+Hachimi writes from the running game (menu "Dump career data", which lands in
+`<exe dir>\hachimi\`). Reader: `umalator-global/v2/career-import.ts`. Tests:
+`npm run test:career-import`.
 
 What it applies: outfit (`character.cardId`), star level (`limitBreakCount + 1`), unique level
-(the owned `11xxxx` row's `Level`), the five stats (`wiz` → wisdom), aptitudes (distance = best of
-the four, surface = turf, strategy aptitude = the *actual* running style's own grade), strategy
-(`runningStyle` 1-4), mood (`motivation - 3`, game 0-5 → app -2..2), learned skills (rows with
-`IsGet=1`), hint levels, the SP budget (`skillPoint`), and the candidate pool (rows with `IsGet≠1`,
-intersected with what the app can actually offer). Aptitude numbers are the game's `ProperGrade`
-enum, 1=G … 8=S. The merged uma goes back through `validateAndParseUmaJson`, so a bad value cannot
-reach the sim.
+(the owned `11xxxx` row's `Level`), the five stats (`wiz` becomes wisdom), aptitudes (distance =
+best of the four, surface = turf, strategy aptitude = the *actual* running style's own grade),
+strategy (`runningStyle` 1-4), mood (`motivation - 3`, game 0-5 to app -2..2), learned skills
+(rows with `IsGet=1`), hint levels, the SP budget (`skillPoint`), and the candidate pool (rows
+with `IsGet≠1`, intersected with what the app can actually offer). Aptitude numbers are the
+game's `ProperGrade` enum, 1=G to 8=S. The merged uma goes back through
+`validateAndParseUmaJson`, so a bad value cannot reach the sim.
 
 Hint levels are read **per skill**: `skillTipsObserved[id].tipsDiscount` first (it is the discount
 the game applies to that skill, and this door is not subject to the writer's list cap), the rows'
@@ -368,7 +370,7 @@ spreading one entry over a whole group would invent levels for the other rarity 
 game tracks separately) and for skills that career cannot buy.
 
 Ignored on purpose: `acquiredSkills.items` (the writer's walk of that runtime class yields empty
-objects; `IsGet=1` rows are the real list), `raceEvaluations` (per-NPC bond entries whose
+objects, and `IsGet=1` rows are the real list), `raceEvaluations` (per-NPC bond entries whose
 `ObscuredBool` fields serialize as `"<obscured …>"`), `skillMasterNames` (only filled by a
 different capture door), and `scenarioId`/`routeId`/`entryProgramId` (career context with no
 verified mapping onto an app course).
@@ -389,8 +391,8 @@ verified mapping onto an app course).
 
 ### `CC_GLOBAL` (Global-only app)
 
-The JP simulator variant was removed. Every simulator build defines `CC_GLOBAL: 'true'` —
-`umalator-global/build.mjs` for esbuild, `umalator-global/v2/vite.config.ts` for Vite — and
+The JP simulator variant was removed. Every simulator build defines `CC_GLOBAL: 'true'`
+(`umalator-global/build.mjs` for esbuild, `umalator-global/v2/vite.config.ts` for Vite) and
 reads the Global/English data files in `umalator-global/`.
 
 The flag is still read by shared code, so components keep compiling both ways: skill level
@@ -398,14 +400,14 @@ labels in `components/SkillList.tsx`, regional default stats in `components/Hors
 the language storage key in `components/Language.tsx`. The JP skill visualizer
 (`skill-visualizer-jp/build.mjs`) is the one remaining build with `CC_GLOBAL: 'false'`.
 
-**See [.claude/UMALATOR-GLOBAL-MAPPING.md](.claude/UMALATOR-GLOBAL-MAPPING.md)** — historical
-reference: it describes the retired `umalator/` (JP) build layout that the old Global v1 build
+**See [.claude/UMALATOR-GLOBAL-MAPPING.md](.claude/UMALATOR-GLOBAL-MAPPING.md)** (historical
+reference): it describes the retired `umalator/` (JP) build layout that the old Global v1 build
 aliased into itself.
 
 ### Data Files
 
 **Game Data:**
-- `docs/master.mdb`: Global master.mdb — source of truth for what's in-game on Global (pulled from MEGA)
+- `docs/master.mdb`: Global master.mdb, the source of truth for what's in-game on Global (pulled from MEGA)
 - `uma-skill-tools/data/skill_data.json`: JP game skill definitions
 - `uma-skill-tools/data/skillnames.json`: JP skill name translations
 - `uma-skill-tools/data/course_data.json`: JP race course definitions
@@ -444,7 +446,7 @@ perl make_global_course_data.pl /path/to/master.mdb courseeventparams > course_d
 
 Requires Perl with `DBI` and `DBD::SQLite` modules.
 
-⚠️ **There is no `make_global_skill_data.pl`** — it does not exist in this repo or upstream.
+**There is no `make_global_skill_data.pl`**: it does not exist in this repo or upstream.
 The JP `uma-skill-tools/tools/make_skill_data.pl` does run against the Global mdb, but it
 predates the current schema: it emits only `modifier`/`target`/`type` per effect, so its
 output **drops `scaling`** (which `RaceSolverBuilder.ts` reads), plus `wisdomCheck` and
@@ -456,7 +458,7 @@ below.
 `umalator-global/skill_data.json` is a **JP superset** (~1530 entries): ~680 skills live on
 Global, plus ~850 fast-forwarded from JP. Two rules follow from that:
 
-1. **Never *replace* it wholesale from the Global mdb** — that wipes the fast-forwarded JP
+1. **Never *replace* it wholesale from the Global mdb**: that wipes the fast-forwarded JP
    entries, which are the point of the superset.
 2. **But it does need periodic *merging*.** For skills already live on Global, `master.mdb`
    is authoritative, and Cygames rebalances them. `tools/fast-forward-global.ts` only ever
@@ -464,16 +466,16 @@ Global, plus ~850 fast-forwarded from JP. Two rules follow from that:
    imported. Left alone, live-skill definitions freeze at whatever they were on first import.
 
    This is not hypothetical: by 2026-07-30, **79 Global-live skills** had conditions that
-   disagreed with `master.mdb` — e.g. `100051` Lights of Vaudeville still carried the JP
+   disagreed with `master.mdb`. For example `100051` Lights of Vaudeville still carried the JP
    definition (`is_finalcorner==1&corner==0&order_rate<=30&behind_near_lane_time_set1>=1`)
    where Global is simply `remain_distance<=300`.
 
 **The correct operation is a merge:** take the current definition for every skill live in
-`docs/master.mdb`; leave every JP-only entry untouched. Two things to preserve when doing it:
+`docs/master.mdb` and leave every JP-only entry untouched. Two things to preserve when doing it:
 
 - `make_skill_data.pl`'s `patch_modifier()` deliberately multiplies ~23 scenario-skill IDs
-  (`210011`…`210291`) by **1.2**. Re-apply it, or those magnitudes silently drop ~17%.
-- Match the file's existing format — tab indent, original top-level key order — or the diff
+  (`210011` to `210291`) by **1.2**. Re-apply it, or those magnitudes silently drop ~17%.
+- Match the file's existing format (tab indent, original top-level key order) or the diff
   becomes unreviewable whitespace churn.
 
 `tools/skill-drift.ts` **detects and reports this drift**: `npm run check:skill-drift`
@@ -514,7 +516,7 @@ cd umalator-global && node build.mjs
 
 The build generates `umalator-global/not-in-game.json` listing skills and outfits that exist in our data files but aren't in the Global game yet (fast-forwarded from JP). The UI uses this to show a "Not in game" badge and allow filtering.
 
-**How it works** (in `umalator-global/build.mjs` → `generateNotInGame()`):
+**How it works** (in `generateNotInGame()` in `umalator-global/build.mjs`):
 1. **Primary**: Diffs `skill_data.json` and `umas.json` against `docs/master.mdb` via `sqlite3` CLI
 2. **Fallback**: If `master.mdb` is unavailable (e.g. a CI run without the DB), diffs against the `kachi-dev/master` git remote
 
@@ -524,7 +526,7 @@ The build generates `umalator-global/not-in-game.json` listing skills and outfit
 
 To add a character/outfit that exists in JP but not yet on Global:
 
-1. **Find the JP master.mdb** — typically at `docs/master(1).mdb`
+1. **Find the JP master.mdb**, typically at `docs/master(1).mdb`
 
 2. **Extract outfit data** from the JP DB:
    ```sql
@@ -561,17 +563,17 @@ To add a character/outfit that exists in JP but not yet on Global:
    - **Strategy**: 1=Nige, 2=Senkou, 3=Sashi, 4=Oikomi (based on highest aptitude)
    - Keep keys sorted numerically
 
-4. **Add skills to `umalator-global/skill_data.json`** — extract from JP `skill_data` table
+4. **Add skills to `umalator-global/skill_data.json`**: extract them from the JP `skill_data` table
 
 5. **Add skill names to `umalator-global/skillnames.json`**:
    ```json
    "<skill_id>": ["English Skill Name"]
    ```
-   **Important**: Values must be arrays, not strings. The code does `names?.[0]` — a bare string would return just the first character.
+   **Important**: Values must be arrays, not strings. The code does `names?.[0]`, so a bare string would return just the first character.
 
 6. **Add character icon** to `icons/chara/trained_chr_icon_<uid>_<outfitId>_02.png`
 
-7. **Rebuild**: `cd umalator-global && node build.mjs` — the new skills/outfits will automatically appear in `not-in-game.json`
+7. **Rebuild**: `cd umalator-global && node build.mjs`. The new skills/outfits then automatically appear in `not-in-game.json`
 
 ## Adding Race Event Presets
 
@@ -589,7 +591,7 @@ Track IDs (in `umalator-global/tracknames.json`): Tokyo=10006, Kyoto=10008, Naka
 
 ### Adding a Preset
 
-The CM list is generated, not hand-edited: `build.mjs` → `generateCMPresets()` writes
+The CM list is generated, not hand-edited: `generateCMPresets()` in `build.mjs` writes
 `v2/cm-presets.generated.json`, which `presets.ts` reads. Race conditions come from the JP DB
 (`docs/master(1).mdb`), run dates from the Global `docs/master.mdb`, falling back to the
 hand-maintained `v2/cm-dates.json` for CMs the Global client does not know yet (a CM with no
@@ -614,9 +616,9 @@ So adding a future CM normally means adding its `"id": "YYYY-MM-DD"` entry to
 `v2/cm-dates.json` and rebuilding.
 
 **Parameters:**
-- **id**: CM number (unique; this is the key into the JP and Global schedules)
+- **id**: CM number (unique, this is the key into the JP and Global schedules)
 - **type**: `EventType.CM` or `EventType.LOH`
-- **name**: Display name — the generator derives it from the CM number (CM 1 = Taurus)
+- **name**: Display name. The generator derives it from the CM number (CM 1 = Taurus)
 - **date**: `'YYYY-MM-DD'`
 - **courseId**: From `course_data.json` (e.g., 10506 = Nakayama 2500m inner)
 - **season**: `Season.Spring|Summer|Autumn|Winter`
@@ -629,9 +631,9 @@ So adding a future CM normally means adding its `"id": "YYYY-MM-DD"` entry to
 
 ## Security and Environment Variables
 
-Feedback is off on this fork, so nothing below is configured on Pages; the sections are kept
+Feedback is off on this fork, so nothing below is configured on Pages. The sections are kept
 as the reference for running the feedback + OCR stack somewhere. The drawer needs both
-`VITE_DISCORD_WEBHOOK` (non-empty) and `VITE_ENABLE_FEEDBACK` != `'false'`; the committed
+`VITE_DISCORD_WEBHOOK` (non-empty) and `VITE_ENABLE_FEEDBACK` not set to `'false'`. The committed
 `umalator-global/v2/.env` pins `VITE_ENABLE_FEEDBACK=false`, so it stays hidden even with a
 webhook set, until an override flips the flag.
 
@@ -652,7 +654,7 @@ VITE_DISCORD_WEBHOOK=https://uma-tools-webhook-proxy.YOUR-SUBDOMAIN.workers.dev
 ### Discord Webhook Proxy
 
 **Architecture:**
-- Client → Cloudflare Worker → Discord Webhook
+- The client calls the Cloudflare Worker, which forwards to the Discord webhook
 - Real Discord URL hidden from client-side code
 - Worker adds metadata (IP, location, browser) to feedback
 
@@ -716,10 +718,6 @@ interface VelocityOverlayProps {
 }
 ```
 
-**Bug Fix (Feb 2026):**
-- Fixed velocity/HP toggles being coupled together
-- Now independently controlled via checkboxes
-
 ### Easter Eggs
 
 **Still In Love:**
@@ -748,23 +746,13 @@ The caveats below are inherited from the removed single-uma solver. They have **
 - Skill IDs can be found using `skillgrep.ts -d` or from GameTora (with "Show skill IDs" enabled)
 - The project uses "バ身" (bashin/horse lengths, 1 = 2.5m) as the unit for measuring distance gain
 - Frontend apps use `CC_GLOBAL` flag (esbuild define) to toggle JP/Global variants
-- Shared assets (`icons/`, `fonts/`) sit at the project root and are published alongside the app; the app builds their URLs with `resolveBase()` in `components/base-path.ts`, from `CC_BASE_PATH` (the Pages workflow sets it from the repo name; local builds default to `/uma-tools`)
-- V2 is experimental and may have breaking changes
+- Shared assets (`icons/`, `fonts/`) sit at the project root and are published alongside the app. The app builds their URLs with `resolveBase()` in `components/base-path.ts`, from `CC_BASE_PATH` (the Pages workflow sets it from the repo name, local builds default to `/uma-tools`)
 
 ## Japanese-to-English Terminology
 
-**See [.claude/HORSE-DEFINITION-FLOW.md](.claude/HORSE-DEFINITION-FLOW.md)** for horse data flow documentation - how `HorseState` (UI) converts to `HorseParameters` (simulation), default stats by region, and character data structure.
+**See [.claude/HORSE-DEFINITION-FLOW.md](.claude/HORSE-DEFINITION-FLOW.md)** for horse data flow documentation: how `HorseState` (UI) converts to `HorseParameters` (simulation), default stats by region, and character data structure.
 
-**See [.claude/JP-GLOBAL-TERMINOLOGY.md](.claude/JP-GLOBAL-TERMINOLOGY.md)** for comprehensive mappings between Japanese and Global English terminology. This reference includes:
-
-- Running styles (逃げ/Nige → Front Runner, 先行/Senkou → Pace Chaser, 差し/Sasi → Late Surger,
-  追込/Oikomi → End Closer, 大逃げ/Oonige → Runaway)
-- Stats, mood conditions, ground conditions, weather, seasons
-- Code enum values and their locations
-- Critical naming warnings (e.g., `GroundCondition.Good` = 良/Firm, not "Good")
-- Global vs JP file organization (`umalator-global/` vs `uma-skill-tools/data/`)
-
-Essential for working with skill conditions, race parameters, and understanding the codebase terminology.
+**See [docs/JP-GLOBAL-TERMINOLOGY.md](docs/JP-GLOBAL-TERMINOLOGY.md)** for the mappings between Japanese and Global English terminology: running styles, stats, mood, ground conditions, weather, seasons, the code enum values and their locations, naming traps (for example `GroundCondition.Good` = 良/Firm, not "Good") and the Global vs JP file split.
 
 ## Deployment
 
@@ -786,8 +774,8 @@ The one fixed-name output is the engine worker: `worker.rollupOptions` in `v2/vi
 sets `entryFileNames: '[name].js'`, so `globalsim.worker.js` lands at the root of `dist/` and
 reaches `_site` with the rest of the dist (the main bundle resolves it as `../globalsim.worker.js`).
 
-The old v1 scheme — hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js` /
-`bundle.css` / `simulator.worker.js` — is gone along with the classic app.
+The old v1 scheme (hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js`,
+`bundle.css` and `simulator.worker.js`) is gone along with the classic app.
 
 ### GitHub Pages
 
@@ -799,12 +787,12 @@ The old v1 scheme — hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js
 - `CC_BASE_PATH=/${{ github.event.repository.name }}` sets the asset prefix from the repo name,
   so a rename or a root-domain deploy needs no code change (`CC_BASE_PATH=''` = site root).
 - Cloudflare-only features build inert: `OCR_PROXY_URL` and `TURNSTILE_SITEKEY` are unset.
-- No Pages env vars are configured; `VITE_DISCORD_WEBHOOK` stays empty, so the feedback drawer
+- No Pages env vars are configured. `VITE_DISCORD_WEBHOOK` stays empty, so the feedback drawer
   is hidden.
 
 `ci.yml` runs on push and pull request: the engine's own `cargo test`, the wasm-vs-native byte
 parity check, and the GlobalSim suites. `sync-upstream-data.yml` runs daily, pulls the upstream
-game data, and opens a PR against `master`; merging is what deploys it.
+game data, and opens a PR against `master`. Merging is what deploys it.
 
 `build-all.sh`, `_redirects` and `functions/` are upstream Cloudflare Pages machinery. GitHub
 Pages ignores all three, and the Pages workflow never calls `build-all.sh`.
@@ -812,9 +800,9 @@ Pages ignores all three, and the Pages workflow never calls `build-all.sh`.
 ### Branch Deployment
 
 - **master**: deploys to GitHub Pages (the URL above)
-- **dev**: no deployment on this fork; upstream's `dev.umalator.app` preview is upstream's
+- **dev**: no deployment on this fork. Upstream's `dev.umalator.app` preview is upstream's
 
-### Canva guides — `canva.umalator.app`
+### Canva guides (`canva.umalator.app`)
 
 > Upstream-only. This fork does not host that subdomain, and `pages.yml` copies no `canva/`
 > directory into `_site`, so none of these paths exist on the Pages URL. The registry and the
@@ -824,24 +812,24 @@ Community guides are Canva embeds addressed by a numbered slug, reachable at bot
 `canva.umalator.app/<slug>` and `umalator.app/canva/<slug>`:
 
 - `/14-yasuda`, `/15-takarazuka`, … (`<number>-<name>`)
-- bare root (`canva.umalator.app/` or `umalator.app/canva/`) → 302 to the
+- The bare root (`canva.umalator.app/` or `umalator.app/canva/`) sends a 302 to the
   highest-numbered (newest) guide
-- number-only (`/14`) → 302 to the full slug
+- A number-only path (`/14`) sends a 302 to the full slug
 
 **Registry lives in `canva-embeds.json`** (single source of truth, repo root).
 
 **`umalator.app/canva/<slug>` is served by STATIC pages**, not the Function. Cloudflare
 Pages Functions are not currently executing on the production project (the
-`functions/[[catchall]].ts` canva routing — and the events OG function, and the
-`www`→apex redirect — never run in prod; everything falls through to static). So
+`functions/[[catchall]].ts` canva routing, the events OG function, and the
+`www` to apex redirect never run in prod, everything falls through to static). So
 `tools/gen-canva-static.mjs` reads `canva-embeds.json` and writes static
 `canva/<slug>/index.html` wrapper pages (+ `canva/index.html` = newest) on every build
 (wired into `build-all.sh`). These are plain static assets and always serve. The
 `functions/[[catchall]].ts` still reads the same `canva-embeds.json` and would serve the
-`canva.umalator.app` subdomain (and number-only slugs) **if/when Functions are revived**
-— that requires a Cloudflare dashboard fix (Functions enablement / compatibility date),
-not a repo change. The subdomain + number-slug `/14`→`/14-yasuda` redirects are currently
-inactive in prod as a result.
+`canva.umalator.app` subdomain (and number-only slugs) **if/when Functions are revived**.
+That requires a Cloudflare dashboard fix (Functions enablement / compatibility date),
+not a repo change. The subdomain and number-slug redirects (for example `/14` to
+`/14-yasuda`) are currently inactive in prod as a result.
 
 **To add a guide:** add one entry to `canva-embeds.json`:
 
@@ -850,10 +838,10 @@ inactive in prod as a result.
   "canvaId": "XXXX", "viewToken": "YYYY" }
 ```
 
-Get `canvaId` + `viewToken` from Canva › Share › More › Embed — the embed URL is
+Get `canvaId` + `viewToken` from Canva › Share › More › Embed. The embed URL is
 `https://www.canva.com/design/<canvaId>/<viewToken>/view?embed`. The highest-numbered
 entry automatically becomes `canva/index.html` (the bare-`/canva` target). Changes ship
-with `master` — merge `dev` → master to publish.
+with `master`: merge `dev` into master to publish.
 
 ## Credits
 
