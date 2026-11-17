@@ -27,7 +27,8 @@ import type { MobPreset } from './engines/globalsim/mobs';
 import { ci95 } from './engines/globalsim/metrics';
 import type { WorkerFactory } from './engines/globalsim/pool';
 import { loadGlobalsimCourseIds } from './engines/globalsim/courses';
-import { calculateSkillCost } from './skill-chart-utils';
+import { applyExclusions, calculateSkillCost, factRescued, type PoolExclusion } from './skill-chart-utils';
+import { PoolExclusionList } from './pool-exclusions';
 import { pickCareerDump, type CareerImport } from './career-import';
 import { convertUmaStateForWorker } from './simulation-utils';
 import { HorseState } from '../../components/HorseDefTypes';
@@ -42,6 +43,8 @@ export interface OptimizerPaneProps {
 	uma: any;
 	/** Offerable skill ids, already coverage-filtered by the caller. */
 	candidates: string[];
+	/** Skills the caller left out of `candidates`, each with its reason (skill-chart-utils partitionPool). */
+	excluded: PoolExclusion[];
 	/** Merged GlobalSim skill table; null while the engine assets load. */
 	skillData: unknown | null;
 	/** courseData[courseId] — only .distance is read here. */
@@ -131,6 +134,24 @@ interface RunSnapshot {
 	/** §G: whether that run searched the scenario set as one objective. */
 	aggregated: boolean;
 	objDigits: number;
+	/** Skills that stayed out of that run's pool. */
+	leftOut: number;
+}
+
+/**
+ * The grounds a run scores: the current one, then the nearest footings
+ * (GroundCondition.Good is FIRM, Yielding is "Good"): Firm → Good, Soft; Soft → Good, Heavy.
+ */
+function scenarioGrounds(current: number, count: number): number[] {
+	const grounds = [current];
+	const nearest = [GroundCondition.Good, GroundCondition.Yielding, GroundCondition.Soft, GroundCondition.Heavy]
+		.filter((g) => g !== current)
+		.sort((a, b) => Math.abs(a - current) - Math.abs(b - current) || a - b);
+	for (const g of nearest) {
+		if (grounds.length >= count) break;
+		grounds.push(g);
+	}
+	return grounds;
 }
 
 const OBJECTIVES: { id: ObjectiveKind; label: string }[] = [
@@ -178,10 +199,10 @@ const thStyle = { textAlign: 'left' as const, padding: '4px 8px', fontSize: 12, 
 const tdStyle = { padding: '4px 8px', fontSize: 13, verticalAlign: 'top' as const };
 
 export function OptimizerPane(props: OptimizerPaneProps) {
-	const { workerFactory, uma, candidates, skillData, course, courseId, conditions, mobPreset, fixedGate, ownedByGroup, hints } = props;
+	const { workerFactory, uma, skillData, course, courseId, conditions, mobPreset, fixedGate, ownedByGroup, hints, excluded } = props;
 
 	// ── UI state ──────────────────────────────────────────────────────────────
-	const [chosen, setChosen] = useState<Set<string>>(() => new Set(candidates));
+	const [chosen, setChosen] = useState<Set<string>>(() => new Set(props.candidates));
 	const [filter, setFilter] = useState('');
 	const [budget, setBudget] = useState(10000);
 	const [objective, setObjective] = useState<ObjectiveKind>('p1');
@@ -201,6 +222,22 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [runResult, setRunResult] = useState<RunSnapshot | null>(null);
 	const [warnings, setWarnings] = useState<string[]>([]);
 	const [message, setMessage] = useState<string | null>(null); // errors + hints share one line
+	/** Exclusion list: the master switch and the ids put back by hand. */
+	const [focusOn, setFocusOn] = useState(true);
+	const [included, setIncluded] = useState<Set<string>>(() => new Set());
+
+	// A run that scores several grounds keeps a skill any one of them allows.
+	const rescued = useMemo(() => {
+		if (robustness <= 1 || !course || !excluded.length) return new Set<string>();
+		const scenarios = scenarioGrounds(Number(conditions.ground), robustness).map((g) => ({ ...conditions, ground: g }));
+		return factRescued(excluded, uma, course, scenarios);
+	}, [excluded, robustness, conditions.ground, conditions.weather, conditions.season, conditions.time, uma, course]);
+	/** The pool this pane offers: the caller's candidates plus whatever was put back. */
+	const candidates = useMemo(
+		() => applyExclusions(props.candidates, excluded, focusOn, included, rescued),
+		[props.candidates, excluded, focusOn, included, rescued],
+	);
+	const leftOut = excluded.length - (candidates.length - props.candidates.length);
 
 	// ── run machinery ─────────────────────────────────────────────────────────
 	const evRef = useRef<Evaluator | null>(null);
@@ -230,14 +267,28 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	}, []);
 
 	// candidates arrives async (the skill table loads after mount): when the
-	// list first becomes non-empty, default to everything chosen.
+	// list first becomes non-empty, default to everything chosen. After that,
+	// a skill put back from the exclusion list joins the selection, and a skill
+	// that leaves the pool leaves the selection, so a run never searches it.
 	const seededRef = useRef(false);
+	const pooledRef = useRef<Set<string>>(new Set());
 	useEffect(() => {
-		if (!seededRef.current && candidates.length) {
+		const before = pooledRef.current;
+		const now = new Set(candidates);
+		pooledRef.current = now;
+		if (!candidates.length) return;
+		if (!seededRef.current) {
 			seededRef.current = true;
 			setChosen(new Set(candidates));
+			return;
 		}
-	}, [candidates]);
+		const putBack = new Set(excluded.map((e) => e.id));
+		setChosen((prev) => {
+			const next = new Set([...prev].filter((id) => now.has(id)));
+			for (const id of candidates) if (!before.has(id) && putBack.has(id)) next.add(id);
+			return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
+		});
+	}, [candidates, excluded]);
 
 	const filtered = useMemo(() => {
 		const q = filter.trim().toLowerCase();
@@ -294,6 +345,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		evRef.current = null;
 
 		const budgetUse = Math.max(0, Math.floor(Number(budget) || 0));
+		const runLeftOut = leftOut;
 		const seedUse = Math.floor(Number(seed) || 0);
 		const space: BuildSpace = buildSpace({
 			purchasable: [...chosen], ownedByGroup, fixedIds: [], hints, budget: budgetUse,
@@ -357,17 +409,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			};
 			// §6.3 scenario set: scenario 0 is the current setup; the robustness
 			// variants re-run the SAME mob field on different footing.
-			// Variants are the nearest footings first (GroundCondition.Good is
-			// FIRM, Yielding is "Good"): Firm → Good, Soft; Soft → Good, Heavy.
-			const cur = Number(conditions.ground);
-			const grounds = [conditions.ground];
-			const nearest = [GroundCondition.Good, GroundCondition.Yielding, GroundCondition.Soft, GroundCondition.Heavy]
-				.filter((g) => g !== cur)
-				.sort((a, b) => Math.abs(a - cur) - Math.abs(b - cur) || a - b);
-			for (const g of nearest) {
-				if (grounds.length >= robustness) break;
-				grounds.push(g);
-			}
+			// Variants are the nearest footings first (scenarioGrounds).
+			const grounds = scenarioGrounds(Number(conditions.ground), robustness);
 			const scenarios: ScenarioSpec[] = grounds.map((g, i) => {
 				const gc = { ...conds, ground: g as ChartRaceConditions['ground'] };
 				return {
@@ -439,7 +482,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			// closure values this run actually searched under (same as the input at
 			// runOptimizer above), so the finished table can never be relabelled by
 			// later changes to the live dropdowns.
-			setRunResult({ result: res, objective, aggregation, aggregated, objDigits: objDigitsOf(objective) });
+			setRunResult({ result: res, objective, aggregation, aggregated, objDigits: objDigitsOf(objective), leftOut: runLeftOut });
 			setProgress(null);
 			if (useBook) {
 				saveBook(bk, res.shortlist.slice(0, 5).map(r => ({
@@ -479,11 +522,23 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			</div>
 		);
 	}
+	const exclusionList = (
+		<PoolExclusionList
+			excluded={excluded} included={included} rescued={rescued}
+			onToggle={(id) => setIncluded((prev) => {
+				const next = new Set(prev);
+				if (next.has(id)) next.delete(id); else next.add(id);
+				return next;
+			})}
+			focusOn={focusOn} onFocusChange={setFocusOn} disabled={running}
+		/>
+	);
 	if (!candidates.length) {
 		return (
 			<div class="v2-optimizer-pane" style={{ padding: 16 }}>
 				<h2>Skill Optimizer</h2>
 				<p style={{ opacity: 0.8 }}>No candidate skills for this uma/course — nothing to optimize.</p>
+				{exclusionList}
 			</div>
 		);
 	}
@@ -609,6 +664,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				</div>
 			</div>
 
+			{/* ── Skills that left the pool (collapsed) ── */}
+			{exclusionList}
+
 			{/* ── Space warnings (collapsed) ── */}
 			{warnings.length > 0 && (
 				<details class="v2-optimizer-warnings" style={{ fontSize: 12 }}>
@@ -647,7 +705,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			{runResult && (
 				<OptimizerResults
 					result={runResult.result} objective={runResult.objective} objDigits={runResult.objDigits}
-					aggregation={runResult.aggregation} aggregated={runResult.aggregated}
+					aggregation={runResult.aggregation} aggregated={runResult.aggregated} leftOut={runResult.leftOut}
 					hints={hints} ownedByGroup={ownedByGroup}
 					onOpenInCompare={props.onOpenInCompare}
 				/>
@@ -658,10 +716,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 
 function OptimizerResults(props: {
 	result: OptimizerResult; objective: ObjectiveKind; objDigits: number; aggregation: AggregationKind;
-	aggregated: boolean;
+	aggregated: boolean; leftOut: number;
 	hints: Map<string, number>; ownedByGroup: Map<string, string>; onOpenInCompare?: (ids: string[]) => void;
 }) {
-	const { result, objective, objDigits, aggregation, aggregated, hints, ownedByGroup, onOpenInCompare } = props;
+	const { result, objective, objDigits, aggregation, aggregated, leftOut, hints, ownedByGroup, onOpenInCompare } = props;
 	const objLabel = OBJECTIVES.find((o) => o.id === objective)?.label ?? objective;
 	const aggLabel = AGGREGATIONS.find((a) => a.id === aggregation)?.label ?? aggregation;
 	const multi = (result.best.perScenario?.length ?? 0) > 1;
@@ -761,6 +819,7 @@ function OptimizerResults(props: {
 			<div class="v2-optimizer-footnote" style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
 				verification: {result.verificationSeeds.toLocaleString()} fresh seeds · noise σΔ(ℓ) {fmtN(result.noise.sigmaDeltaLead)} L
 				{multi ? ` · ${aggregated ? 'one aggregated search, aggregated by ' : 'scenarios searched apart, aggregated by '}${aggLabel.toLowerCase()}` : ''}
+				{leftOut > 0 ? ` · ${leftOut} skill${leftOut === 1 ? '' : 's'} left the pool before the search` : ''}
 				{result.stoppedEarly && (
 					<span style={{ color: '#d0a030', marginLeft: 10 }}>
 						Stopped early — results come from the short Stage G verification only.

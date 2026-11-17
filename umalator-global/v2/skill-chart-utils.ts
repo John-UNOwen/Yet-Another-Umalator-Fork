@@ -11,6 +11,8 @@ import { getParser } from '../../uma-skill-tools/ConditionParser';
 import { buildBaseStats, buildSkillData, Perspective } from '../../uma-skill-tools/RaceSolverBuilder';
 import type { UmaState } from './storage';
 import type { SkillChartResult } from './skill-chart-types';
+import { buildRaceParameters } from './simulation-utils';
+import { describeOut, factOut, raceFacts, RaceConditions, RaceCourse } from './engines/globalsim/focus';
 
 // Import data files
 import skilldata from '../skill_data.json';
@@ -150,16 +152,14 @@ export function umaForUniqueSkill(skillId: string): string | null {
 	return null;
 }
 
-/**
- * Filter skills to only those that can activate on the given course
- * Uses condition parser to check if skill has valid activation regions
- */
-export function getActivateableSkills(
-	skills: string[],
+type ActivationVerdict = 'ok' | 'no-window' | 'parse-error';
+
+/** One skill's activation check against the course, on the retired TypeScript condition parser. */
+function activationChecker(
 	uma: UmaState,
 	course: CourseData,
 	racedef: RaceParameters
-): string[] {
+): (id: string) => ActivationVerdict {
 	const parser = getParser();
 
 	// Build base stats for condition checking
@@ -183,16 +183,97 @@ export function getActivateableSkills(
 	const wholeCourse = new RegionList();
 	wholeCourse.push(new Region(0, course.distance));
 
-	return skills.filter(id => {
+	return id => {
 		let sd;
 		try {
 			sd = buildSkillData(baseStats, racedef, course, wholeCourse, parser, id, Perspective.Any);
 		} catch (_) {
-			return false;
+			return 'parse-error';
 		}
 		// Skill is activateable if it has at least one trigger with valid regions
-		return sd.some(trigger => trigger.regions.length > 0 && trigger.regions[0].start < 9999);
-	});
+		return sd.some(trigger => trigger.regions.length > 0 && trigger.regions[0].start < 9999) ? 'ok' : 'no-window';
+	};
+}
+
+/**
+ * Filter skills to only those that can activate on the given course
+ * Uses condition parser to check if skill has valid activation regions
+ */
+export function getActivateableSkills(
+	skills: string[],
+	uma: UmaState,
+	course: CourseData,
+	racedef: RaceParameters
+): string[] {
+	const check = activationChecker(uma, course, racedef);
+	return skills.filter(id => check(id) === 'ok');
+}
+
+/** Why a skill left a candidate pool. */
+export interface PoolExclusion {
+	id: string
+	/** Short text for the exclusion list. */
+	reason: string
+	/**
+	 * fact: a race constant contradicts the skill's condition (focus.ts).
+	 * window, parse: the app's TypeScript condition check found no window, or could not read the skill.
+	 * engine: the GlobalSim table has no entry, so the engine cannot run it at all.
+	 */
+	kind: 'fact' | 'window' | 'parse' | 'engine'
+	/** The contradicted term, for kind 'fact'. */
+	term?: string
+}
+
+export interface PoolSplit {
+	kept: string[]
+	out: PoolExclusion[]
+}
+
+/**
+ * Split candidate skills into the ones worth simulating and the ones dropped, with a
+ * reason for every drop, so no skill leaves a pool silently.
+ *
+ * The fact rules (focus.ts) run first. The TypeScript check then runs without the
+ * per-strategy position band, which is a guess about race behaviour and not a fact.
+ * Last, skills the engine table does not cover are dropped, because the engine
+ * would reject them.
+ */
+export function partitionPool(
+	skills: string[],
+	uma: UmaState,
+	course: CourseData,
+	conds: RaceConditions,
+	knownIds?: ReadonlySet<string> | null
+): PoolSplit {
+	const facts = raceFacts(course as unknown as RaceCourse, conds, uma.strategy);
+	const racedef = buildRaceParameters(conds.ground, conds.weather, conds.season, conds.time);
+	const check = activationChecker(uma, course, racedef as RaceParameters);
+	const kept: string[] = [];
+	const out: PoolExclusion[] = [];
+	for (const id of skills) {
+		const term = factOut(id, facts);
+		if (term !== null) { out.push({ id, kind: 'fact', term, reason: describeOut(term) }); continue; }
+		const verdict = check(id);
+		if (verdict === 'no-window') { out.push({ id, kind: 'window', reason: 'no activation window on this course in the app check' }); continue; }
+		if (verdict === 'parse-error') { out.push({ id, kind: 'parse', reason: 'the app check could not read this condition' }); continue; }
+		if (knownIds && !knownIds.has(id)) { out.push({ id, kind: 'engine', reason: 'not in the engine skill table' }); continue; }
+		kept.push(id);
+	}
+	return { kept, out };
+}
+
+/**
+ * Fact exclusions that a multi-scenario run must take back: a skill is out only
+ * when it is out in every scenario the run scores (scenarios differ in ground).
+ */
+export function factRescued(
+	out: readonly PoolExclusion[],
+	uma: UmaState,
+	course: CourseData,
+	scenarios: readonly RaceConditions[]
+): Set<string> {
+	const sets = scenarios.map(c => raceFacts(course as unknown as RaceCourse, c, uma.strategy));
+	return new Set(out.filter(e => e.kind === 'fact' && factOut(e.id, sets) === null).map(e => e.id));
 }
 
 /**
@@ -269,4 +350,20 @@ export function calculateStats(results: number[]): {
 			? (sorted[mid - 1] + sorted[mid]) / 2
 			: sorted[mid]
 	};
+}
+
+/**
+ * The pool a run uses: the kept skills, plus every exclusion the user took back.
+ * With `focusOn` false nothing the app check or the fact rules dropped stays out.
+ * Skills the engine table lacks stay out either way, because the engine rejects them.
+ */
+export function applyExclusions(
+	kept: readonly string[],
+	out: readonly PoolExclusion[],
+	focusOn: boolean,
+	included: ReadonlySet<string>,
+	rescued: ReadonlySet<string> = new Set()
+): string[] {
+	const back = out.filter(e => e.kind !== 'engine' && (!focusOn || included.has(e.id) || rescued.has(e.id)));
+	return back.length ? [...kept, ...back.map(e => e.id)] : [...kept];
 }

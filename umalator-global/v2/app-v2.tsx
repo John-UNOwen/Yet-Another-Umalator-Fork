@@ -20,14 +20,16 @@ import { IntlProvider } from "preact-i18n";
 // Simulation utilities
 import {
   convertUmaStateForWorker,
-  buildRaceParameters,
 } from "./simulation-utils";
 import { Grade } from "../../uma-skill-tools/RaceParameters";
 
 // Skill chart utilities
 import {
-  getActivateableSkills,
+  applyExclusions,
   getBaseSkillsToTest,
+  partitionPool,
+  type PoolExclusion,
+  type PoolSplit,
 } from "./skill-chart-utils";
 
 import { RaceTrack, RegionDisplayType } from "../../components/RaceTrack";
@@ -66,6 +68,7 @@ import { V2ResultsPane, CompareResults, RaceSnapshot, calcStats } from "./result
 import { VelocityOverlay } from "./velocity-overlay";
 import { SkillChartPane } from "./skill-chart-pane";
 import { OptimizerPane } from "./optimizer-pane";
+import { PoolExclusionList } from "./pool-exclusions";
 import type { CareerImport } from "./career-import";
 import { SkillChartDetail } from "./skill-chart-detail";
 // import { PasswordGate } from "./PasswordGate";
@@ -411,6 +414,11 @@ function App() {
     [workerId: number]: { round: number; total: number };
   }>({});
   const [completedWorkers, setCompletedWorkers] = useState(0);
+  // Skill tab exclusion list (pool-exclusions.tsx): the master switch, the ids
+  // put back by hand, and ids the awaited engine table dropped after the split.
+  const [chartFocusOn, setChartFocusOn] = useState(true);
+  const [chartIncluded, setChartIncluded] = useState<Set<string>>(() => new Set());
+  const [skillChartLateOut, setSkillChartLateOut] = useState<PoolExclusion[]>([]);
 
   // Skill chart filters and state
   const [hideOwned, setHideOwned] = useState(false);
@@ -844,6 +852,30 @@ function App() {
     [simServerOnline, simServerUrl, simServerToken],
   );
 
+  // Candidate skills for the Skill tab and the Skill Optimizer: one split for
+  // both, with every dropped skill and its reason (pool-exclusions.tsx).
+  const skillPool = useMemo((): PoolSplit => {
+    const course = courseData[courseId];
+    if (!course) return { kept: [], out: [] };
+    const baseSkills = getBaseSkillsToTest(uma1, hideNotInGame);
+    return partitionPool(
+      baseSkills,
+      uma1,
+      course,
+      { ground, weather, season, time },
+      globalsimSkillIds,
+    );
+  }, [
+    courseId,
+    ground,
+    weather,
+    season,
+    time,
+    uma1,
+    hideNotInGame,
+    globalsimSkillIds,
+  ]);
+
   // Run skill chart via 4 workers
   // GlobalSim chart (Phase 5): AbortController per run — starting a new run
   // cancels the previous pool (terminate workers, drop queues, reject).
@@ -865,25 +897,16 @@ function App() {
       return;
     }
 
-    // Build race params with strategy for order-based skill filtering
-    const racedef = buildRaceParameters(
-      ground,
-      weather,
-      season,
-      time,
-      uma1.strategy,
+    // The skills to test: the shared split, plus anything the user put back
+    // from the exclusion list. Not-in-game skills were already left out of the
+    // base list, so no sim time goes to rows the chart would hide anyway.
+    setSkillChartLateOut([]);
+    const activateableSkills = applyExclusions(
+      skillPool.kept,
+      skillPool.out,
+      chartFocusOn,
+      chartIncluded,
     );
-
-    // Get list of skills to test (filter to activateable skills only).
-    // Pre-filter not-in-game skills here so we don't waste sim time on skills
-    // that would be hidden from the chart display anyway.
-    const baseSkills = getBaseSkillsToTest(uma1, hideNotInGame);
-    const activateableSkills = getActivateableSkills(
-      baseSkills,
-      uma1,
-      course,
-      racedef,
-    ).filter((id) => !globalsimSkillIds || globalsimSkillIds.has(id));
 
     if (activateableSkills.length === 0) {
       console.warn("[V2] No activateable skills found for this course");
@@ -928,14 +951,20 @@ function App() {
             .set("skills", fromJS(w.skills))
             .set("forcedSkillPositions", ImmMap(w.forcedSkillPositions || {}));
         };
+        const chartSkills = activateableSkills.filter((id) => knownSkillIds.has(id));
+        // Listed like every other exclusion, so nothing leaves the chart unseen.
+        const lateOut = activateableSkills.filter((id) => !knownSkillIds.has(id));
+        if (lateOut.length) {
+          setSkillChartLateOut(lateOut.map((id) => ({ id, kind: "engine" as const, reason: "not in the engine skill table" })));
+        }
         setSkillChartProgress({ 0: { round: 1, total: chartFastMode ? 1 : 2 } });
         // Paired draws are the chart's default (chart.ts): baseline and every
         // variant share their (seed, position, skill) streams — no toggle.
         const rows = await runGlobalsimSkillChart({
           uma: toHorseState(uma1),
-          // Coverage filter by the awaited table (the one at the top of this
-          // handler was a no-op while the table was still in flight).
-          skills: activateableSkills.filter((id) => knownSkillIds.has(id)),
+          // Coverage filter by the awaited table (the split's filter was a
+          // no-op while the table was still in flight).
+          skills: chartSkills,
           courseId,
           distance: course.distance,
           ground,
@@ -998,36 +1027,9 @@ function App() {
     globalsimThreads,
     simServerOnline,
     globalsimWorkerFactory,
-  ]);
-
-  // Candidate skills for the Skill Optimizer pane — the same activateable +
-  // coverage filter as handleRunSkillChart (plan Phase 2b pre-filter).
-  const optimizerCandidates = useMemo(() => {
-    const course = courseData[courseId];
-    if (!course) return [] as string[];
-    const racedef = buildRaceParameters(
-      ground,
-      weather,
-      season,
-      time,
-      uma1.strategy,
-    );
-    const baseSkills = getBaseSkillsToTest(uma1, hideNotInGame);
-    return getActivateableSkills(
-      baseSkills,
-      uma1,
-      course,
-      racedef,
-    ).filter((id) => !globalsimSkillIds || globalsimSkillIds.has(id));
-  }, [
-    courseId,
-    ground,
-    weather,
-    season,
-    time,
-    uma1,
-    hideNotInGame,
-    globalsimSkillIds,
+    skillPool,
+    chartFocusOn,
+    chartIncluded,
   ]);
 
   // Run simulation via worker
@@ -1955,6 +1957,22 @@ function App() {
                         )}
                     </div>
 
+                    <PoolExclusionList
+                      excluded={skillChartLateOut.length ? [...skillPool.out, ...skillChartLateOut] : skillPool.out}
+                      included={chartIncluded}
+                      onToggle={(id) =>
+                        setChartIncluded((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(id)) next.delete(id); else next.add(id);
+                          return next;
+                        })
+                      }
+                      focusOn={chartFocusOn}
+                      onFocusChange={setChartFocusOn}
+                      disabled={isRunning}
+                      note="Changes apply on the next run."
+                    />
+
                     {/* Skill chart table */}
                     {skillChartResults.size > 0 ? (
                       <SkillChartPane
@@ -2032,7 +2050,8 @@ function App() {
                   <OptimizerPane
                     workerFactory={globalsimWorkerFactory}
                     uma={uma1}
-                    candidates={optimizerCandidates}
+                    candidates={skillPool.kept}
+                    excluded={skillPool.out}
                     skillData={globalsimSkillTable}
                     course={courseData[courseId]}
                     courseId={courseId}
