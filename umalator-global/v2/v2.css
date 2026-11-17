@@ -2080,11 +2080,13 @@ body {
     display: none;
   }
 
-  /* Main content fills remaining space */
+  /* Main content fills remaining space. No height of its own: a hardcoded
+     calc(100vh - var(--header-height)) overshoots whenever the header is taller
+     than that variable (the sub band), which pushed the footer below the fold. */
   .v2-main {
     flex: 1;
     min-width: 0;
-    height: calc(100vh - var(--header-height));
+    min-height: 0;
     overflow-y: auto;
     order: 2; /* Appear second (right side) */
     display: flex;
@@ -2163,12 +2165,6 @@ body {
     gap: var(--space-sm);
     flex-wrap: wrap;
     justify-content: flex-end;
-  }
-
-  /* Push drawer below the two-row header */
-  .v2-uma-drawer {
-    top: var(--header-height);
-    height: calc(100vh - var(--header-height));
   }
 }
 
@@ -2312,12 +2308,26 @@ body {
    ============================================ */
 
 .v2-footer {
-  padding: var(--space-md) var(--space-lg);
+  flex-shrink: 0; /* the bottom bar always gets its line, the panes shrink instead */
+  padding: var(--space-sm) var(--space-lg);
   background: var(--color-surface);
   border-top: 1px solid var(--color-border);
   text-align: center;
   font-size: var(--font-base);
   color: var(--color-text-muted);
+}
+
+/* Collapsed by default: one line, and the credit text opens on click */
+.v2-footer summary {
+  cursor: pointer;
+  font-size: var(--font-xs);
+  opacity: 0.8;
+  padding: 2px 0;
+}
+
+.v2-footer details[open] > summary,
+.v2-footer summary:hover {
+  opacity: 1;
 }
 
 .v2-footer a {

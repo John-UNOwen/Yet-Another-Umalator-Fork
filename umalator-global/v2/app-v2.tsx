@@ -2269,8 +2269,10 @@ function App() {
 
             {/* FOOTER */}
             <footer class="v2-footer">
-              <p>
-                Yet Another Umalator is licensed under{" "}
+              <details>
+                <summary>About and credits</summary>
+                <p>
+                  Yet Another Umalator is licensed under{" "}
                 <a
                   href="https://www.gnu.org/licenses/gpl-3.0.html"
                   target="_blank"
@@ -2329,6 +2331,7 @@ function App() {
                   GlobalSim engine
                 </a>
               </div>
+              </details>
             </footer>
 
             {/* Backdrop when drawer is open */}
