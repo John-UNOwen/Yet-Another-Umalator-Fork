@@ -75,6 +75,10 @@ export interface BanditOpts {
 	prior?: (build: BuildRefLite) => { gain: number; se: number } | null;
 	/** Observability: called after each round. */
 	onRound?: (survivors: number, seedsUsed: number) => void;
+	/** Stop requested: the ladder ends before its next rung and reports what
+	 *  it measured (the candidates still alive come back as survivors). A late
+	 *  rung can take minutes, so the search's STOP must not wait for the ceiling. */
+	stopped?: () => boolean;
 }
 
 export interface BanditOutcome {
@@ -194,6 +198,7 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 			}
 		}
 		if (!kept.length) break; // nothing clears δ_min any more (§D.1)
+		if (o.stopped?.()) break; // STOP: no further rung
 		// §D.2: every kept candidate's interval still straddles the decision
 		// threshold, so every one grows one rung (not just the top two). The
 		// rung floor of 8 threads × chunk keeps one batch big enough to

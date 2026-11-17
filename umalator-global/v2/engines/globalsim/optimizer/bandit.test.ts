@@ -114,3 +114,22 @@ test('§I prior: a prior that answers null leaves the ladder exactly as it was',
 	t.deepEqual(r1.measured.map(x => [x.build.id, x.survived, x.diff.n]), r2.measured.map(x => [x.build.id, x.survived, x.diff.n]), 'same measured rows (the §9/§D ladder is untouched)');
 	t.end();
 });
+
+test('STOP: the ladder ends before its next rung and reports what it measured', async t => {
+	// Two candidates inside the indifference zone keep climbing toward the cap.
+	const mk = () => new Map<string, number>([['inc', 0], ['a', 0.04], ['b', 0.035]]);
+	const cs = () => [build('a'), build('b')];
+	const full = new FakeEval(mk(), 0.5);
+	await banditVsIncumbent(full, { ns: 's', scenarioIdx: 0, incumbent: build('inc'), candidates: cs(), pick: pickLead, cfg });
+	let stop = false;
+	let rounds = 0;
+	const cut = new FakeEval(mk(), 0.5);
+	const res = await banditVsIncumbent(cut, {
+		ns: 's', scenarioIdx: 0, incumbent: build('inc'), candidates: cs(), pick: pickLead, cfg,
+		onRound: () => { rounds++; stop = true; }, stopped: () => stop,
+	});
+	t.equal(rounds, 1, 'one rung after round 0, then the stop holds');
+	t.ok(cut.races < full.races, `fewer races than the full ladder (${cut.races} < ${full.races})`);
+	t.equal(res.measured.length, 2, 'both candidates come back measured');
+	t.end();
+});

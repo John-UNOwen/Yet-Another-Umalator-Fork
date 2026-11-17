@@ -922,6 +922,7 @@ async function runSingleScenario(
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
 				candidates: cands.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
 				prior: diffPrior(surrogate, X), // the raw fit, not the r2-gated one (see diffPrior)
+				stopped: () => ctrl.stopped(),
 			});
 			if (bres.priorCut) dbg('  prior-cut', bres.priorCut, 'of', cands.length, 'candidates (Δ-SE bound under δ_min)');
 			const outcomes = bres.measured; // eliminated candidates' numbers feed the re-solve too (§8D)
@@ -970,7 +971,7 @@ async function runSingleScenario(
 					{ ns: NS_SEARCH, scenarioIdx: si, build: Y, positions: pos },
 				]);
 				d = ev.paired(NS_SEARCH, si, Y, X, searchPick);
-				if (!d || held >= cfg.batchCap) break;
+				if (!d || held >= cfg.batchCap || ctrl.stopped()) break;
 				if (seqLo(d) > 0 || seqHi(d) < 0) break; // significant either way, §8D (sequential bound)
 				if (d.ci95[1] < cfg.deltaMinL) break; // Y cannot show an improvement worth having
 				held = Math.min(cfg.batchCap, Math.max(held + BANDIT_RUNG_MIN_SEEDS, Math.ceil(held * 1.5)));
@@ -1084,7 +1085,7 @@ async function runSingleScenario(
 					{ ns: NS_SEARCH, scenarioIdx: si, build: against, positions: pos },
 				]);
 				d = ev.paired(NS_SEARCH, si, better, against, searchPick);
-				if (!d || held >= cfg.batchCap) break;
+				if (!d || held >= cfg.batchCap || ctrl.stopped()) break;
 				if (seqLo(d) > 0 || seqHi(d) < 0) break; // significant either way, §8D (sequential bound)
 				if (d.ci95[1] < cfg.deltaMinL) break; // cannot show an improvement worth having
 				held = Math.min(cfg.batchCap, Math.max(held + BANDIT_RUNG_MIN_SEEDS, Math.ceil(held * 1.5)));
@@ -1157,7 +1158,9 @@ async function runSingleScenario(
 					rungMin: BANDIT_CHUNK_SIZE, rungCeil,
 					maxAlive: wave.length, lucbCut: false,
 					prior: diffPrior(surrogate, inc), // §I.5 (see Stage D): a bound-certified wave candidate never races
+					stopped: () => ctrl.stopped(),
 				});
+				if (ctrl.stopped()) cut = true; // a ladder STOP ended early certifies nothing
 				applyMeasured(bres.measured, dropOf, addedOf);
 				for (const out of bres.measured) surrHarvest(out.build);
 				for (const out of bres.measured) {
