@@ -68,7 +68,7 @@ These bonuses are **averaged** across all threshold stats for the course, then a
 
 ### How It's Applied
 
-From [`RaceSolverBuilder.ts:199-203`](../uma-skill-tools/RaceSolverBuilder.ts):
+From [`RaceSolverBuilder.ts:221-225`](../uma-skill-tools/RaceSolverBuilder.ts):
 
 ```typescript
 export function buildAdjustedStats(baseStats: HorseParameters, course: CourseData, ground: GroundCondition) {
@@ -113,7 +113,7 @@ Testing on Tokyo Dirt 1600m with synced RNG:
 
 Stat thresholds are calculated **after** mood is applied, which shifts the effective breakpoints.
 
-From [`RaceSolverBuilder.ts:182-196`](../uma-skill-tools/RaceSolverBuilder.ts):
+From [`RaceSolverBuilder.ts:203-219`](../uma-skill-tools/RaceSolverBuilder.ts):
 
 ```typescript
 export function buildBaseStats(horseDesc: HorseDesc, mood: Mood) {
@@ -202,13 +202,13 @@ export const GroundTypeProficiencyModifier = Object.freeze([1.05, 1.0, 0.9, 0.8,
 
 ### Strategy Aptitude
 
-**Wisdom Multiplier** (from [`RaceSolverBuilder.ts:42`](../uma-skill-tools/RaceSolverBuilder.ts)):
+**Wisdom Multiplier** (from [`RaceSolverBuilder.ts:63`](../uma-skill-tools/RaceSolverBuilder.ts)):
 ```typescript
 const StrategyProficiencyModifier = Object.freeze([1.1, 1.0, 0.85, 0.75, 0.6, 0.4, 0.2, 0.1]);
 //                                                  S    A    B     C     D    E    F    G
 ```
 
-Applied at [`RaceSolverBuilder.ts:207`](../uma-skill-tools/RaceSolverBuilder.ts):
+Applied at [`RaceSolverBuilder.ts:229`](../uma-skill-tools/RaceSolverBuilder.ts):
 ```typescript
 wisdom: baseStats.wisdom * StrategyProficiencyModifier[baseStats.strategyAptitude],
 ```
@@ -280,7 +280,7 @@ When your uma drifts too far from their expected position, position keeping kick
 
 Strategy aptitude affects positioning through wisdom-based RNG checks.
 
-From [`RaceSolver.ts:838-843`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:861-867`](../uma-skill-tools/RaceSolver.ts):
 
 ```typescript
 // For Front Runners: Speed Up and Overtake states
@@ -381,7 +381,7 @@ Pace Down activates when **both** conditions are met:
 1. **Too close to pacemaker**: Your gap to the pack leader is less than the minimum threshold for your strategy
 2. **No active speed skills**: Target speed or current speed skills will prevent Pace Down from triggering
 
-From [`RaceSolver.ts:900-906`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:924-930`](../uma-skill-tools/RaceSolver.ts):
 ```typescript
 else if (behind < this.posKeepMinThreshold) {
     if (this.activeTargetSpeedSkills.length == 0 && this.activeCurrentSpeedSkills.length == 0) {
@@ -394,14 +394,15 @@ else if (behind < this.posKeepMinThreshold) {
 
 Each strategy has minimum and maximum distance thresholds, scaled by course length:
 
-From [`RaceSolver.ts:76-91`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:76-82`](../uma-skill-tools/RaceSolver.ts):
 ```typescript
-const BaseMinimumThreshold = [0, 0, 3.0, 6.5, 7.5];  // [_, _, Senkou, Sashi, Oikomi]
-const BaseMaximumThreshold = [0, 0, 5.0, 7.0, 8.0];
+namespace PositionKeep {
+	export const BaseMinimumThreshold = Object.freeze([0, 0, 3.0, 6.5, 7.5]);
+	export const BaseMaximumThreshold = Object.freeze([0, 0, 5.0, 7.0, 8.0]);
 
-function courseFactor(distance: number) {
-    return 0.0008 * (distance - 1000) + 1.0;
-}
+	export function courseFactor(distance: number) {
+		return 0.0008 * (distance - 1000) + 1.0;
+	}
 ```
 
 | Strategy | Base Min | Base Max | 1200m Thresholds | 2400m Thresholds | 3200m Thresholds |
@@ -423,13 +424,13 @@ When Pace Down activates, your uma:
 | **Decelerates gently** | -0.5 m/s² | Smoother slowdown than normal deceleration |
 | **Hugs the rail** | Target lane 0.18 | Moves inside to save distance while slowing |
 
-From [`RaceSolver.ts:1005-1006`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:1029-1030`](../uma-skill-tools/RaceSolver.ts):
 ```typescript
 case PositionKeepState.PaceDown:
     this.posKeepSpeedCoef = 0.915;
 ```
 
-From [`HpPolicy.ts:82-84`](../uma-skill-tools/HpPolicy.ts):
+From [`HpPolicy.ts:83-85`](../uma-skill-tools/HpPolicy.ts):
 ```typescript
 if (state.positionKeepState === PositionKeepState.PaceDown) {
     modifier *= 0.6;
@@ -536,7 +537,7 @@ Activation Chance = max(100 - 9000/Wit, 20) %
 
 Notice the **20% floor**—even with terrible wisdom, skills still have at least a 20% chance to activate.
 
-From [`RaceSolver.ts:1335-1341`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:1360-1368`](../uma-skill-tools/RaceSolver.ts):
 ```typescript
 checkWisdomForSkill(skill: PendingSkill): boolean {
     let rngRoll = this.wisdomRollRng.random();
@@ -601,7 +602,7 @@ When rushed, your uma:
 1. **Stack Wisdom** - Every point helps reduce the chance
 2. **Restraint skill (自制心)** - Reduces chance by flat 3%
 
-From [`RaceSolver.ts:576-584`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:596-605`](../uma-skill-tools/RaceSolver.ts):
 ```typescript
 initRushedState() {
     const wisdomStat = this.horse.wisdom;
@@ -644,7 +645,7 @@ Every second while on a downhill slope (slope < -1%), your uma has a wisdom-base
 | 1200   | 48%                               |
 | 1500   | 60%                               |
 
-From [`RaceSolver.ts:1228-1232`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:1253-1258`](../uma-skill-tools/RaceSolver.ts):
 ```typescript
 downhillCheck(roll: number) {
     if (this.slopePer < 0 && roll < this.horse.wisdom * 0.0004) {
@@ -660,7 +661,7 @@ Once active, Downhill Mode has a **20% chance per second** to end. It also ends 
 
 ### Minimum Speed (Guts)
 
-From [`RaceSolver.ts:512`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:533`](../uma-skill-tools/RaceSolver.ts):
 
 ```typescript
 this.minSpeed = 0.85 * baseSpeed(this.course) + Math.sqrt(200.0 * this.horse.guts) * 0.001;
@@ -668,7 +669,7 @@ this.minSpeed = 0.85 * baseSpeed(this.course) + Math.sqrt(200.0 * this.horse.gut
 
 ### Section Modifiers (Wisdom)
 
-From [`RaceSolver.ts:525-529`](../uma-skill-tools/RaceSolver.ts):
+From [`RaceSolver.ts:546-550`](../uma-skill-tools/RaceSolver.ts):
 
 ```typescript
 this.sectionModifier = Array.from({length: 24}, () => {
@@ -698,7 +699,7 @@ In Uma Musume, your Stamina stat converts into **HP** (Hit Points) at the start 
 
 ### Max HP Formula
 
-From [`HpPolicy.ts:56`](../uma-skill-tools/HpPolicy.ts):
+From [`HpPolicy.ts:57`](../uma-skill-tools/HpPolicy.ts):
 
 ```typescript
 this.maxHp = 0.8 * HpStrategyCoefficient[horse.strategy] * horse.stamina + this.distance;
@@ -706,7 +707,7 @@ this.maxHp = 0.8 * HpStrategyCoefficient[horse.strategy] * horse.stamina + this.
 
 ### Strategy HP Coefficients
 
-From [`HpPolicy.ts:26`](../uma-skill-tools/HpPolicy.ts):
+From [`HpPolicy.ts:27`](../uma-skill-tools/HpPolicy.ts):
 
 ```typescript
 const HpStrategyCoefficient = Object.freeze([0, 0.95, 0.89, 1.0, 0.995, 0.86]);
@@ -733,7 +734,7 @@ const HpStrategyCoefficient = Object.freeze([0, 0.95, 0.89, 1.0, 0.995, 0.86]);
 
 ### HP Consumption Formula
 
-From [`HpPolicy.ts:89-93`](../uma-skill-tools/HpPolicy.ts):
+From [`HpPolicy.ts:90-94`](../uma-skill-tools/HpPolicy.ts):
 
 ```typescript
 hpPerSecond(state, velocity) {
@@ -750,7 +751,7 @@ hpPerSecond(state, velocity) {
 
 ### Guts HP Modifier
 
-From [`HpPolicy.ts:58`](../uma-skill-tools/HpPolicy.ts):
+From [`HpPolicy.ts:59`](../uma-skill-tools/HpPolicy.ts):
 
 ```typescript
 this.gutsModifier = 1.0 + 200.0 / Math.sqrt(600.0 * horse.guts);
@@ -768,7 +769,7 @@ this.gutsModifier = 1.0 + 200.0 / Math.sqrt(600.0 * horse.guts);
 
 ### HP Status Modifiers
 
-From [`HpPolicy.ts:63-87`](../uma-skill-tools/HpPolicy.ts):
+From [`HpPolicy.ts:64-88`](../uma-skill-tools/HpPolicy.ts):
 
 | State | Modifier | Effect |
 |-------|----------|--------|

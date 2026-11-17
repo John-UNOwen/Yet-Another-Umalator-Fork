@@ -8,7 +8,9 @@ This document explains the exact math used to calculate the spurt/stamina surviv
 Survival Rate = (total_simulations - hp_died_count) / total_simulations × 100%
 ```
 
-**Source:** [umalator/compare.ts:516](../umalator/compare.ts#L516)
+**Source:** the classic compare app (`umalator/compare.ts`), deleted with the classic engine. The
+classic solver computed this rate, and the shipped engine does not report it, so the app's HP
+Survival cells show `—`.
 
 A horse "survives" if it doesn't run out of HP (stamina) before the race ends. The survival rate represents the percentage of simulation runs where the horse maintained positive HP throughout the entire race.
 
@@ -16,7 +18,7 @@ A horse "survives" if it doesn't run out of HP (stamina) before the race ends. T
 
 ### Max HP Calculation
 
-**Source:** [uma-skill-tools/HpPolicy.ts:56](../uma-skill-tools/HpPolicy.ts#L56)
+**Source:** [uma-skill-tools/HpPolicy.ts:57](../uma-skill-tools/HpPolicy.ts#L57)
 
 ```
 maxHp = 0.8 × HpStrategyCoefficient[strategy] × stamina + distance
@@ -35,7 +37,7 @@ maxHp = 0.8 × HpStrategyCoefficient[strategy] × stamina + distance
 
 ### HP Consumption Per Second
 
-**Source:** [uma-skill-tools/HpPolicy.ts:89-92](../uma-skill-tools/HpPolicy.ts#L89-L92)
+**Source:** [uma-skill-tools/HpPolicy.ts:90-93](../uma-skill-tools/HpPolicy.ts#L90-L93)
 
 ```
 hpPerSecond = 20 × (velocity - baseSpeed + 12)² / 144 × statusModifier × groundModifier × gutsModifier
@@ -49,17 +51,18 @@ baseSpeed = 20 - (distance - 2000) / 1000
 
 #### Guts Modifier
 
-**Source:** [uma-skill-tools/HpPolicy.ts:58](../uma-skill-tools/HpPolicy.ts#L58)
+**Source:** [uma-skill-tools/HpPolicy.ts:59](../uma-skill-tools/HpPolicy.ts#L59)
 
 ```
 gutsModifier = 1 + 200 / √(600 × guts)
 ```
 
-**Note:** Only applies during phase ≥ 2 (middle and final phases of the race).
+**Note:** Only applies during phase ≥ 2, the middle and final phases of the race
+([`HpPolicy.ts:91`](../uma-skill-tools/HpPolicy.ts#L91)).
 
 #### Ground Modifier
 
-**Source:** [uma-skill-tools/HpPolicy.ts:27-31](../uma-skill-tools/HpPolicy.ts#L27-L31)
+**Source:** [uma-skill-tools/HpPolicy.ts:28-31](../uma-skill-tools/HpPolicy.ts#L28-L31)
 
 | Surface | Good (Firm) | Yielding | Soft | Heavy |
 |---------|-------------|----------|------|-------|
@@ -68,7 +71,7 @@ gutsModifier = 1 + 200 / √(600 × guts)
 
 #### Status Modifier
 
-**Source:** [uma-skill-tools/HpPolicy.ts:63-86](../uma-skill-tools/HpPolicy.ts#L63-L86)
+**Source:** [uma-skill-tools/HpPolicy.ts:64-88](../uma-skill-tools/HpPolicy.ts#L64-L88)
 
 The status modifier is multiplicative and depends on race conditions:
 
@@ -84,7 +87,7 @@ The status modifier is multiplicative and depends on race conditions:
 
 ### HP Tick (Per Frame)
 
-**Source:** [uma-skill-tools/HpPolicy.ts:95-98](../uma-skill-tools/HpPolicy.ts#L95-L98)
+**Source:** [uma-skill-tools/HpPolicy.ts:96-99](../uma-skill-tools/HpPolicy.ts#L96-L99)
 
 ```
 hp -= hpPerSecond × dt
@@ -94,7 +97,7 @@ Where `dt` is the time delta per simulation frame.
 
 ### HP Recovery
 
-**Source:** [uma-skill-tools/HpPolicy.ts:109-110](../uma-skill-tools/HpPolicy.ts#L109-L110)
+**Source:** [uma-skill-tools/HpPolicy.ts:110-112](../uma-skill-tools/HpPolicy.ts#L110-L112)
 
 Skills can recover HP using a modifier:
 
@@ -104,7 +107,7 @@ hp = min(maxHp, hp + maxHp × modifier)
 
 ## HP Died State
 
-**Source:** [uma-skill-tools/RaceSolver.ts:679-681](../uma-skill-tools/RaceSolver.ts#L679-L681)
+**Source:** [uma-skill-tools/RaceSolver.ts:727-729](../uma-skill-tools/RaceSolver.ts#L727-L729)
 
 When `hp <= 0`:
 - `hpDied` flag is set to `true`
@@ -112,7 +115,8 @@ When `hp <= 0`:
 - Target speed drops to minimum speed
 - Acceleration becomes -1.2 m/s² (deceleration)
 
-**Source:** [uma-skill-tools/RaceSolver.ts:1112-1113](../uma-skill-tools/RaceSolver.ts#L1112-L1113), [RaceSolver.ts:1145-1147](../uma-skill-tools/RaceSolver.ts#L1145-L1147)
+**Source:** [RaceSolver.ts:1204-1205](../uma-skill-tools/RaceSolver.ts#L1204-L1205) for the target
+speed, [RaceSolver.ts:1237-1238](../uma-skill-tools/RaceSolver.ts#L1237-L1238) for the acceleration.
 
 ## Summary
 
