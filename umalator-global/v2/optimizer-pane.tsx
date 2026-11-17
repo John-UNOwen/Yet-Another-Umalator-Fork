@@ -629,7 +629,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 						onClick={() => setChosen((prev) => new Set([...prev, ...filtered]))}>Select all</button>
 					<button type="button" style={inputStyle} disabled={running} onClick={() => setChosen(new Set())}>Clear</button>
 					<span style={{ fontSize: 12, opacity: 0.8 }}>
-						{chosen.size} chosen · Σcost {chosenCost} SP
+						{chosen.size} chosen · {chosenCost} SP to buy every one, budget {budget} SP
 					</span>
 				</div>
 				{career && (
