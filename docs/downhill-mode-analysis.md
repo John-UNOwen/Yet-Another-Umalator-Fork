@@ -2,9 +2,13 @@
 
 Analysis of downhill mode activation patterns using empirical simulation data.
 
+The measurements and the stamina arithmetic below come from the classic solver and the HP
+calculator app, both removed from this fork. The code they describe is still in
+`uma-skill-tools/`, but the app itself simulates with GlobalSim, which models HP on its own.
+
 ## Summary
 
-**Conclusion:** Downhill mode provides significant HP savings but has high variance. The HP calculator should use conservative (no downhill) estimates for minimum stamina recommendations. Downhill mode should be treated as a bonus, not a requirement.
+**Conclusion:** Downhill mode provides significant HP savings but has high variance. Use conservative (no downhill) estimates for minimum stamina recommendations. Downhill mode should be treated as a bonus, not a requirement.
 
 ## Mechanics
 
@@ -101,27 +105,6 @@ Test with 1200 stamina on Hanshin 3200m (wisdom 1000):
 - With 1,200 stamina → 43 HP short
 - Simulator shows **96% full spurt rate**
 - The 96% (not 100%) confirms downhill mode helps most runs but not all
-
-## CLI Tool
-
-The `--downhill` flag was added to `tools/compare-cli.ts` to analyze downhill mode activations:
-
-```bash
-npx ts-node --transpile-only tools/compare-cli.ts \
-  horse1.json horse2.json \
-  -c 10914 --downhill -N 500
-
-# Output includes:
-# --- Downhill Mode (Median Run) ---
-# Course distance: 3200m
-# Downhill sections: 870-1270m (400m), 2400-2995m (595m)
-# Total downhill distance: 995m (31.1% of course)
-#
-# Uma 1 downhill mode:
-#   Activations: 6
-#   Regions: 891-1155m (264m), 1176-1239m (63m), ...
-#   Total active: 698m (70.1% of downhill)
-```
 
 ## References
 
