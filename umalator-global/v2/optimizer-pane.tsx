@@ -640,10 +640,11 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'baseline' }}>
 						<strong>{STAGE_LABEL[progress.stage]}</strong>
 						<span>{progress.racesRun.toLocaleString()} races{(progress.racesPlanned ? ` / ${progress.racesPlanned.toLocaleString()} planned` : '')}</span>
-						<span>{(progress.elapsedMs / 1000).toFixed(1)} s elapsed</span>
-						{progress.etaMs != null && <span>≈ {(progress.etaMs / 1000).toFixed(0)} s left</span>}
+						<span>{fmtDuration(progress.elapsedMs)} elapsed</span>
+						{progress.etaMs != null && <span>≈ {fmtDuration(progress.etaMs)} left</span>}
 						{progress.note && <span style={{ opacity: 0.7 }}>{progress.note}</span>}
 					</div>
+					<ProgressBar progress={progress} untilStopped={preset === 'untilStopped'} />
 					{progress.best && (
 						<div style={{ marginTop: 4, opacity: 0.85 }}>
 							provisional best:{' '}
@@ -665,6 +666,49 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					onOpenInCompare={props.onOpenInCompare}
 				/>
 			)}
+		</div>
+	);
+}
+
+/** 75 s → "1 min 15 s", 3,700 s → "1 h 1 min". */
+function fmtDuration(ms: number): string {
+	const sec = Math.max(0, Math.round(ms / 1000));
+	if (sec < 60) return `${sec} s`;
+	const min = Math.floor(sec / 60);
+	if (min < 60) return `${min} min ${sec % 60} s`;
+	return `${Math.floor(min / 60)} h ${min % 60} min`;
+}
+
+/** The order the pipeline runs its stages in, for the "step k of n" label. */
+const STAGE_ORDER: OptimizerProgress['stage'][] = ['noise', 'screen', 'knapsack', 'incontext', 'local', 'verify'];
+
+/**
+ * The run as a bar: races run against the races planned. Until stopped has no
+ * plan, so its bar only names the step. The search jumps back and forth
+ * between the in-context and local steps for every starting build, so the
+ * step label shows where it is now, not a count of what is done.
+ */
+function ProgressBar({ progress, untilStopped }: { progress: OptimizerProgress; untilStopped: boolean }) {
+	const step = STAGE_ORDER.indexOf(progress.stage);
+	const done = progress.stage === 'done';
+	const frac = done ? 1
+		: progress.racesPlanned > 0 ? Math.min(0.99, progress.racesRun / progress.racesPlanned) : null;
+	return (
+		<div class="v2-optimizer-progressbar" style={{ marginTop: 6 }}>
+			<div style={{ height: 6, borderRadius: 3, background: 'rgba(128,128,128,0.25)', overflow: 'hidden' }}
+				role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={frac == null ? undefined : Math.round(frac * 100)}>
+				<div style={{
+					height: '100%', borderRadius: 3, background: 'currentColor', opacity: 0.6,
+					width: frac == null ? '100%' : `${(frac * 100).toFixed(1)}%`,
+					...(frac == null ? { opacity: 0.2 } : {}),
+					transition: 'width 0.3s ease',
+				}} />
+			</div>
+			<div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
+				{step >= 0 ? `step ${step + 1} of ${STAGE_ORDER.length}` : STAGE_LABEL[progress.stage]}
+				{frac != null && !done ? ` · ${Math.round(frac * 100)}% of planned races` : ''}
+				{frac == null && untilStopped ? ' · runs until you press Stop' : ''}
+			</div>
 		</div>
 	);
 }
