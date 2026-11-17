@@ -1,8 +1,8 @@
 # Stats Guide
 
-A comprehensive guide to understanding what each stat does in Uma Musume races.
+What each stat does in a Uma Musume race, and how to build for a race distance.
 
-## The Five Main Stats
+## The five main stats
 
 ### Speed
 
@@ -10,7 +10,6 @@ A comprehensive guide to understanding what each stat does in Uma Musume races.
 
 - Higher speed = faster top speed
 - Affects target speed in all phases
-- Most important stat for winning races
 - S-rank distance aptitude gives +5% effective speed
 
 **Priority:** Very High for all builds
@@ -63,7 +62,7 @@ A comprehensive guide to understanding what each stat does in Uma Musume races.
 - Higher wisdom = better chance of activating skills at optimal times
 - Affects position keeping behavior
 - Influences racing line choices
-- Impacts "subpar" skill activation acceptance
+- Raises the chance of committing to a faster spurt plan instead of settling for a slower one: 15% plus 0.05% per wisdom ([`hp_policy.rs:215`](../vendor/GlobalSim/src/hp_policy.rs#L215))
 
 **Priority:** Medium, more important for skill-heavy builds
 
@@ -73,7 +72,7 @@ A comprehensive guide to understanding what each stat does in Uma Musume races.
 
 Aptitudes multiply your effective stats for specific conditions.
 
-### Distance Aptitude
+### Distance aptitude
 
 Affects performance based on race length:
 - **S:** +5% to effective stats
@@ -81,24 +80,24 @@ Affects performance based on race length:
 - **B:** -10% penalty
 - **C and below:** Increasingly severe penalties
 
-### Surface Aptitude (Turf/Dirt)
+### Surface aptitude (turf/dirt)
 
-Same scaling as distance - affects performance on turf vs dirt tracks.
+Same scaling as distance: affects performance on turf vs dirt tracks.
 
-### Running Style Aptitude
+### Running style aptitude
 
 Affects how well your horse performs with a given strategy:
 - **S:** +10% effectiveness
 - **A:** Baseline
 - **B:** -15% penalty
 
-**Tip:** Always try to race with S or A aptitude when possible!
+Race with S or A aptitude where you can.
 
 ---
 
-## Mood Effects
+## Mood effects
 
-Your horse's mood multiplies ALL stats:
+Your horse's mood multiplies all stats:
 
 | Mood | Effect |
 |------|--------|
@@ -106,13 +105,11 @@ Your horse's mood multiplies ALL stats:
 | Good | +2% to all stats |
 | Normal | No change |
 | Bad | -2% to all stats |
-| Terrible | -4% to all stats |
-
-This might seem small, but 4% on high stats is significant!
+| Awful | -4% to all stats |
 
 ---
 
-## Stat Soft Caps
+## Stat soft caps
 
 Stats have diminishing returns above 1200:
 - Stats above 1200 are worth less per point
@@ -121,7 +118,7 @@ Stats have diminishing returns above 1200:
 
 ---
 
-## Building for Different Distances
+## Building for different distances
 
 ### Sprint (1000-1400m)
 - **Focus:** Speed, Power
@@ -131,17 +128,17 @@ Stats have diminishing returns above 1200:
 - **Focus:** Speed, Power, some Stamina
 - **Balanced approach**
 
-### Mid-Distance (1900-2400m)
+### Mid-distance (1900-2400m)
 - **Focus:** Speed, Stamina, Guts
 - **Power still important**
 
-### Long Distance (2500m+)
+### Long distance (2500m+)
 - **Focus:** Stamina, Guts, Speed
 - **Survival is key**
 
 ---
 
-## Quick Reference
+## Quick reference
 
 | Stat | Primary Effect | Best For |
 |------|---------------|----------|
