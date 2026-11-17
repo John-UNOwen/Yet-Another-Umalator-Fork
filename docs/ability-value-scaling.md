@@ -2,6 +2,11 @@
 
 Each skill effect in `skill_data` has an `ability_value_usage` column that controls how the raw modifier value is scaled at runtime. Most skills use Direct (1), meaning the raw value is applied as-is.
 
+Counts below were taken from `umalator-global/skill_data.json` on 2026-11-16, with the command
+under "How to re-check the counts". The solver described here is the classic one in
+`uma-skill-tools/RaceSolver.ts`, used by that package's CLI tools. The app simulates with
+GlobalSim, which has its own skill handling.
+
 ## Scaling Types
 
 | ID | Name | Description |
@@ -72,8 +77,9 @@ Where `[alt]` is the alternative index (1 or 2) and `[effect]` is the effect ind
 > late-race, then increase velocity and acceleration based on how many passive skills the
 > skill user has in effect."* — those "passive skills" are the greens.
 >
-> **This is the only skill in the game that uses usage 14.** Of every effect in the 2026-07
-> Global data, 824 are Direct (1) and hers are the sole two `14`s.
+> **This is the only skill in the shipped data that uses usage 14.** Of the 2362 effects in
+> `umalator-global/skill_data.json`, 946 carry `scaling: 1`, 1384 carry no `scaling` key at all
+> (the builder treats a missing value as Direct), and hers are the only two `14`s.
 
 - Effect 1: TargetSpeed +2500, Direct (1) — flat +0.25 m/s regardless of green count
 - Effect 2: TargetSpeed +500, Activated Passive Skills (14) — scales with green skill count
@@ -95,9 +101,18 @@ In-game effect at each green skill breakpoint:
 
 ## Simulator Note
 
-*Verified against the code and the 2026-07 Global data. The previous version of this section
-was wrong on every point — it named a field that doesn't exist (`valueUsage`), said nothing
-read it, and undercounted the affected skills. Re-verify before trusting; don't assume.*
+*Verified against `umalator-global/skill_data.json` and `uma-skill-tools/RaceSolver.ts` on
+2026-11-16. Re-verify before trusting; don't assume.*
+
+### How to re-check the counts
+
+From the repo root:
+
+```bash
+node -e "const d=require('./umalator-global/skill_data.json');let e=0,n=0,s=new Set();for(const k in d)for(const a of d[k].alternatives||[])for(const f of a.effects||[]){e++;if(f.scaling===undefined)n++;else if(f.scaling!==1)s.add(k)}console.log(JSON.stringify({effects:e,no_scaling:n,non_direct_skills:s.size}))"
+```
+
+On the current data it prints `{"effects":2362,"no_scaling":1384,"non_direct_skills":21}`.
 
 **The data path is live.** In `umalator-global/skill_data.json` the field is **`scaling`** (not
 `valueUsage` — no effect carries that name). `RaceSolverBuilder.ts:277` reads it:
@@ -118,19 +133,20 @@ and is applied at **full value**, i.e. silently as if Direct.
 | 3, 4, 5, 6, 7 (Aoharu team stats) | ✅ | ❌ full value | `210011/12` `210021/22` `210031/32` `210041/42` `210051/52` — Burning/Ignited Spirit SPD·STA·PWR·GUTS·WIT |
 | 8 (Random Roll) | ✅ | ✅ | `202031` Nothing Ventured, `202032` Risky Business |
 | 10 (Race Wins, Climax) | ✅ | ❌ full value | `210061` Radiant Star, `210062` Glittering Star |
-| **14 (green count)** | ❌ **dropped by the generator** | ❌ full value | `100981` Luck Runs My Way |
+| 11 (Final Corner Place Change) | ✅ | ❌ full value | `110341` Firelight, `910341` Firelight |
+| 12 (Fan Count) | ✅ | ❌ full value | `210071` I Wanna Win with You, `210072` On the Way to Our Dream |
+| 13 (Maximum Raw Stats) | ✅ | ❌ full value | `210081` Past My Limits, `210082` Eyes on the Goal |
+| **14 (green count)** | ✅ | ❌ full value | `100981` Luck Runs My Way |
 
-That's **14 skills** carrying non-Direct scaling, plus `100981` which *should* and doesn't.
+That's **21 skills** carrying a non-Direct `scaling`, and `100981` is one of them.
 
-**The `100981` gap is the worst of these**, because it's wrong in both directions rather than
-merely conservative:
+**The `100981` gap is in the solver, not the data.** `skill_data.json` records
+`scaling: 14` for her second and third effects, `RaceSolverBuilder.ts:277` passes it through as
+`valueScaling`, and `RaceSolver.ts:1438` has no branch for 14, so both effects apply as a flat
+**+500 / +500**:
 
-- The generator never records `scaling: 14` — all three of her effects land in
-  `skill_data.json` with no `scaling` at all, so `ef.scaling` is `undefined`, `valueScaling`
-  is `undefined`, and the solver's `8|9` branch never fires.
-- So both `usage=14` effects apply as a flat **+500 / +500**.
-- With ≤2 greens the real multiplier is **0.0x** — we grant a bonus that shouldn't exist.
-- With 6+ greens it's **3.0x** — we apply a third of what we should.
+- With ≤2 greens the real multiplier is **0.0x**, so we grant a bonus that shouldn't exist.
+- With 6+ greens it's **3.0x**, so we apply a third of what we should.
 
 Note also that `RaceSolver.ts` deliberately **imports no skill data** (`PendingSkill` carries
 `skillId`/`rarity`/`effects`, no tags), so implementing 14 cannot be done by looking up
