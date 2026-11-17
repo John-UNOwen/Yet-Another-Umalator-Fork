@@ -22,11 +22,13 @@ This document summarizes research into how various stat mechanics affect race si
 
 ### What Are Course Stat Thresholds?
 
-Some race courses reward umas who have high values in specific stats. If you've ever wondered why certain courses seem to favor high-stamina builds or why some players obsess over hitting "stat breakpoints"—this is why.
+Some race courses reward umas who have high values in specific stats. That is why certain courses
+favor high-stamina builds and why players chase stat breakpoints.
 
 **The idea:** Each course can have 1-2 "threshold stats." If your uma's stat exceeds certain thresholds (300, 600, 900), they get a small speed bonus during the race. This bonus is applied to your speed stat before it's used in velocity calculations.
 
-**Why it matters:** Crossing a threshold gives your uma a slight edge. However, the actual impact is small (~0.2 bashin per threshold crossed)—so don't sacrifice aptitudes or skills just to hit a threshold.
+Crossing a threshold gives your uma a slight edge. The actual impact is small (~0.2 bashin per
+threshold crossed), so don't sacrifice aptitudes or skills just to hit a threshold.
 
 ### How It Works
 
@@ -151,10 +153,10 @@ With +2 mood (1.04 multiplier), the raw stat breakpoints shift:
 ### Example
 
 With +2 mood, testing 600 vs 601 stamina:
-- 600 × 1.04 = 624 → floor(624 / 300.01) = **2** (tier 3)
-- 601 × 1.04 = 625.04 → floor(625.04 / 300.01) = **2** (tier 3)
+- 600 × 1.04 = 624, and floor(624 / 300.01) = **2** (tier 3)
+- 601 × 1.04 = 625.04, and floor(625.04 / 300.01) = **2** (tier 3)
 
-**Both are in the same tier!** No bashin difference observed.
+Both are in the same tier, and no bashin difference was observed.
 
 To see a tier difference at +2 mood, compare **576 vs 577** stamina instead.
 
@@ -164,13 +166,16 @@ To see a tier difference at +2 mood, compare **576 vs 577** stamina instead.
 
 ### What Are Aptitude Modifiers?
 
-Aptitudes (the letter grades like S, A, B, C) aren't just cosmetic—they directly multiply your uma's performance in races. Each aptitude type affects a different aspect of racing:
+Aptitudes (the letter grades like S, A, B, C) are not cosmetic: they multiply your uma's
+performance in races. Each aptitude type affects a different aspect of racing:
 
 - **Distance Aptitude**: How fast you go in the final phase (speed contribution) and how quickly you accelerate
 - **Surface Aptitude**: How quickly you accelerate on turf vs dirt
 - **Strategy Aptitude**: How effective your Wit stat is (affects skill activation, position keeping, rushed chance, and more)
 
-**Why this matters:** Aptitudes are among the **most impactful** factors in race performance. Dropping from A to B distance aptitude costs you ~3 bashin—that's 15× more impactful than crossing a stat threshold. Always prioritize matching aptitudes to the race conditions.
+Aptitudes are among the **most impactful** factors in race performance. Dropping from A to B
+distance aptitude costs you ~3 bashin, which is 15× more impactful than crossing a stat threshold.
+Prioritize matching aptitudes to the race conditions.
 
 ### Aptitude Values
 
@@ -261,17 +266,20 @@ For a 1600m race (~22 seconds in final leg):
 
 ### What is Position Keeping?
 
-Position keeping is the AI behavior that controls how your uma maintains their position relative to other horses during sections 1-10 (roughly the first 40% of the race). It simulates realistic race pacing—jockeys don't sprint from the gate, they settle into positions based on their strategy.
+Position keeping is the AI behavior that controls how your uma maintains their position relative to
+other horses during sections 1-10 (roughly the first 40% of the race). It models race pacing:
+jockeys don't sprint from the gate, they settle into positions based on their strategy.
 
-**The core mechanic:** Your uma has a target position based on their running style:
+Your uma has a target position based on their running style:
 - **Front Runners** try to take the lead and stay ahead
 - **Non-front runners** (Pace Chaser, Late Surger, End Closer) maintain a specific distance behind the pack leader (the "pacemaker")
 
 When your uma drifts too far from their expected position, position keeping kicks in:
-- **Too far behind?** → Pace Up mode (speed boost to catch up)
-- **Too far ahead?** → Pace Down mode (slow down to fall back)
+- Too far behind: Pace Up mode (a speed boost to catch up)
+- Too far ahead: Pace Down mode (slowing down to fall back)
 
-**Why it matters:** Position keeping directly affects your stamina consumption and race positioning. Understanding it helps you:
+Position keeping directly affects your stamina consumption and race positioning. Understanding it
+helps you:
 - Predict when your uma will speed up or slow down
 - Understand why skills that affect speed interact with position keeping
 - Plan stamina budgets (Pace Down saves HP, Pace Up/Speed Up costs more)
@@ -318,7 +326,9 @@ Distance and surface aptitudes don't directly affect position keep checks, but t
 
 #### What is Pace Up?
 
-Pace Up is the opposite of Pace Down—it activates when a non-front runner (Pace Chaser, Late Surger, End Closer) falls **too far behind** the pacemaker. Your uma speeds up to catch back up to where they should be.
+Pace Up is the opposite of Pace Down: it activates when a non-front runner (Pace Chaser, Late
+Surger, End Closer) falls **too far behind** the pacemaker. Your uma speeds up to catch back up to
+where they should be.
 
 **The core idea:** If the gap to the pacemaker exceeds the maximum threshold for your strategy, your uma has a chance to enter Pace Up mode and close the distance.
 
@@ -357,7 +367,9 @@ Without Pace Up, an uma who falls behind would never recover. Pace Up ensures:
 
 Pace Down is a **position keeping** behavior that affects non-front runners (Pace Chaser, Late Surger, End Closer) during the early and middle portions of a race (sections 1-10 out of 24).
 
-**The core idea:** Each running strategy has an "expected" position relative to the pack leader (the "pacemaker"). If your uma gets *too close* to the pacemaker—closer than their strategy should allow—they'll slow down to fall back into their expected position.
+Each running strategy has an "expected" position relative to the pack leader (the "pacemaker"). If
+your uma gets *too close* to the pacemaker, closer than their strategy should allow, they'll slow
+down to fall back into their expected position.
 
 Think of it this way:
 - An **End Closer** (Oikomi) should be hanging back ~7.5+ meters behind the leader
@@ -368,7 +380,9 @@ If your uma surges ahead of these thresholds (maybe from a fast start or being p
 
 #### Why Does This Happen?
 
-Position keeping simulates realistic race pacing. In real horse racing, jockeys don't sprint from the gate—they settle into positions and conserve energy for the final push. Pace Down enforces this:
+Position keeping simulates realistic race pacing. In real horse racing, jockeys don't sprint from
+the gate: they settle into positions and conserve energy for the final push. Pace Down enforces
+this:
 
 1. **Prevents early burnout**: Non-front runners aren't meant to lead early
 2. **Conserves stamina**: The 40% HP reduction during Pace Down is actually beneficial
@@ -420,7 +434,7 @@ When Pace Down activates, your uma:
 | Effect | Value | What It Means |
 |--------|-------|---------------|
 | **Slows down** | 0.915x target speed | 8.5% speed reduction to fall back into position |
-| **Saves stamina** | 0.6x HP consumption | 40% less stamina drain—this is actually good! |
+| **Saves stamina** | 0.6x HP consumption | 40% less stamina drain |
 | **Decelerates gently** | -0.5 m/s² | Smoother slowdown than normal deceleration |
 | **Hugs the rail** | Target lane 0.18 | Moves inside to save distance while slowing |
 
@@ -456,11 +470,11 @@ else if (behind > this.posKeepExitDistance ||
 }
 ```
 
-*Note: Debuffs do not exit Pace Down mode—only speed buffs affect it.*
+*Debuffs do not exit Pace Down mode. Only speed buffs affect it.*
 
 #### Is Pace Down Good or Bad?
 
-**It depends!** Pace Down is often *beneficial* because of the 40% stamina savings:
+Pace Down is often *beneficial* because of the 40% stamina savings:
 
 - **Good scenario**: Your End Closer gets pushed forward early, enters Pace Down, conserves stamina, then has more HP for the final spurt
 - **Bad scenario**: Pace Down triggers right when you wanted to maintain position, and you lose ground you can't recover
@@ -468,15 +482,16 @@ else if (behind > this.posKeepExitDistance ||
 #### Strategic Implications
 
 1. **Stamina conservation**: The 0.6x HP modifier makes Pace Down valuable for preserving stamina for the spurt
-2. **Skill timing matters**: Speed skills prevent/exit Pace Down—a speed skill triggering early might cost you stamina savings
+2. **Skill timing matters**: Speed skills prevent or exit Pace Down, so a speed skill triggering early might cost you the stamina savings
 3. **Strategy choice**: End Closers and Late Surgers have larger thresholds, so they're more likely to hit Pace Down if they start fast
 4. **Course length**: Longer courses have larger thresholds (except Pace Chaser min), giving more room before Pace Down triggers
 
-*Additional reference: [Uma Musume Race Mechanics](https://docs.google.com/document/d/15VzW9W2tXBBTibBRbZ8IVpW6HaMX8H0RP03kq6Az7Xg) by KuromiAK (JP server—some mechanics may differ)*
+*Additional reference: [Uma Musume Race Mechanics](https://docs.google.com/document/d/15VzW9W2tXBBTibBRbZ8IVpW6HaMX8H0RP03kq6Az7Xg) by KuromiAK (JP server, some mechanics may differ)*
 
 ### Front Runner Position Keep Modes
 
-Front Runners have their own position keeping behaviors—instead of maintaining distance *behind* a pacemaker, they try to *take and hold the lead*.
+Front Runners have their own position keeping behaviors: instead of maintaining distance *behind* a
+pacemaker, they try to *take and hold the lead*.
 
 #### Speed Up Mode
 
@@ -497,13 +512,14 @@ Front Runners have their own position keeping behaviors—instead of maintaining
 
 **What it does:** When a Front Runner falls behind another Front Runner, they speed up to reclaim the lead.
 
-**Why it exists:** Front Runners are built to lead—if they're not in front among their own strategy, they need to fix that.
+Front Runners are built to lead: if they're not in front among their own strategy, they need to fix
+that.
 
 **Trigger conditions:**
 1. Uma is not in 1st place among Front Runners
 2. Must pass a wisdom check (probability = 20% × log₁₀(Wit × 0.1))
 
-**Effect:** Target speed × 1.05 (5% speed boost—faster than Speed Up!)
+**Effect:** Target speed × 1.05 (a 5% speed boost, more than Speed Up gives)
 
 **Exit condition:** Uma is 10 meters ahead of other Front Runners
 
@@ -526,7 +542,8 @@ Front Runners have their own position keeping behaviors—instead of maintaining
 
 #### What is the Wisdom Check?
 
-Most skills don't activate 100% of the time—they require passing a **wisdom check** before the race even begins. If your uma fails this check, the skill simply won't activate at all during that race.
+Most skills don't activate 100% of the time: they require passing a **wisdom check** before the
+race even begins. If your uma fails this check, the skill won't activate at all during that race.
 
 **Why it matters:** You can have the perfect skill loadout, but low wisdom means some skills might not fire when you need them. This is why Wit matters even for builds that don't rely on position keeping or downhill bonuses.
 
@@ -535,7 +552,8 @@ Most skills don't activate 100% of the time—they require passing a **wisdom ch
 Activation Chance = max(100 - 9000/Wit, 20) %
 ```
 
-Notice the **20% floor**—even with terrible wisdom, skills still have at least a 20% chance to activate.
+The **20% floor** matters: even with terrible wisdom, skills still have at least a 20% chance to
+activate.
 
 From [`RaceSolver.ts:1360-1368`](../uma-skill-tools/RaceSolver.ts):
 ```typescript
@@ -562,7 +580,7 @@ checkWisdomForSkill(skill: PendingSkill): boolean {
 Overexertion (掛かり/Kakari in Japanese, "Rushed" in code) is when your uma loses control and runs faster than intended, burning through stamina at an alarming rate. It's like a horse that gets too excited and ignores the jockey's commands.
 
 **Why it matters:** Overexertion is **devastating** to stamina:
-- **HP consumption × 1.6** (60% more stamina drain!)
+- **HP consumption × 1.6** (60% more stamina drain)
 - Your uma may exhaust themselves before the final spurt
 - Combined with other stamina-draining states (like Lead Competition), it can completely ruin a race
 
@@ -582,7 +600,8 @@ RushedChance = (6.5 / log₁₀(Wit × 0.1 + 1))² %
 | 900    | 11.0%               |
 | 1200   | 9.7%                |
 
-**Key insight:** Higher wisdom = lower chance of losing control. This is one of the main reasons Wit is valuable—it keeps your uma disciplined.
+Higher wisdom means a lower chance of losing control. This is one of the main reasons Wit is
+valuable: it keeps your uma disciplined.
 
 #### What Happens During Overexertion?
 
@@ -592,10 +611,10 @@ When rushed, your uma:
 3. **Auto-succeeds all position keep wisdom checks** (forces Speed Up/Overtake/Pace Up)
 
 **Strategy behavior during Overexertion:**
-- Front Runners → Enter Speed Up mode
-- Pace Chasers → Act like Front Runners
-- Late Surgers → 75% chance to act like Front Runners, 25% like Pace Chasers
-- End Closers → 70% Front Runner, 20% Pace Chaser, 10% Late Surger
+- Front Runners: Enter Speed Up mode
+- Pace Chasers: Act like Front Runners
+- Late Surgers: 75% chance to act like Front Runners, 25% like Pace Chasers
+- End Closers: 70% Front Runner, 20% Pace Chaser, 10% Late Surger
 
 #### How to Reduce Overexertion
 
@@ -627,10 +646,11 @@ Overexertion doesn't last forever:
 Downhill Mode is a **wisdom-based bonus** that can activate when your uma is running downhill. A smart horse recognizes the slope and uses gravity to their advantage, gaining speed while conserving stamina.
 
 **Why it matters:** Downhill Mode is one of the best things that can happen during a race:
-- **+0.3 m/s target speed bonus** (free speed!)
-- **HP consumption × 0.4** (60% stamina savings!)
+- **+0.3 m/s target speed bonus**
+- **HP consumption × 0.4** (60% stamina savings)
 
-This is why Wit is valuable on courses with significant downhill sections—it gives you a chance to get this powerful bonus.
+This is why Wit is valuable on courses with significant downhill sections: it gives you a chance at
+this bonus.
 
 #### How It Triggers
 
@@ -687,7 +707,8 @@ Adds per-section speed variance based on wisdom.
 
 ### Understanding Stamina and HP
 
-In Uma Musume, your Stamina stat converts into **HP** (Hit Points) at the start of each race. HP is the fuel that powers your uma through the race—run out, and you slow to a crawl.
+In Uma Musume, your Stamina stat converts into **HP** (Hit Points) at the start of each race. HP is
+the fuel that powers your uma through the race. Run out, and you slow to a crawl.
 
 **Why this matters:**
 - Running too fast burns HP faster (velocity² relationship)
@@ -746,7 +767,7 @@ hpPerSecond(state, velocity) {
 
 **Key variables:**
 - `baseSpeed` = 20.0 - (distance - 2000) / 1000
-- `gutsModifier` = 1.0 + 200.0 / sqrt(600.0 × guts) — only in phase 2+
+- `gutsModifier` = 1.0 + 200.0 / sqrt(600.0 × guts), only in phase 2+
 - `groundModifier` = 1.0 (Firm), 1.0 (Good), 1.02 (Soft/Heavy on turf)
 
 ### Guts HP Modifier
@@ -788,8 +809,8 @@ From [`HpPolicy.ts:64-88`](../uma-skill-tools/HpPolicy.ts):
 
 **Why it matters:** Lead Competition is a **stamina trap** for Front Runners:
 - HP consumption × 1.4 (40% extra drain)
-- Combined with Overexertion → × 3.6 (260% extra drain!)
-- For the Runaway style → × 3.5 (250% extra drain)
+- Combined with Overexertion: × 3.6 (260% extra drain)
+- For the Runaway style: × 3.5 (250% extra drain)
 
 **Trigger conditions (Front Runners):**
 - Distance gap < 3.75m
@@ -804,7 +825,8 @@ From [`HpPolicy.ts:64-88`](../uma-skill-tools/HpPolicy.ts):
 
 #### Dueling (Compete Fight)
 
-**What it is:** When two umas are neck-and-neck on the final straight, they push each other harder—both gaining speed but burning more stamina.
+When two umas are neck-and-neck on the final straight, they push each other harder, both gaining
+speed but burning more stamina.
 
 **Why it matters:** Dueling can make or break a close finish. Both umas get a Guts-based speed boost, making high Guts valuable in competitive races.
 
@@ -820,8 +842,8 @@ From [`HpPolicy.ts:64-88`](../uma-skill-tools/HpPolicy.ts):
 - Acceleration boost: `+(160 × Guts)^0.59 × 0.0001 m/s²`
 
 **Exit conditions:**
-- HP drops below 15% → Can't start dueling
-- HP drops below 5% → Dueling ends
+- HP below 15%: can't start dueling
+- HP below 5%: dueling ends
 
 *Note: Dueling is not simulated in the umalator (it only simulates one horse), but understanding it helps explain why Guts matters in competitive races.*
 
@@ -855,10 +877,11 @@ if (this.hp >= hpNeeded) {
 ```
 
 **Impact on aptitude testing:**
-- **Low stamina** → Subpar spurt → Both horses run slower → Smaller S vs A gap
-- **High stamina** → Full spurt → Max speed achieved → Full aptitude difference realized
+- **Low stamina:** a subpar spurt, both horses run slower, so the S vs A gap shrinks
+- **High stamina:** a full spurt at max speed, so the full aptitude difference shows
 
-This is why Distance S vs A bashin difference **increases with stamina** — you need enough HP to actually utilize the higher speed from better aptitude.
+This is why the Distance S vs A bashin difference **increases with stamina**: you need enough HP to
+use the higher speed from better aptitude.
 
 ### Estimating Stamina Requirements
 
@@ -930,7 +953,7 @@ phase_random==2  → Activates randomly within Phase 2 (Final)
 phase_random==3  → Activates randomly within Phase 3 (Last Stretch)
 ```
 
-**Important:** `phase_random==2` does NOT mean "last spurt" — it means the Final phase (2/3 to 5/6 of the course).
+`phase_random==2` does not mean "last spurt". It means the Final phase (2/3 to 5/6 of the course).
 
 ### Phase 2 vs Last Spurt
 
@@ -1021,9 +1044,9 @@ function lastSpurtSpeed(horse, course) {
 
 ### Key Insights
 
-1. **Speed stat only contributes in Phase 2 and Last Spurt** — Phases 0 and 1 use only base course speed × strategy coefficient
-2. **The contribution uses a square root** — Diminishing returns, not a hard cap
-3. **The sqrt term is additive** — It's added to a base velocity, not multiplied
+1. **Speed stat only contributes in Phase 2 and Last Spurt**: Phases 0 and 1 use only base course speed × strategy coefficient
+2. **The contribution uses a square root**: Diminishing returns, not a hard cap
+3. **The sqrt term is additive**: It's added to a base velocity, not multiplied
 
 ### Actual Velocity Contribution
 
@@ -1044,19 +1067,19 @@ In last spurt, the sqrt term appears twice in the formula, so the actual contrib
 
 ### Why the Myth Might Exist
 
-1. **Sprints have less final phase distance** — On 1200m, Phase 2+3 combined is only 400m (800m-1200m), with Phase 2 itself being just 200m (800m-1000m)
-2. **Diminishing returns feel like a cap** — Going 1100→1200 gives less than 1000→1100
-3. **Other factors matter more on sprints** — Power, guts, and acceleration are proportionally more important on short tracks
-4. **Base speed is higher on sprints** — `20.8 m/s` vs `19.6 m/s` for long distance, so the speed stat's ~1.5 m/s contribution is a smaller percentage
+1. **Sprints have less final phase distance**: On 1200m, Phase 2+3 combined is only 400m (800m-1200m), with Phase 2 itself being just 200m (800m-1000m)
+2. **Diminishing returns feel like a cap**: Going from 1100 to 1200 gives less than from 1000 to 1100
+3. **Other factors matter more on sprints**: Power, guts, and acceleration are proportionally more important on short tracks
+4. **Base speed is higher on sprints**: `20.8 m/s` vs `19.6 m/s` for long distance, so the speed stat's ~1.5 m/s contribution is a smaller percentage
 
 ### The Math: Why √(x) Creates "Soft Caps"
 
 For any square root function y = √x:
-- Elasticity = 0.5 (a 1% increase in x → 0.5% increase in y)
-- A 10% increase in speed stat → ~5% increase in the speed contribution term
+- Elasticity = 0.5 (a 1% increase in x gives a 0.5% increase in y)
+- A 10% increase in the speed stat gives a ~5% increase in the speed contribution term
 
 But since the speed contribution is only ~7-8% of total velocity:
-- **A 10% speed stat boost → ~0.4% actual velocity boost**
+- **A 10% speed stat boost gives a ~0.4% actual velocity boost**
 
 This creates the *perception* of a cap where gains become imperceptible, but mathematically the gains never stop.
 
@@ -1079,28 +1102,28 @@ This creates the *perception* of a cap where gains become imperceptible, but mat
 
 | Optimization                    | Typical Impact |
 |---------------------------------|----------------|
-| Distance aptitude S→A           | ~1.5L          |
-| Distance aptitude A→B           | ~3.0L          |
+| Distance aptitude S to A        | ~1.5L          |
+| Distance aptitude A to B        | ~3.0L          |
 | Good gold skill                 | 1-3L+          |
 | Full spurt vs subpar            | 2-5L+          |
-| Surface aptitude A→B            | ~0.5-1L        |
-| Strategy aptitude A→B           | ~0.5L          |
+| Surface aptitude A to B         | ~0.5-1L        |
+| Strategy aptitude A to B        | ~0.5L          |
 | Skill activation timing         | 0.5-2L         |
 | **Stat threshold (+1 tier)**    | **~0.2L**      |
 
 ### Key Takeaways
 
-1. **Distance aptitude is massive.** A single tier drop (A→B) costs ~3L, which is 15× more impactful than crossing a stat threshold.
+1. **Distance aptitude is massive.** A single tier drop (A to B) costs ~3L, which is 15× more impactful than crossing a stat threshold.
 
 2. **Stat thresholds are low priority.** Crossing one tier on one stat yields only ~0.2L. Don't sacrifice skill slots, stamina safety, or aptitudes just to hit a threshold.
 
-3. **Mood shifts threshold breakpoints.** With +2 mood, the tier 2→3 boundary is at raw stat 577, not 601. Always account for mood when testing thresholds.
+3. **Mood shifts threshold breakpoints.** With +2 mood, the tier 2 to 3 boundary is at raw stat 577, not 601. Account for mood when testing thresholds.
 
 4. **The 2.5% speed modifier ≠ 2.5% velocity.** Due to the square root in the formula and the additive nature of speed contribution, a 2.5% speed stat difference translates to only ~0.15-0.2% actual velocity difference.
 
 5. **Strategy aptitude affects positioning.** Through wisdom-based position keep checks, but the impact is small (~1-2% probability per tier) at high wisdom.
 
-6. **If near a threshold during training, grab it.** But don't go out of your way—the ROI compared to other optimizations isn't there.
+6. **If near a threshold during training, grab it.** Don't go out of your way for one: compared to other optimizations the gain isn't there.
 
 ---
 
