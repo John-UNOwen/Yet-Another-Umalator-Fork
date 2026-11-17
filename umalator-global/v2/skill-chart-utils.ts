@@ -17,6 +17,7 @@ import { describeOut, factOut, raceFacts, RaceConditions, RaceCourse } from './e
 // Import data files
 import skilldata from '../skill_data.json';
 import skillmeta from '../../skill_meta.json';
+import skillnames from '../skillnames.json';
 import umas from '../../umas.json';
 import notInGame from '../not-in-game.json';
 
@@ -66,6 +67,39 @@ export const MAX_HINT_LEVEL = 5;
 export function hintDiscountPercent(hint: number): number {
 	const h = Math.max(0, Math.min(MAX_HINT_LEVEL, Math.round(hint) || 0));
 	return 100 - HINT_PERCENT[h];
+}
+
+/** A skill name's trailing ○ or ◎. */
+const CIRCLE = /\s*[○◎]$/;
+/** Each ○ / ◎ skill and the pair it belongs to: same group, same name apart
+ *  from the circle. */
+const circlePairs: Map<string, string[]> = (() => {
+	const byName = new Map<string, string[]>();
+	for (const id of Object.keys(skilldata)) {
+		const name: string | undefined = (skillnames as Record<string, string[]>)[id]?.[0];
+		const groupId = skillmeta[id]?.groupId;
+		if (!name || !groupId || !CIRCLE.test(name)) continue;
+		const key = `${groupId}|${name.replace(CIRCLE, '')}`;
+		const ids = byName.get(key);
+		if (ids) ids.push(id); else byName.set(key, [id]);
+	}
+	const out = new Map<string, string[]>();
+	for (const ids of byName.values()) if (ids.length > 1) for (const id of ids) out.set(id, ids);
+	return out;
+})();
+
+/** The skills one hint level covers: a skill and its ○ / ◎ partner. The game
+ *  keeps hints per skill group and rarity tier, so the two share one, while
+ *  the gold version, the × debuff and every other skill keep their own. */
+export function hintLinkedIds(id: string): string[] {
+	return circlePairs.get(id) ?? [id];
+}
+
+/** A copy of the hint levels with `id` and its ○ / ◎ partner set to `level`. */
+export function withHintLevel(hints: Map<string, number>, id: string, level: number): Map<string, number> {
+	const next = new Map(hints);
+	for (const x of hintLinkedIds(id)) next.set(x, level);
+	return next;
 }
 function scaleBaseCost(baseCost: number, hint: number): number {
 	const h = Math.max(0, Math.min(5, Math.round(hint) || 0));

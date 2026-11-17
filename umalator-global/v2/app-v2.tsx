@@ -30,6 +30,7 @@ import {
   partitionPool,
   type PoolExclusion,
   type PoolSplit,
+  withHintLevel,
 } from "./skill-chart-utils";
 
 import { RaceTrack, RegionDisplayType } from "../../components/RaceTrack";
@@ -2003,11 +2004,7 @@ function App() {
                         hints={skillHints}
                         hasSkills={hasSkills}
                         updateHint={(id, hint) => {
-                          setSkillHints((prev) => {
-                            const next = new Map(prev);
-                            next.set(id, hint);
-                            return next;
-                          });
+                          setSkillHints((prev) => withHintLevel(prev, id, hint));
                         }}
                         onRunTypeChange={setChartRunType}
                         onSelectionChange={setSelectedSkillForChart}
@@ -2088,11 +2085,7 @@ function App() {
                     onOpenInCompare={handleOpenInCompare}
                     onImportCareer={handleImportCareer}
                     onHintChange={(id, hint) => {
-                      setSkillHints((prev) => {
-                        const next = new Map(prev);
-                        next.set(id, hint);
-                        return next;
-                      });
+                      setSkillHints((prev) => withHintLevel(prev, id, hint));
                     }}
                     onResetHints={() => setSkillHints(new Map())}
                     controlRef={optimizerControl}

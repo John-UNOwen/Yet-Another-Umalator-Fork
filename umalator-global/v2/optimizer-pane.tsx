@@ -34,7 +34,7 @@ import type { MobPreset } from './engines/globalsim/mobs';
 import { ci95 } from './engines/globalsim/metrics';
 import type { WorkerFactory } from './engines/globalsim/pool';
 import { loadGlobalsimCourseIds } from './engines/globalsim/courses';
-import { applyExclusions, calculateSkillCost, hintDiscountPercent, MAX_HINT_LEVEL, type PoolExclusion } from './skill-chart-utils';
+import { applyExclusions, calculateSkillCost, hintDiscountPercent, hintLinkedIds, MAX_HINT_LEVEL, type PoolExclusion } from './skill-chart-utils';
 import { PoolExclusionList } from './pool-exclusions';
 import { STRATEGY_LABELS } from './uma-panel';
 import { pickCareerDump, type CareerImport } from './career-import';
@@ -148,8 +148,8 @@ function SkillChip(props: { id: string; tone?: 'added' | 'missing' | 'must' }) {
 }
 
 /** A pool row's cost with the Skill tab's hint buttons around it. A hint lowers
- *  the SP cost (10, 20, 30, 35, 40% at levels 1 to 5). Without a setter it is
- *  the plain cost. */
+ *  the SP cost (10, 20, 30, 35, 40% at levels 1 to 5), and a ○ / ◎ pair moves
+ *  together (withHintLevel). Without a setter it is the plain cost. */
 function HintCost(props: { id: string; cost: number; hint: number; disabled: boolean; onChange?: (level: number) => void }) {
 	const { id, cost, hint, disabled, onChange } = props;
 	if (!onChange) return <span class="v2-opt-skill-cost">{cost} SP</span>;
@@ -157,8 +157,11 @@ function HintCost(props: { id: string; cost: number; hint: number; disabled: boo
 	const step = (d: 1 | -1) => onChange(Math.max(0, Math.min(MAX_HINT_LEVEL, hint + d)));
 	const downOff = disabled || hint <= 0;
 	const upOff = disabled || hint >= MAX_HINT_LEVEL;
+	const partner = hintLinkedIds(id).find((x) => x !== id);
+	const title = (hint > 0 ? `Hint level ${hint}: ${hintDiscountPercent(hint)}% off` : 'No hint: full price')
+		+ (partner ? `. Shared with ${skillName(partner)}, as in the game` : '');
 	return (
-		<span class="v2-opt-hint" title={hint > 0 ? `Hint level ${hint}: ${hintDiscountPercent(hint)}% off` : 'No hint: full price'}>
+		<span class="v2-opt-hint" title={title}>
 			<button type="button" class={`v2-hint-btn v2-hint-down${downOff ? ' disabled' : ''}`} disabled={downOff}
 				aria-label={`Lower the hint level of ${name}`} onClick={() => step(-1)}>
 				<div class="v2-hint-btn-bg"></div>
