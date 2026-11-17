@@ -712,8 +712,17 @@ function App() {
       }
       return { ...uma1, skills };
     });
+    // Uma 2 only exists in Compare mode: without the switch the drawer selected
+    // a tab that is not drawn and showed nothing.
+    setMode("compare");
     setActiveUmaTab(2);
   }, [uma1]);
+
+  // The Uma 2 tab is drawn only in Compare mode. Leaving Compare with it
+  // selected would leave the drawer empty, so fall back to Uma 1.
+  useEffect(() => {
+    if (mode !== "compare" && activeUmaTab === 2) setActiveUmaTab(1);
+  }, [mode, activeUmaTab]);
 
   // A Hachimi career dump imported from the Skill Optimizer. The dump describes a
   // trained uma that exists, so it replaces the fields it carries (outfit, star and
