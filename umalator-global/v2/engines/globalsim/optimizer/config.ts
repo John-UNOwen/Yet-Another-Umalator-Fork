@@ -126,6 +126,11 @@ export const THOROUGH: EffortConfig = {
 	timeBudgetMs: 20 * 60_000, ...SCREEN_COMMON,
 };
 
+/** Until stopped: kicks per visit to one starting build before the next start
+ *  gets its turn (Thorough's count). The search then loops over the peaks it
+ *  reached, so every start is explored before any one of them is kicked again. */
+export const KICKS_PER_VISIT = 10;
+
 /** Thorough sizes, no deadline, verification grows to the cap. */
 export const UNTIL_STOPPED: EffortConfig = {
 	preset: 'untilStopped',

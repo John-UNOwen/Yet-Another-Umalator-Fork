@@ -17,7 +17,7 @@
 
 import test from 'tape';
 import { NS_SEARCH, NS_VERIFY } from './cache';
-import { EffortConfig } from './config';
+import { EffortConfig, KICKS_PER_VISIT } from './config';
 import { BuildRefLite, objectiveOf, pairedOf, SearchEvaluator, statsOf } from './evaluator';
 import { affordable, BuildSpace, OptOption, simIdentity } from './space';
 import { aggregateValues, clipLeadL, createController, LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS, leadClipL, runOptimizer, searchPickOf, SearchCurrency } from './search';
@@ -566,6 +566,63 @@ test('§K ETA: the plan tracks the real per-restart budgets', async t => {
 		`the plan moves with the §C climbRaces budget, a whole-restart multiple of the 30,000-race difference (Δ=${delta})`);
 	const nob = await firstIncontext({ ...base, climbRaces: Infinity });
 	t.ok(nob && nob.racesPlanned === 0 && nob.etaMs === undefined, 'no race budget (untilStopped-like) and no measured restart yet: no plan, no ETA');
+	t.end();
+});
+
+// Until stopped (kicks and climbRaces both unbounded) caps each visit to a
+// starting build at KICKS_PER_VISIT, so every start runs before any of them is
+// kicked again. Before the cap, restart 1 kicked until Stop and restarts 2..n
+// never ran. The run is stopped once a second pass starts, or ends by itself
+// when a pass finds nothing new to race. A race cap stops a regressed run, so
+// it fails here instead of hanging.
+test('until stopped visits every starting build before a second pass', async t => {
+	// A wide δ_min lets the climb certify its peak at this harness's noise,
+	// which is what makes the kicks (and the old bug) happen at all.
+	const cfg: EffortConfig = { ...TEST_CFG, deltaMinL: 1, restarts: 3, kicks: Infinity, climbRaces: Infinity, timeBudgetMs: Infinity };
+	const run = async (inst: Instance, onNote: (note: string, ctrl: ReturnType<typeof createController>) => void, cap = Infinity) => {
+		const ev = new OracleEval(inst);
+		const ctrl = createController();
+		await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: cfg },
+			ctrl, (x: OptimizerProgress) => {
+				if (x.racesRun > cap) ctrl.stop();
+				if (x.note) onNote(x.note, ctrl);
+			});
+		ev.dispose();
+	};
+	// An instance whose knapsack gives at least two distinct starting builds.
+	let inst: Instance | undefined;
+	for (let seed = 4242; seed < 4272 && !inst; seed++) {
+		const cand = genInstance(seed);
+		let starts = 0;
+		await run(cand, (note, ctrl) => {
+			const m = /^(\d+) restart points$/.exec(note);
+			if (m) { starts = Number(m[1]); ctrl.stop(); }
+		});
+		if (starts >= 2) inst = cand;
+	}
+	t.ok(inst, 'found an instance with several starting builds');
+	if (!inst) { t.end(); return; }
+	const firstPass = new Set<number>();
+	const kicks = new Map<number, number>(); // restart → highest kick index in pass 1
+	let total = 0;
+	let secondPass = false;
+	await run(inst, (note, ctrl) => {
+		const m = /^restart (\d+)\/(\d+)( \(pass (\d+)\))?/.exec(note);
+		if (!m) return;
+		if (m[3]) { secondPass = true; ctrl.stop(); return; }
+		const r = Number(m[1]);
+		firstPass.add(r);
+		total = Math.max(total, Number(m[2]));
+		const k = / ILS kick (\d+)/.exec(note);
+		if (k) kicks.set(r, Math.max(kicks.get(r) ?? 0, Number(k[1])));
+	}, 2_000_000);
+	const most = Math.max(0, ...kicks.values());
+	t.ok(most > 0, `the climb certified and kicked (${[...kicks].map(([r, k]) => `restart ${r}: ${k}`).join(', ')})`);
+	t.ok(most <= KICKS_PER_VISIT, `no visit kicks more than ${KICKS_PER_VISIT} times`);
+	t.ok(total >= 2, `${total} starting builds`);
+	t.deepEqual([...firstPass].sort((a, b) => a - b), Array.from({ length: total }, (_, i) => i + 1),
+		'every starting build ran in the first pass');
+	t.comment(secondPass ? 'a second pass started' : 'the search ended by itself after the first pass');
 	t.end();
 });
 

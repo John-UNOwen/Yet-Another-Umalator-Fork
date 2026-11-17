@@ -11,7 +11,7 @@ import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf } from './bandit';
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
 	DEAD_SKILL_MIN_SEEDS,
-	EffortConfig, KAPPA, LAMBDA_MAXIMIN, PRUNE_KAPPA, SEQ_ADOPT_Z,
+	EffortConfig, KAPPA, KICKS_PER_VISIT, LAMBDA_MAXIMIN, PRUNE_KAPPA, SEQ_ADOPT_Z,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
 import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, SEED_LIST_SIZE, statsOf } from './evaluator';
@@ -611,6 +611,17 @@ async function runSingleScenario(
 	// now; the loop's forward plan uses the real restart count.
 	searchRaces0 = ev.racesRun();
 	startCount = startBuilds.length;
+	// Kicks per visit to a starting build. A preset with a finite kick count
+	// visits each start once. Until stopped (kicks = Infinity) caps every visit
+	// at KICKS_PER_VISIT, so all starts get their turn, and then queues another
+	// pass over the peaks the last pass reached. Without the cap the first start
+	// kicked until Stop and the others never ran.
+	const kicksPerVisit = Number.isFinite(cfg.kicks) ? cfg.kicks : KICKS_PER_VISIT;
+	const passOf: number[] = startBuilds.map(() => 0);
+	const passEnds: BuildRefLite[] = [];
+	let passRaces0 = ev.racesRun();
+	const tagOf = (s: number): string =>
+		`restart ${s + 1}/${startBuilds.length}${passOf[s] ? ` (pass ${passOf[s] + 1})` : ''}`;
 	for (let s = 0; s < startBuilds.length; s++) {
 		if (ctrl.stopped()) break;
 		if (Date.now() - t0 > cfg.timeBudgetMs) { dbg('time budget hit at restart', s); break; }
@@ -669,7 +680,7 @@ async function runSingleScenario(
 			// §E: sell known-dead skills before weighing the round (free).
 			X = sellDead(X);
 			pinSearch(X); // §K: the incumbent of this round's ladders is pinned
-			emit('incontext', `restart ${s + 1}/${startBuilds.length} round ${it + 1}/${cfg.dMaxIters}`, provisional(X));
+			emit('incontext', `${tagOf(s)} round ${it + 1}/${cfg.dMaxIters}`, provisional(X));
 			// ── §K: over-budget adds are measured for the knapsack re-solve ────
 			// An over-budget "X+j" is never adopted (the fallback filter below
 			// refuses it); its only consumer is the value the re-solve sees for
@@ -786,7 +797,7 @@ async function runSingleScenario(
 			const outcomes = bres.measured; // eliminated candidates' numbers feed the re-solve too (§8D)
 			if (bres.capCut) { // §D.4: the alive cap bound this batch, not the indifference zone
 				dbg('  D alive cap cut', bres.capCut, 'candidates beyond', BANDIT_MAX_ALIVE);
-				emit('incontext', `restart ${s + 1}/${startBuilds.length} · alive cap cut ${bres.capCut}`, provisional(X));
+				emit('incontext', `${tagOf(s)} · alive cap cut ${bres.capCut}`, provisional(X));
 			}
 			applyMeasured(outcomes, dropOf, addedOf);
 			for (const out of outcomes) surrHarvest(out.build);
@@ -1086,15 +1097,15 @@ async function runSingleScenario(
 				return { X: Xc, p1: true, p2: r2.unresolved === 0 };
 			}
 		};
-		let peak = await climbToPeak(X, `restart ${s + 1}/${startBuilds.length} climb`);
+		let peak = await climbToPeak(X, `${tagOf(s)} climb`);
 		let kickIdx = 0;
-		while (peak.p1 && kickIdx < cfg.kicks && !climbOut()) {
+		while (peak.p1 && kickIdx < kicksPerVisit && !climbOut()) {
 			const Xk = makeKick(peak.X, kickIdx);
 			kickIdx++;
 			// Degenerate space (nothing kickable): the kick could not change the
 			// build, so no later kick can either — stop kicking this restart.
 			if (Xk.id === peak.X.id) { dbg('  ILS kick impossible (nothing owned), stopping'); break; }
-			emit('local', `restart ${s + 1}/${startBuilds.length} ILS kick ${kickIdx}${Number.isFinite(cfg.kicks) ? `/${cfg.kicks}` : ''}`, provisional(Xk));
+			emit('local', `${tagOf(s)} ILS kick ${kickIdx}/${kicksPerVisit}`, provisional(Xk));
 			const r = await climbToPeak(Xk, `restart ${s + 1} kick ${kickIdx} climb`);
 			// Accept only a certified peak that beats the current one
 			// significantly (§C); anything else falls back to the old peak.
@@ -1105,11 +1116,26 @@ async function runSingleScenario(
 		}
 		X = peak.X;
 		remember(X);
-		restartEnds.push(X);
+		if (!restartEnds.some(e => e.id === X.id)) restartEnds.push(X);
+		if (!passEnds.some(e => e.id === X.id)) passEnds.push(X);
 		traceRestartEnd(X);
 		peakCerts.set(X.id, { p1: peak.p1, p2: peak.p2 });
 		pinSearch(X); // §K: the end just reached is pinned from here on
 		restartRaceMarks.push(ev.racesRun()); // §K ETA: this restart's measured cost is now the estimate for the rest
+		// Until stopped: the pass is over, so queue its peaks for another pass.
+		// A pass that ran no new races found nothing left to try (every move is
+		// cached), so the search ends there and Stage G takes over.
+		if (s === startBuilds.length - 1 && !Number.isFinite(cfg.kicks)
+			&& !ctrl.stopped() && Date.now() - t0 <= cfg.timeBudgetMs) {
+			const spent = ev.racesRun() - passRaces0;
+			passRaces0 = ev.racesRun();
+			if (spent === 0) { dbg('pass ran no new races, search ends'); break; }
+			const next = passOf[s] + 1;
+			for (const e of passEnds) { startBuilds.push(e); passOf.push(next); }
+			passEnds.length = 0;
+			startCount = startBuilds.length;
+			dbg('pass', next + 1, 'queued', startBuilds.length - s - 1, 'peaks');
+		}
 	}
 	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
