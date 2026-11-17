@@ -2,10 +2,10 @@
 
 How to bump the vendored engine (`vendor/GlobalSim` submodule) from one release
 to the next (currently **v77**, commit `27a4d13`). Every step has a Windows
-PowerShell form and a Linux/CI form; run one form or the other, not both.
+PowerShell form and a Linux/CI form. Run one form or the other, not both.
 
 Before bumping: the submodule currently tracks the fork's `paired-draws`
-branch, not an upstream tag — read
+branch, not an upstream tag. Read
 [Fork deviation: the paired-draws submodule](#fork-deviation-the-paired-draws-submodule)
 first.
 
@@ -18,7 +18,7 @@ Work on a branch (e.g. `globalsim-v78`), one commit per numbered step.
 
 ## 0. Prerequisites
 
-A Rust stable toolchain (native builds), Node 22+, and — for step 6 — wasm-pack
+A Rust stable toolchain (native builds), Node 22+, and, for step 6, wasm-pack
 0.15.1 + the wasm32 target:
 
 ```powershell
@@ -48,10 +48,10 @@ git commit -m "chore: bump GlobalSim submodule to v78"
 ```
 
 (`git submodule update --remote vendor/GlobalSim` also moves it to the default
-branch tip — prefer the explicit tag checkout; never track a branch.)
+branch tip. Prefer the explicit tag checkout, never track a branch.)
 
 Record the new commit hash in `globalsim-wasm/README.md` (line: "tag **vNN**,
-commit `xxxxxxx`") — that file is the pin's human-readable home.
+commit `xxxxxxx`"). That file is the pin's human-readable home.
 
 Run the engine's own (unchanged upstream) tests on the new commit:
 
@@ -70,18 +70,18 @@ cargo build --release --no-default-features   # stdin worker (mimalloc off)
 The adapter merges `profile-v77.json` into every request
 (`umalator-global/v2/engines/globalsim/adapter.ts`). It must stay a **verbatim
 copy of the non-race keys** of the new `examples/vNN-race.jsonl`. The example
-line is one JSON object; the race keys the app supplies per run are exactly:
+line is one JSON object. The race keys the app supplies per run are exactly:
 
 `seed, courseId, groundCondition, weather, season, horses`
 
-Everything else is the profile — currently these 12 keys, in this order:
+Everything else is the profile, currently these 12 keys, in this order:
 
 `laneSelectionVersion, raceInitializationVersion, positionKeepVersion,
 skillValueVersion, raceContextVersion, experimentalRetailInitialization,
 experimentalRetailSections, experimentalRetailRuntime, experimentalRetailGeometry,
 retainAllFrames, dataSignature, skillData`
 
-New releases may add or rename switches — diff the key sets; a profile key the
+New releases may add or rename switches. Diff the key sets. A profile key the
 new engine no longer mentions should be re-read against the new
 `docs/ARCHITECTURE.md` "Numerical reproducibility" section before dropping it.
 Never hand-edit values.
@@ -95,29 +95,29 @@ git rm umalator-global/v2/engines/globalsim/profile-v77.json   # the rename land
 node -e "const fs=require('fs');const ex=JSON.parse(fs.readFileSync('vendor/GlobalSim/examples/v78-race.jsonl','utf8').split('\n')[0]);const RACE=new Set(['seed','courseId','groundCondition','weather','season','horses']);const profile={};for(const[k,v]of Object.entries(ex))if(!RACE.has(k))profile[k]=v;fs.writeFileSync('umalator-global/v2/engines/globalsim/profile-v78.json',JSON.stringify(profile))"
 ```
 
-(The `skillData` key of the profile is the engine's bundled legacy table; the
-app does not use it as-is — step 4's merged-table injection overrides it. It is
+(The `skillData` key of the profile is the engine's bundled legacy table. The
+app does not use it as-is: step 4's merged-table injection overrides it. It is
 still copied verbatim so the profile stays a faithful settings block.)
 
 Rename + rewire (then commit):
 
-- rename `profile-v77.json` → `profile-vNN.json` and update its import in
+- rename `profile-v77.json` to `profile-vNN.json` and update its import in
   `adapter.ts` (`import profileV77 from './profile-v77.json'`) plus the comment
   lines naming it,
 - `grep -rn v77 --include='*.ts' --include='*.mjs' --include='*.md' umalator-global globalsim-wasm tools` and
   update the mentions that are about the PIN (profile name, golden name,
-  comments, README) — not the ones that are historical notes ("captured from
+  comments, README), not the ones that are historical notes ("captured from
   examples/v77-race.jsonl") until the golden itself is regenerated (step 5).
 
 ## 3. Bump the version strings
 
 - `umalator-global/v2/engines/globalsim/compare.ts`:
-  `export const GLOBALSIM_ENGINE_VERSION = 'v77'` → `'vNN'`.
+  `export const GLOBALSIM_ENGINE_VERSION = 'v77'` becomes `'vNN'`.
   The UI line ("GlobalSim vNN · skill table v70 + N supplement", shown in
-  results and asserted by `compare.acceptance.test.ts`) derives from it — plus
+  results and asserted by `compare.acceptance.test.ts`) derives from it, plus
   the acceptance test's own `startsWith('GlobalSim v77 · ...')` literal.
 - `globalsim-wasm/README.md` tag/commit line (step 1).
-- The plan/upgrade-doc mentions are historical; leave them.
+- The plan/upgrade-doc mentions are historical. Leave them.
 
 ## 4. Re-validate the skill supplement against the new engine
 
@@ -138,10 +138,10 @@ npm run test:globalsim-skilldata
 npm run test:globalsim-skills
 ```
 
-`globalsim:coverage:write` is `node tools/globalsim-coverage.mjs --write`; the bare
+`globalsim:coverage:write` is `node tools/globalsim-coverage.mjs --write`. The bare
 `globalsim:coverage` (and `globalsim:coverage:merged`, which writes only
 `globalsim/skills.merged.json`) is the same tool without `--write`, so it prints the
-report to stdout and **writes no files** — regenerating the tracked report needs the
+report to stdout and **writes no files**. Regenerating the tracked report needs the
 `:write` form. The merged tables the suites load (`globalsim/skills.json`,
 `globalsim/skills.merged.json`, both gitignored) are written by the `--out` flag that
 the two suite scripts pass themselves.
@@ -153,23 +153,23 @@ supplement-entry problem, not a wrapper problem. The app path that keeps batch-1
 skills alive is the **merged-table injection**: `tools/globalsim-coverage.mjs`
 merges `v70-skill-data.json` + the supplement, `pool.ts` sends that table to
 every worker once (`{type:'skillData'}`) and the adapter passes it as the
-request's `skillData` — replacing profile-vNN's pure v70 table
+request's `skillData`, replacing profile-vNN's pure v70 table
 (`skilldata.acceptance.test.ts` pins exactly this: v70-only prepare fails for
 supplement IDs, merged-table prepare succeeds). Re-port the failing entry
 against the new engine's docs/SKILLS.md (conditions must parse AND the skill
-must activate — `test:globalsim-skills` checks both), or, if it cannot be
+must activate, which `test:globalsim-skills` checks), or, if it cannot be
 ported cleanly, drop it from the supplement and let the coverage gate hide the
 skill again. Re-run this step until green. Commit the regenerated
-`globalsim/coverage-report.md` (tracked) — it is only ever refreshed by
+`globalsim/coverage-report.md` (tracked). It is only ever refreshed by
 `globalsim:coverage:write`, never by the gate run, so check it is not stale
 (`git --no-pager diff --stat globalsim/coverage-report.md`) before committing.
 
-Also refresh the committed `globalsim/courses.json` on every engine bump — it is
+Also refresh the committed `globalsim/courses.json` on every engine bump. It is
 the app's course-id validation set, copied from the engine's own
-`vendor/GlobalSim/data/course_data.json` (STRING keys, in `Object.keys` order;
+`vendor/GlobalSim/data/course_data.json` (STRING keys, in `Object.keys` order:
 the app gate does `Set(ids).has(String(courseId))`, so numeric ids would reject
 every course). `npm run build:global` regenerates it from the new submodule pin
-(`generateGlobalsimAssets()` in `umalator-global/build.mjs`) — commit the file
+(`generateGlobalsimAssets()` in `umalator-global/build.mjs`). Commit the file
 whenever it changes, because the Pages deploy serves the **committed** copy and a
 stale set silently rejects courses the new engine supports.
 
@@ -193,15 +193,15 @@ npm run test:globalsim
 
 The goldens (`umalator-global/v2/engines/globalsim/v77-golden.json`) pin the
 engine's exact replies for 5 seeds. If the engine's numbers legitimately moved,
-regenerate them with `native_ref` — the capture procedure from the golden file's
+regenerate them with `native_ref`, following the capture procedure in the golden file's
 own header ("request + geometry, seeds on stdin"):
 
-There is no committed regen script; the capture is
+There is no committed regen script. The capture is
 `native_ref <request.json> <geometry.json>` with one seed per stdin line, where
 request.json is the raw new `examples/vNN-race.jsonl` line and geometry is
 `vendor/GlobalSim/data/course_geometry/<golden.courseId>.json`. Rebuild the
-JSON with the golden's shape — `{ courseId, seeds, replies: [{ sha256,
-finishTimeRaw, finishOrder, playerLastSpurtTime }] }` — e.g.:
+JSON with the golden's shape (`{ courseId, seeds, replies: [{ sha256,
+finishTimeRaw, finishOrder, playerLastSpurtTime }] }`):
 
 ```sh
 node -e "
@@ -223,20 +223,20 @@ fs.writeFileSync('umalator-global/v2/engines/globalsim/v78-golden.json',
 "
 ```
 
-Then rename `v77-golden.json` → `vNN-golden.json`, update the `require` in
+Then rename `v77-golden.json` to `vNN-golden.json`, update the `require` in
 `adapter.test.ts` (and its comment), and re-run:
 
 ```sh
 npm run test:globalsim
 ```
 
-**Only regenerate goldens when the engine change is understood and intended** —
-compare old vs new `finishTimeRaw`/`finishOrder` deltas first; an unexplained
+**Only regenerate goldens when the engine change is understood and intended.**
+Compare the old and new `finishTimeRaw`/`finishOrder` deltas first. An unexplained
 golden change is a regression signal, not a chore.
 
 ## 6. Run the whole fork suite + builds
 
-CI (`.github/workflows/ci.yml`) runs exactly this list — reproduce any failure
+CI (`.github/workflows/ci.yml`) runs exactly this list. Reproduce any failure
 locally with it:
 
 ```sh
@@ -254,7 +254,7 @@ npm run build:v2 && npm run build:global
 ```
 
 GlobalSim's own python regression suite over `tests/fixtures` (84 official
-captures) is NOT part of this fork's CI — it stays upstream's native-side job.
+captures) is not part of this fork's CI. It stays upstream's native-side job.
 This fork's parity net is `phase0.mjs` (wasm-vs-native byte parity) plus the
 acceptance suites above running against the real engine.
 
@@ -264,14 +264,14 @@ acceptance suites above running against the real engine.
 chore: upgrade GlobalSim to vNN (submodule, profile, goldens)
 ```
 
-Then open the PR — CI is the gate.
+Then open the PR. CI is the gate.
 
 ## Fork deviation: the paired-draws submodule
 
 `vendor/GlobalSim` does not sit on an upstream tag. It tracks the
 **`paired-draws` branch of `John-UNOwen/GlobalSim`** (this fork's engine
 fork), built on top of the pinned v77 commit `27a4d13`. Step 1's
-"never track a branch" rule is about upstream tags; this branch is the
+"never track a branch" rule is about upstream tags. This branch is the
 fork's own work, so the branch pin is deliberate.
 
 To read what the branch changes:
@@ -295,13 +295,13 @@ The mode each surface uses:
 |---|---|
 | Skill Optimizer (Stage A-G) | paired, always |
 | Skill Chart | paired, always |
-| Compare | retail by default; the "Paired seeds (lower noise)" switch opts in |
+| Compare | retail by default, the "Paired seeds (lower noise)" switch opts in |
 
 Acceptance numbers, measured on the branch:
 
 - requests without the flag reply **byte-identical** to a build of the pinned
   upstream commit `27a4d13` (`"pairedRandomStreams": false` replies byte-identical
-  too; re-checked 2026-11-16 against the baseline binary),
+  too. Re-checked 2026-11-16 against the baseline binary),
 - `cargo test --no-default-features`: 172 passed / 172 (CI runs
   `cargo test --release`, whose default `fast-alloc` feature needs a C
   toolchain),
@@ -317,7 +317,7 @@ Acceptance numbers, measured on the branch:
 Rebuilding the wasm wrapper against the branch is step 5 unchanged: wasm-pack
 **0.15.1** with the wasm32 target, then `wasm-pack build --target web
 --release --out-dir pkg` in `globalsim-wasm`. `globalsim-wasm/pkg/` is
-generated output and gitignored — never committed.
+generated output and gitignored, never committed.
 
 ## Decision record: panic strategy
 
@@ -328,5 +328,5 @@ crate, `globalsim-wasm/Cargo.toml`, deliberately builds **`panic = "unwind"`**
 for its release profile: an engine panic then becomes a rejected run
 (`"engine panic: …"`, killing only that handle, which `pool.ts` recreates)
 instead of a wasm trap that kills the whole Web Worker. TypeScript input
-validation still runs first — unwind is the backstop, not the contract. See the
+validation still runs first: unwind is the backstop, not the contract. See the
 comment in `[profile.release]` of `globalsim-wasm/Cargo.toml`.
