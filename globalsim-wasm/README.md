@@ -14,12 +14,12 @@ byte-identical to `27a4d13`.
 | Export | Purpose |
 |---|---|
 | `register_geometry(courseId, jsonText)` | contents of `vendor/GlobalSim/data/course_geometry/<id>.json` |
-| `new PreparedRace(requestJson)` | prepare once per setup; throws a string error on failure |
-| `race.run(seedI32) -> jsonText` | one seed, full JSON reply; an engine panic becomes `"engine panic: …"` and kills the handle (recreate it) |
+| `new PreparedRace(requestJson)` | prepare once per setup. Throws a string error on failure |
+| `race.run(seedI32) -> jsonText` | one seed, full JSON reply. An engine panic becomes `"engine panic: …"` and kills the handle (recreate it) |
 | `race.free()` | release early |
 
-Panics are caught (`panic = "unwind"` here; upstream ships `abort`) instead of
-trapping, so a bad input cannot silently kill a worker — but TypeScript must
+Panics are caught (`panic = "unwind"` here, upstream ships `abort`) instead of
+trapping, so a bad input cannot silently kill a worker. TypeScript must
 still validate inputs first.
 
 ## Build
@@ -35,7 +35,7 @@ cargo build --release --example native_ref             # parity reference
 `node test/phase0.mjs --seeds 200` (gitignored replies in `test/out/`):
 
 * **Parity A:** wasm replies byte-identical to `native_ref` (same prepared API,
-  native codegen) — 200 seeds × courses 10504/10606/10207, with frames.
+  native codegen): 200 seeds × courses 10504/10606/10207, with frames.
 * **Parity B:** wasm replies minus the `omitFrames` keys equal the native
   stdin worker with `omitFrames: true` (canonical JSON comparison).
 * **Size:** `globalsim_wasm_bg.wasm` 1,658,547 B raw / 415,111 B gzip.
@@ -47,7 +47,7 @@ cargo build --release --example native_ref             # parity reference
 | 10207 | 6.47 | 6.03 | 1.07 | 6.36 / 6.3 |
 
 Chrome numbers from `test/page/index.html` (`?auto=1&seeds=100&course=…`) via
-puppeteer-core; prepare 4.5–12.8 ms per handle. Firefox and mobile-browser
-timings were not measured (neither is available on the build machine) — open
+puppeteer-core. Prepare took 4.5 to 12.8 ms per handle. Firefox and mobile-browser
+timings were not measured (neither is available on the build machine). Open
 `test/page/` from a served repo root on those devices and paste the JSON line
 into this table.

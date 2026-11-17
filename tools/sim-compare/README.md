@@ -1,4 +1,4 @@
-# sim-compare — cross-engine solver comparison
+# sim-compare: cross-engine solver comparison
 
 Runs the same races through **our** `uma-skill-tools` and through **upstream**
 [`alpha123/uma-skill-tools`](https://github.com/alpha123/uma-skill-tools), using each
@@ -13,12 +13,12 @@ bash tools/sim-compare/setup.sh                  # clone + npm install upstream 
 node tools/sim-compare/compare-sims.mjs          # run the corpus
 ```
 
-Exit code is 0 when every engine-comparable case passes, 1 otherwise — it is CI-able.
+Exit code is 0 when every engine-comparable case passes, 1 otherwise. It is CI-able.
 
 ## Why the comparison is statistical, not exact
 
 The two engines do not share a random number generator. Upstream uses `Rule30CARng`, a
-cellular-automaton PRNG; our fork replaced it with Prando and kept the old name as an
+cellular-automaton PRNG. Our fork replaced it with Prando and kept the old name as an
 alias (`uma-skill-tools/Random.ts`). Same seed, completely different stream. Bit-identical
 seed-matched comparison is therefore impossible, no matter what you pass to `--seed`.
 
@@ -39,23 +39,23 @@ keeps noisy, low-sample runs from failing spuriously.
 | Column | Meaning |
 |---|---|
 | `ours` / `alpha` | mean gain in バ身, pooled over all seeds |
-| `Δ` | `mean_ours - mean_alpha` — the number that actually matters |
-| `z` | Δ in units of combined standard error; how confident we are Δ is real |
+| `Δ` | `mean_ours - mean_alpha`, the number that actually matters |
+| `z` | Δ in units of combined standard error: how confident we are that Δ is real |
 | `tol` | the pass threshold for this case |
-| `KS` | two-sample Kolmogorov–Smirnov statistic — distribution shape, informational only |
+| `KS` | two-sample Kolmogorov–Smirnov statistic: distribution shape, informational only |
 
 Tags after the verdict:
 
-- **`(data)`** — the skill or course definition differs between the two engines' `data/`
+- **`(data)`**: the skill or course definition differs between the two engines' `data/`
   directories, so a mismatch is a *data* difference, not an engine bug. Excluded from the
   exit code unless you pass `--strict`.
-- **`(no-op)`** — the skill never fired in either engine, so agreement proves nothing.
+- **`(no-op)`**: the skill never fired in either engine, so agreement proves nothing.
 
-`KS` and the reported spread ratio will always look bad, and that is expected — see below.
+`KS` and the reported spread ratio will always look bad, and that is expected. See below.
 
 ## The upstream RNG patch
 
-`setup.sh` applies `upstream-rng-warmup.patch` to the checkout. This is not cosmetic — the
+`setup.sh` applies `upstream-rng-warmup.patch` to the checkout. This is not cosmetic: the
 comparison is meaningless without it.
 
 Upstream's `Rule30CARng.pair()` samples its output bits out of the **high** word of the
@@ -73,7 +73,7 @@ seed 33 finish 96.5333 targetv: 19.9651 19.9651 19.3247 19.7151 ...
 
 Every seed, byte for byte. Since the per-section modifier has a positive mean, pinning it
 to its floor makes upstream's baseline race systematically *slower* than the model
-intends — 0.15s over 2000m, 0.74s over 3000m — which shifts every gain measured against
+intends (0.15s over 2000m, 0.74s over 3000m), which shifts every gain measured against
 it. The patch runs 64 `step()`s in the constructor to diffuse the seed. Afterwards
 upstream's races vary by seed and its 2000m baseline agrees with ours to within
 0.009s ± 0.015 (z = −0.65).
@@ -87,8 +87,8 @@ word and has no warm-up problem.
 or 0.915) for anything that isn't nige. We implement the in-game state machine
 (speed up / overtake / pace up / pace down, with real entry and exit conditions, ending at
 section 10). Ours is the more faithful model, so the two will never agree exactly on
-non-nige strategies. Note that our `gain.ts` runs `--pos-keep-mode none` by default, which
-is why this does not currently dominate the comparison — see the warning in that flag's
+non-nige strategies. Our `gain.ts` runs `--pos-keep-mode none` by default, which
+is why this does not dominate the comparison. See the warning in that flag's
 help text.
 
 **Deterministic cases show `sd == 0` in both engines.** Any skill on `ImmediatePolicy`
@@ -141,7 +141,7 @@ both engines read byte-identical input). Optional per-case `ground`, `mood`, `ti
 ```
 
 Both engines run under `ts-node --transpile-only`. This was verified to produce output
-identical to a type-checked run on both sides; it is roughly 2× faster, which matters when
+identical to a type-checked run on both sides. It is roughly 2× faster, which matters when
 a full pass is ~120 processes.
 
 ## Notes

@@ -12,7 +12,7 @@ A personal fork of [TheCing/uma-tools](https://github.com/TheCing/uma-tools) (Mo
 
 ## The live site
 
-The Pages deployment serves the v2 Global simulator at the site root. The repository's other tools (event tracker, skill visualizers, mechanics explorer, team trials, release timeline) are present in the source tree but not deployed here; the JP simulator and HP calculator were removed. The upstream project hosts its own set of tools at [umalator.app](https://umalator.app/).
+The Pages deployment serves the v2 Global simulator at the site root. The repository's other tools (event tracker, skill visualizers, mechanics explorer, team trials, release timeline) are present in the source tree but not deployed here. The JP simulator and HP calculator were removed. The upstream project hosts its own set of tools at [umalator.app](https://umalator.app/).
 
 GitHub Pages has no server components, so two upstream features change. Screenshot OCR import needs your own Gemini API key (the shared proxy does not exist here), and the feedback form is hidden. Everything else runs client-side.
 
@@ -23,14 +23,14 @@ There is one engine and no engine selector: GlobalSim runs every mode. The class
 GlobalSim mode changes what Compare and the skill chart measure:
 
 - Every simulated race carries nine runners: the tested uma plus eight mobs from a fixed preset (`umalator-global/v2/engines/globalsim/mob-presets.json`). Compare races both builds over paired seeds and reports the full-field finish difference, win rate, ties, HP-out and rushing rates, and min/max/mean/median snapshots with representative replays.
-- The skill chart reports, per skill, the mean margin with a 95% CI against the baseline build, how often the skill fired, and `vs Base` — the paired ahead-share as signed points around the 50% neutral point (ties counted against).
+- The skill chart reports, per skill, the mean margin with a 95% CI against the baseline build, how often the skill fired, and `vs Base`: the paired ahead-share as signed points around the 50% neutral point (ties counted against).
 - Race outcomes come from the engine's own frame data, so position, speed and HP curves in the track overlay are real full-field traces.
 - Skills are gated to the engine's skill table: 751 entries (730 validated against engine v70 plus 21 supplemented, see `globalsim/skills-supplement.json`). Uncovered skills, outfits and awakenings are hidden in GlobalSim mode, and the settings panel shows how many of your skills are not yet covered.
 - The Simulation threads setting sizes the worker pool (1-32, or auto). Auto uses one fewer core than your machine reports, capped at 32.
 
 ## Reading the numbers
 
-Margins are horse lengths (bashin), 1 length = 2.5 meters. Positive means Uma 2 finishes ahead; this matches the classic CLI tool's `posDifference` sign convention. The 95% CI reflects how much the sampled seeds scatter; a CI that crosses zero means the margin is within seed noise at that sample size.
+Margins are horse lengths (bashin), 1 length = 2.5 meters. Positive means Uma 2 finishes ahead, which matches the classic CLI tool's `posDifference` sign convention. The 95% CI reflects how much the sampled seeds scatter. A CI that crosses zero means the margin is within seed noise at that sample size.
 
 ## Development
 
@@ -53,7 +53,7 @@ cd globalsim-wasm && wasm-pack build --target web --release --out-dir pkg
 cd .. && node umalator-global/build.mjs         # copies pkg, geometry and the merged skill table into globalsim/
 ```
 
-The asset prefix defaults to `/uma-tools`. Set `CC_BASE_PATH` at build time to change it; empty string serves assets from the site root. Every build script, the Vite configs and the dev servers honor it, and the Pages workflow fills it in from the repository name, so renaming or moving the deployment needs no code change.
+The asset prefix defaults to `/uma-tools`. Set `CC_BASE_PATH` at build time to change it. An empty string serves assets from the site root. Every build script, the Vite configs and the dev servers honor it, and the Pages workflow fills it in from the repository name, so renaming or moving the deployment needs no code change.
 
 ### Tests
 
@@ -108,7 +108,7 @@ docs/globalsim-upgrade.md          engine upgrade runbook
 ## Deployment and data flow
 
 - `pages.yml` builds the wasm, the app and the runtime assets, then deploys to GitHub Pages on every push to master.
-- `sync-upstream-data.yml` runs daily, pulls alpha123's Global game data, verifies the build, and opens a pull request against master. Merging is what deploys new data. If a brand-new skill has no engine definition yet, the coverage gate step fails on the PR; `docs/globalsim-upgrade.md` describes adding a supplement entry.
+- `sync-upstream-data.yml` runs daily, pulls alpha123's Global game data, verifies the build, and opens a pull request against master. Merging is what deploys new data. If a brand-new skill has no engine definition yet, the coverage gate step fails on the PR. `docs/globalsim-upgrade.md` describes adding a supplement entry.
 - Engine version bumps follow the same runbook: bump the submodule, re-copy the request profile, rerun parity and coverage, update the version label.
 
 ## Credits
