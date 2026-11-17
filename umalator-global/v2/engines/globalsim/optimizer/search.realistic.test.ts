@@ -432,6 +432,8 @@ test('realistic regime: §C acceptance — gap vs the exact reference optimum + 
 	}
 	const summary = new Map<string, Acc>();
 	let feasible = true, onePerGroup = true, teleAbsent = true;
+	// The per-skill worth report: shape plus how many drops the search actually raced.
+	let contribShape = true, contribSkills = 0, contribMeasured = 0, contribUnresolved = 0;
 	// The preset-derived race budget for one run: noise calibration + Stage B
 	// screening + per restart (Stage D ladders at the full alive cap × batch
 	// cap, the §C climbRaces budget with one-wave overshoot slack, the
@@ -464,6 +466,11 @@ test('realistic regime: §C acceptance — gap vs the exact reference optimum + 
 			// §E: this evaluator reports no activation counts — the dead-skill
 			// rules stand down and the result carries no activation report.
 			if (res.bestActivations !== undefined) teleAbsent = false;
+			const crows = res.contributions ?? [];
+			if (crows.length !== rec.selection.length) contribShape = false;
+			contribSkills += rec.selection.length;
+			contribMeasured += crows.filter(r => r.lead !== null && r.win !== null).length;
+			contribUnresolved += crows.filter(r => r.lead !== null && r.lead.ci95[0] <= 0 && r.lead.ci95[1] >= 0).length;
 			if (res.best.leftover < 0) feasible = false;
 			{
 				const gs = new Set<string>();
@@ -508,6 +515,9 @@ test('realistic regime: §C acceptance — gap vs the exact reference optimum + 
 	t.ok(feasible, 'recommendation never over budget');
 	t.ok(onePerGroup, 'recommendation never repeats a group');
 	t.ok(teleAbsent, '§E: without reported activation counts the rules stand down (no activation report on the result)');
+	t.ok(contribShape, 'the worth report carries one row per skill of the recommendation');
+	t.ok(contribSkills > 0 && contribMeasured > 0,
+		`the worth report measures ${contribMeasured} of ${contribSkills} recommended-skill drops (${contribUnresolved} of them with an interval over zero)`);
 
 	for (const setting of SETTINGS) {
 		const acc = summary.get(setting.label)!;

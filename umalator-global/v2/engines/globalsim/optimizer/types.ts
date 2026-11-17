@@ -131,6 +131,28 @@ export interface ScoredBuild {
 	tiedWithBest?: boolean;
 }
 
+/** A paired difference the run already holds: the effect, its 95% interval and
+ *  the shared seed count it rests on. */
+export interface ContributionDiff {
+	mean: number;
+	ci95: [number, number];
+	seeds: number;
+}
+
+/** What one skill of the recommended build is worth: that build against the
+ *  same build without the skill, measured from the races the search already
+ *  ran (its last round raced this neighbourhood), so it costs no extra races.
+ *  A null row means that drop was never raced: pruned before its first race,
+ *  or evicted from the cache. */
+export interface SkillContribution {
+	/** The skill option whose drop was measured. */
+	id: string;
+	/** Δ clipped lead in lengths, the currency the search decided on. */
+	lead: ContributionDiff | null;
+	/** Δ P(1st) as a fraction, same seeds, noisier. */
+	win: ContributionDiff | null;
+}
+
 /** Live progress events for the anytime UI (P5). */
 export interface OptimizerProgress {
 	stage: 'noise' | 'screen' | 'knapsack' | 'incontext' | 'local' | 'verify' | 'done' | 'stopped';
@@ -169,6 +191,10 @@ export interface OptimizerResult {
 	 *  rate fired/seed next to it and flags one under 5%. Absent when the
 	 *  engine reported no activation counts. */
 	bestActivations?: ActivationTelemetry;
+	/** Per-skill worth of the recommendation, read from the search races already
+	 *  run (no extra races). Ordered like `best.build.selection`. Absent when
+	 *  the run had nothing to read. */
+	contributions?: SkillContribution[];
 }
 
 /** §7.3 noise calibration output. */

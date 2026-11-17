@@ -19,9 +19,10 @@ import { createController, runOptimizer, SearchController } from './engines/glob
 import { bookKey, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
 import { CUSTOM_STARTS_MAX, DEFAULT_CUSTOM, effortConfig } from './engines/globalsim/optimizer/config';
 import type {
-	ActivationTelemetry, EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
+	ActivationTelemetry, ContributionDiff, EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
 	ScenarioSpec, ScoredBuild,
 } from './engines/globalsim/optimizer/types';
+import { ciHalfWidth, resolvedDiff } from './engines/globalsim/optimizer/contributions';
 import type { ChartRaceConditions } from './engines/globalsim/chart';
 import type { MobPreset } from './engines/globalsim/mobs';
 import { ci95 } from './engines/globalsim/metrics';
@@ -111,6 +112,24 @@ function activationCell(id: string, act: ActivationTelemetry | undefined) {
 	return rate < LOW_ACTIVATION
 		? <span style={{ color: '#d0a030' }} title={`Low activation: fired in only ${fmtPct(rate)} of ${races} measured races, under 5%`}>{fmtPct(rate)}</span>
 		: <span title={`Fired in ${fmtPct(rate)} of ${races} measured races`}>{fmtPct(rate)}</span>;
+}
+
+/**
+ * One skill's worth: this build against the same build without that skill, on
+ * the search's own seeds. "±" is the 95% half-width, an interval over zero is
+ * the search's "not worth chasing" answer, and an empty cell means that drop was never raced.
+ */
+function contributionCell(d: ContributionDiff | null, unit: 'L' | 'pp') {
+	if (!d) {
+		return <span style={{ opacity: 0.5 }} title="This drop was never raced, so the run holds no number for it">—</span>;
+	}
+	const scale = unit === 'pp' ? 100 : 1;
+	const digits = unit === 'pp' ? 1 : 2;
+	const text = `${fmtN(d.mean * scale, digits)} ± ${fmtN(ciHalfWidth(d.ci95) * scale, digits)} ${unit}`;
+	const seeds = `${d.seeds.toLocaleString()} shared search seeds`;
+	return resolvedDiff(d.ci95)
+		? <span title={seeds}>{text}</span>
+		: <span style={{ opacity: 0.6 }} title={`${seeds}: the 95% interval holds 0, so this is indistinguishable from no effect`}>{text} ≈0</span>;
 }
 
 /** mean ± 95% CI half-width from a MeanSem: ci95 takes the STANDARD DEVIATION,
@@ -720,6 +739,7 @@ function OptimizerResults(props: {
 	const { result, objective, objDigits, leftOut, hints, ownedByGroup, onOpenInCompare } = props;
 	const objLabel = OBJECTIVES.find((o) => o.id === objective)?.label ?? objective;
 	const best = result.best;
+	const contribs = result.contributions?.length ? new Map(result.contributions.map((c) => [c.id, c])) : null;
 	const openCompare = () => onOpenInCompare?.([...best.build.selection]);
 	return (
 		<div class="v2-optimizer-results">
@@ -772,6 +792,8 @@ function OptimizerResults(props: {
 								<th style={thStyle}>Skill</th>
 								<th style={{ ...thStyle, textAlign: 'right' }}>SP</th>
 								<th style={{ ...thStyle, textAlign: 'right' }} title="Share of the races the optimizer already ran in which this skill activated (search seeds, no extra races). Under 5% is flagged.">Activation</th>
+								{contribs && <th style={{ ...thStyle, textAlign: 'right' }} title="Δ lead in clipped lengths if this skill were dropped, from the races the search already ran. Its own decision currency, so the tighter of the two columns.">Δ ℓ if dropped</th>}
+								{contribs && <th style={{ ...thStyle, textAlign: 'right' }} title="Δ P(1st) in percentage points if this skill were dropped, on the same seeds, so wider. Skills overlap, so this column does not add up to the build total.">Δ P(1st) if dropped</th>}
 							</tr>
 						</thead>
 						<tbody>
@@ -783,10 +805,17 @@ function OptimizerResults(props: {
 									</td>
 									<td style={{ ...tdStyle, textAlign: 'right' }}>{calculateSkillCost(id, hints, ownedByGroup)} SP</td>
 									<td style={{ ...tdStyle, textAlign: 'right' }}>{activationCell(id, result.bestActivations)}</td>
+									{contribs && <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>{contributionCell(contribs.get(id)?.lead ?? null, 'L')}</td>}
+									{contribs && <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>{contributionCell(contribs.get(id)?.win ?? null, 'pp')}</td>}
 								</tr>
 							))}
 						</tbody>
 					</table>
+					{contribs && (
+						<div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+							Δ columns: the same build without that skill, measured from the races the search already ran, so they cost no extra races. The search decides on the clipped lead, which is why Δ ℓ is the tighter column and Δ P(1st) the wider one. Skills overlap, so neither column adds up to the build total.
+						</div>
+					)}
 					{best.build.selection.some(activationCountSkill) && (
 						<div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
 							* activation depends on earlier activations (activate_count condition): the rate shown is measured from races, not predicted

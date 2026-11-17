@@ -16,6 +16,7 @@ import {
 } from './config';
 import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, SEED_LIST_SIZE, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
+import { contributionsOf } from './contributions';
 import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
 import { affordable, affordableAdds, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
 import { fitSurrogate, SurrogateModel, SurrogateSample } from './surrogate';
@@ -475,6 +476,16 @@ async function runSingleScenario(
 		// paired one build's lead with another build's win rate.
 		const both = lens.map((l, i) => [l, wins[i]] as const).filter(([l, w]) => Number.isFinite(l) && Number.isFinite(w));
 		const orderingCorrelation = spearman(both.map(([l]) => l), both.map(([, w]) => w));
+		// Per-skill worth of the recommendation, read from the search cache: the last
+		// local-search round raced this build minus one skill, so no extra races. Null
+		// where a drop was pruned before its first race or evicted, and the UI says so.
+		const contributions = contributionsOf(best.build.selection, (id) => {
+			const without = refOf(best.build.selection.filter((x) => x !== id));
+			return {
+				lead: ev.paired(NS_SEARCH, si, best.build, without, searchPick),
+				win: ev.paired(NS_SEARCH, si, best.build, without, (v) => v.win),
+			};
+		});
 		emit('done');
 		let maxSearchFilled = 0;
 		for (const b of evaluated.values()) maxSearchFilled = Math.max(maxSearchFilled, filled(ev, NS_SEARCH, si, b));
@@ -491,6 +502,7 @@ async function runSingleScenario(
 			// search races already run (the pane shows the rate next to each
 			// skill and flags one under 5%).
 			bestActivations: tele(best.build) ?? undefined,
+			contributions,
 		};
 	};
 
@@ -1469,6 +1481,9 @@ async function verifyAcross(
 		certified2MovePeak: certsOf('p2'),
 		orderingCorrelation: per[0].orderingCorrelation,
 		bestActivations,
+		// A breakdown belongs to one scenario's search cache: carry the scenario whose
+		// own recommendation is the merged one, and none when the scenarios differ.
+		contributions: per.find(r => r.best.build.id === best.build.id)?.contributions,
 	};
 }
 
