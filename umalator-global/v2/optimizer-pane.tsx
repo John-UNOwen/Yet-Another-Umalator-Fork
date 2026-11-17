@@ -76,6 +76,17 @@ export interface OptimizerPaneProps {
 	/** A Hachimi career dump was imported: the app owns the uma and hint state, so
 	 *  it applies those (stats, aptitudes, outfit, learned skills, hint levels). */
 	onImportCareer?: (imp: CareerImport) => void;
+	/** Filled with this pane's run and stop, so the app's RUN button drives the
+	 *  optimizer (the pane has no run button of its own). */
+	controlRef?: { current: OptimizerControl | null };
+	/** Called when a run starts and when it ends (also on unmount). */
+	onRunningChange?: (running: boolean) => void;
+}
+
+/** What the app's RUN button calls while the Optimizer tab is open. */
+export interface OptimizerControl {
+	run(): void;
+	stop(): void;
 }
 
 /** skillnames values are arrays like ["JP", "EN"] — prefer last (EN), same as skill-chart-pane. */
@@ -207,7 +218,14 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [customMinutes, setCustomMinutes] = useState(DEFAULT_CUSTOM.minutes);
 	const [seed, setSeed] = useState(props.seed);
 	const [useBook, setUseBook] = useState(true);
-	const [running, setRunning] = useState(false);
+	/** Wider search: spread-out starting builds and kicks that grow. */
+	const [wideSearch, setWideSearch] = useState(false);
+	const [running, setRunningState] = useState(false);
+	const onRunningChange = props.onRunningChange;
+	const setRunning = (v: boolean) => {
+		setRunningState(v);
+		onRunningChange?.(v);
+	};
 	const [progress, setProgress] = useState<OptimizerProgress | null>(null);
 	/** Finished run + the objective/digits that shaped it (one value
 	 *  so the results table can't drift from live dropdowns after the run). */
@@ -247,6 +265,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	// nulled (that nulling is exactly the window the leak used to slip through).
 	useEffect(() => () => {
 		mountedRef.current = false;
+		props.onRunningChange?.(false);
+		if (props.controlRef) props.controlRef.current = null;
 		ctrlRef.current?.stop();
 		evRef.current?.abort();
 		evRef.current = null;
@@ -429,6 +449,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				{
 					space, scenarioIdx: 0, objective, aggregation: 'mean',
 					bookStarts, current, effort: effortConfig(preset, { starts: customStarts, minutes: customMinutes }),
+					wideSearch, wideSearchSeed: seedUse,
 				},
 				ctrl,
 				(p) => {
@@ -484,6 +505,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			if (mountedRef.current) setRunning(false);
 		}
 	};
+	// The app's RUN button reaches the latest run/stop through this ref.
+	if (props.controlRef) props.controlRef.current = { run: () => { void run(); }, stop };
 
 	// ── guards ────────────────────────────────────────────────────────────────
 	if (!skillData || !workerFactory) {
@@ -579,16 +602,14 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<input type="checkbox" checked={useBook} disabled={running} onChange={() => setUseBook((v) => !v)} />
 					<span style={{ opacity: 0.85 }}>Use &amp; save opening book</span>
 				</label>
-				<button type="button" class="v2-optimizer-run" disabled={running}
-					style={{ padding: '6px 16px', borderRadius: 6, cursor: running ? 'default' : 'pointer' }}
-					onClick={run}>
-					{running ? 'Running…' : 'Run'}
-				</button>
-				<button type="button" class="v2-optimizer-stop" disabled={!running}
-					style={{ padding: '6px 16px', borderRadius: 6, cursor: running ? 'pointer' : 'default' }}
-					onClick={stop}>
-					Stop
-				</button>
+				<label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, paddingBottom: 4, cursor: 'pointer' }}
+					title="Look further from the first answer. Starting builds are held further apart and half of them come from a shuffled knapsack, and a shake-up that keeps failing swaps more skills (2 to 4, then 4 to 6, then 6 to 8). Each starting build covers more ground, so give it more time.">
+					<input type="checkbox" checked={wideSearch} disabled={running} onChange={() => setWideSearch((v) => !v)} />
+					<span style={{ opacity: 0.85 }}>Wider search</span>
+				</label>
+				<span style={{ fontSize: 12, opacity: 0.6, paddingBottom: 4 }}>
+					{running ? 'Press STOP at the top to end the run early.' : 'Press RUN at the top to start.'}
+				</span>
 			</div>
 
 			{/* ── Candidate picker ── */}

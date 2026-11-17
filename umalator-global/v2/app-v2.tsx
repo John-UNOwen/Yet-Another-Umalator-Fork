@@ -67,7 +67,7 @@ import { UmasTab, UmasTabState, initialUmasTabState } from "./roster/umas-tab";
 import { V2ResultsPane, CompareResults, RaceSnapshot, calcStats } from "./results-pane";
 import { VelocityOverlay } from "./velocity-overlay";
 import { SkillChartPane } from "./skill-chart-pane";
-import { OptimizerPane } from "./optimizer-pane";
+import { OptimizerPane, OptimizerControl } from "./optimizer-pane";
 import { PoolExclusionList } from "./pool-exclusions";
 import type { CareerImport } from "./career-import";
 import { SkillChartDetail } from "./skill-chart-detail";
@@ -404,6 +404,10 @@ function App() {
 
   // Simulation results
   const [isRunning, setIsRunning] = useState(false);
+  // The Optimizer tab runs from the same RUN button: the pane hands over its
+  // run/stop here and reports whether a search is going.
+  const optimizerControl = useRef<OptimizerControl | null>(null);
+  const [optimizerRunning, setOptimizerRunning] = useState(false);
   const [results, setResults] = useState<CompareResults | null>(null);
 
   // Skill chart results
@@ -1034,6 +1038,12 @@ function App() {
 
   // Run simulation via worker
   const handleRunSimulation = useCallback(() => {
+    if (mode === "optimizer") {
+      // RUN starts the optimizer, and the same button stops it mid-run.
+      if (optimizerRunning) optimizerControl.current?.stop();
+      else optimizerControl.current?.run();
+      return;
+    }
     setGlobalsimError(null); // superseded by this run
     if (autoSeed) {
       setSeed(Math.floor(Math.random() * 0xFFFFFFFF));
@@ -1126,6 +1136,7 @@ function App() {
     }
   }, [
     mode,
+    optimizerRunning,
     courseId,
     samples,
     ground,
@@ -1575,7 +1586,7 @@ function App() {
                   onClick={handleRunSimulation}
                   disabled={isRunning}
                 >
-                  {isRunning ? "Running..." : "RUN"}
+                  {isRunning ? "Running..." : mode === "optimizer" && optimizerRunning ? "STOP" : "RUN"}
                 </Button>
                 <Dropdown
                   trigger={
@@ -2067,6 +2078,8 @@ function App() {
                     seed={seed}
                     onOpenInCompare={handleOpenInCompare}
                     onImportCareer={handleImportCareer}
+                    controlRef={optimizerControl}
+                    onRunningChange={setOptimizerRunning}
                   />
                 ) : (
                   /* RESULTS - Compare mode */
@@ -2428,6 +2441,7 @@ function App() {
               onViewChange={handleMobileViewChange}
               onRun={handleRunSimulation}
               isRunning={isRunning}
+              runLabel={mode === "optimizer" && optimizerRunning ? "STOP" : undefined}
               hasResults={!!results}
             />
 

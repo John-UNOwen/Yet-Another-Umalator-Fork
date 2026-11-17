@@ -17,9 +17,11 @@ interface MobileNavProps {
 	onRun: () => void;
 	isRunning?: boolean;
 	hasResults?: boolean;
+	/** Overrides the RUN label, e.g. STOP while the optimizer is searching. */
+	runLabel?: string;
 }
 
-export function MobileNav({ activeView, onViewChange, onRun, isRunning, hasResults }: MobileNavProps) {
+export function MobileNav({ activeView, onViewChange, onRun, isRunning, hasResults, runLabel }: MobileNavProps) {
 	return (
 		<nav class="v2-mobile-nav">
 			<button
@@ -45,7 +47,7 @@ export function MobileNav({ activeView, onViewChange, onRun, isRunning, hasResul
 				disabled={isRunning}
 			>
 				<Play size={24} />
-				<span>{isRunning ? 'Running' : 'RUN'}</span>
+				<span>{isRunning ? 'Running' : runLabel ?? 'RUN'}</span>
 			</button>
 			<button
 				type="button"
