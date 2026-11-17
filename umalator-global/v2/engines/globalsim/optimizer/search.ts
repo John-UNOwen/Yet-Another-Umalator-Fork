@@ -11,13 +11,13 @@ import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf } from './bandit';
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
 	CONTRIB_SEEDS, DEAD_SKILL_MIN_SEEDS,
-	EffortConfig, KAPPA, KICKS_PER_VISIT, LAMBDA_MAXIMIN, PRUNE_KAPPA, SEQ_ADOPT_Z,
+	EffortConfig, KAPPA, KICKS_PER_VISIT, kickLevelOf, kickSizeRange, LAMBDA_MAXIMIN, PRUNE_KAPPA, SEQ_ADOPT_Z,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
 } from './config';
 import { BuildRefLite, calibrateNoise, objectiveOf, pairedOf, PairedDiff, SearchEvaluator, SEED_LIST_SIZE, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { contributionsOf } from './contributions';
-import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
+import { KnapGroup, mckpSolve, mckpSpreadStarts, mckpTopK } from './knapsack';
 import { affordable, affordableAdds, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
 import { fitSurrogate, SurrogateModel, SurrogateSample } from './surrogate';
 import {
@@ -177,6 +177,13 @@ export interface SearchInput {
 	 *  restart points. They only seed the search; every decision is still made
 	 *  by simulation (P1). Affordability is re-checked against the current space. */
 	bookStarts?: readonly string[][];
+	/** Wider search, off by default. Starting builds are held further apart
+	 *  and half come from a knapsack on shuffled values (mckpSpreadStarts), and
+	 *  ILS kicks swap more skills the longer they keep failing (kickSizeRange),
+	 *  also from peaks the climb could not certify. */
+	wideSearch?: boolean;
+	/** Seeds the shuffled starts (the run seed), so a wide run repeats. */
+	wideSearchSeed?: number;
 }
 
 export interface SearchController {
@@ -575,7 +582,12 @@ async function runSingleScenario(
 	// entries only — an empty restart just re-runs restart 1's first re-solve
 	// and wastes a restart slot.
 	const startBuilds: BuildRefLite[] = [];
-	for (const sol of mckpTopK(knapGroups(), space.budget, Math.max(1, cfg.restarts))) {
+	// Wider search: starts held further apart, half of them from a knapsack
+	// re-solved on shuffled values. Seeded from the run seed, so a run repeats.
+	const knapStarts = input.wideSearch
+		? mckpSpreadStarts(knapGroups(), space.budget, Math.max(1, cfg.restarts), mulberry32(fnv1a(`spread\u0000${input.wideSearchSeed ?? 0}`)))
+		: mckpTopK(knapGroups(), space.budget, Math.max(1, cfg.restarts));
+	for (const sol of knapStarts) {
 		const b = remember(refOf(selFromKnap(sol.selection.values())));
 		if (!startBuilds.some(s => s.id === b.id)) startBuilds.push(b);
 	}
@@ -986,20 +998,24 @@ async function runSingleScenario(
 			}
 			return !!d && seqLo(d) > 0;
 		};
-		const makeKick = (Xc: BuildRefLite, kickIdx: number): BuildRefLite => {
+		const makeKick = (Xc: BuildRefLite, kickIdx: number, level = 0): BuildRefLite => {
 			// k = 2–4 random feasible swaps (§C), drop side skewed toward low
 			// in-build value. The PRNG is keyed by identity+restart+kick index,
-			// so the whole run stays deterministic (P6).
+			// so the whole run stays deterministic (P6). A wide search raises
+			// `level` after failed kicks: more swaps, and the sold skill is
+			// picked uniformly, so a strong skill can go too.
 			const rng = mulberry32(fnv1a(`${Xc.id}\u0000${s}\u0000${kickIdx}`));
 			const valOf = (id: string): number => value.get(id) ?? v0.get(id)?.mean ?? 0;
 			let sel = [...Xc.selection];
-			const k = 2 + Math.floor(rng() * 3);
+			const [kLo, kHi] = kickSizeRange(level);
+			const k = kLo + Math.floor(rng() * (kHi - kLo + 1));
 			let moved = 0;
 			for (let step = 0; step < k; step++) {
 				const owned = sel.filter(id => !space.byId.get(id)?.forced);
 				if (!owned.length) break;
 				const asc = [...owned].sort((a, b) => valOf(a) - valOf(b) || (a < b ? -1 : 1));
-				const drop = asc[Math.floor(asc.length * rng() * rng())]; // squared rng: low-value skew
+				// squared rng: low-value skew (uniform at a raised level)
+				const drop = asc[Math.floor(asc.length * (level > 0 ? rng() : rng() * rng()))];
 				const afterDrop = sel.filter(id => id !== drop);
 				// §E never-add: skip a refill whose add is recorded never to
 				// fire in the build it would create.
@@ -1124,20 +1140,38 @@ async function runSingleScenario(
 		};
 		let peak = await climbToPeak(X, `${tagOf(s)} climb`);
 		let kickIdx = 0;
-		while (peak.p1 && kickIdx < kicksPerVisit && !climbOut()) {
-			const Xk = makeKick(peak.X, kickIdx);
+		let failedKicks = 0; // in a row; a wide search grows the kick with it
+		const wide = !!input.wideSearch;
+		// A wide search also kicks a peak the climb could not certify: that peak
+		// is where the search would otherwise stop looking.
+		while ((peak.p1 || wide) && kickIdx < kicksPerVisit && !climbOut()) {
+			const level = wide ? kickLevelOf(failedKicks) : 0;
+			const Xk = makeKick(peak.X, kickIdx, level);
 			kickIdx++;
 			// Degenerate space (nothing kickable): the kick could not change the
 			// build, so no later kick can either — stop kicking this restart.
-			if (Xk.id === peak.X.id) { dbg('  ILS kick impossible (nothing owned), stopping'); break; }
-			emit('local', `${tagOf(s)} ILS kick ${kickIdx}/${kicksPerVisit}`, provisional(Xk));
+			// A wide search only stops when nothing is owned: a kick that swapped
+			// back to the same build counts as a failed kick, and the next one is
+			// bigger.
+			if (Xk.id === peak.X.id) {
+				if (wide && peak.X.selection.some(id => !space.byId.get(id)?.forced)) { failedKicks++; continue; }
+				dbg('  ILS kick impossible (nothing owned), stopping'); break;
+			}
+			const size = wide ? ` · ${kickSizeRange(level).join('-')} swaps` : '';
+			emit('local', `${tagOf(s)} ILS kick ${kickIdx}/${kicksPerVisit}${size}`, provisional(Xk));
 			const r = await climbToPeak(Xk, `restart ${s + 1} kick ${kickIdx} climb`);
 			// Accept only a certified peak that beats the current one
-			// significantly (§C); anything else falls back to the old peak.
-			if (r.p1 && (await significantBetter(r.X, peak.X))) {
+			// significantly (§C); anything else falls back to the old peak. A
+			// wide search kicks uncertified peaks too, so it takes an uncertified
+			// one on the same significance test.
+			if ((r.p1 || wide) && (await significantBetter(r.X, peak.X))) {
 				dbg('  ILS kick accepted', r.X.id || '(base)');
 				peak = r;
-			} else dbg('  ILS kick rejected');
+				failedKicks = 0;
+			} else {
+				dbg('  ILS kick rejected');
+				failedKicks++;
+			}
 		}
 		X = peak.X;
 		remember(X);

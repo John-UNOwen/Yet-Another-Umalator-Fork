@@ -4,7 +4,7 @@
  */
 
 import test from 'tape';
-import { KnapGroup, mckpSolve, mckpTopK } from './knapsack';
+import { KnapGroup, mckpSolve, mckpSpreadStarts, mckpTopK, SPREAD_MIN_DIFF_PICKS } from './knapsack';
 
 /** Tiny deterministic PRNG (LCG) — tests must be reproducible. */
 function lcg(seed: number): () => number {
@@ -144,4 +144,56 @@ test('mckpTopK starts overlap heavily and differ by >= 3 picks (§3.B.3)', t => 
 	t.ok(sumJac / pairs >= 0.6, `starts overlap heavily (avgJaccard=${(sumJac / pairs).toFixed(3)}, was 0.00 pre-fix)`);
 	t.ok(worstRel >= 0.9, `every start is near-optimal (worst value = ${(worstRel * 100).toFixed(1)}% of the optimum, was ~34% pre-fix)`);
 	return t.end();
+});
+
+// Wider search starts: held SPREAD_MIN_DIFF_PICKS apart, half of them from a
+// knapsack on shuffled values. Same realistic regime as the §3.B.3 test.
+test('mckpSpreadStarts: optimum first, starts further apart, repeatable', t => {
+	const rnd = lcg(0xBEEF01);
+	let full = 0, minDiff = Infinity, jacSpread = 0, nSpread = 0, jacTop = 0, nTop = 0, repeat = true, optFirst = true;
+	const jaccard = (a: Set<string>, b: Set<string>) => {
+		let inter = 0;
+		for (const x of a) if (b.has(x)) inter++;
+		return inter / (a.size + b.size - inter);
+	};
+	for (let inst = 0; inst < 12; inst++) {
+		const groups: KnapGroup[] = [];
+		const allCost: number[] = [];
+		const nG = 30 + Math.floor(rnd() * 5);
+		for (let g = 0; g < nG; g++) {
+			const options = Array.from({ length: 2 + Math.floor(rnd() * 2) }, (_, i) => {
+				const cost = 20 + Math.floor(rnd() * 120);
+				allCost.push(cost);
+				return { id: `g${g}o${i}`, cost, value: Math.round(rnd() * 1000) / 10 };
+			});
+			groups.push({ groupId: `g${g}`, options });
+		}
+		allCost.sort((a, b) => a - b);
+		const budget = Math.round(allCost.slice(0, 15).reduce((a, c) => a + c, 0) * 1.2);
+		const spread = mckpSpreadStarts(groups, budget, 6, lcg(77 + inst));
+		const again = mckpSpreadStarts(groups, budget, 6, lcg(77 + inst));
+		repeat &&= spread.map(s => s.ids.join(',')).join('|') === again.map(s => s.ids.join(',')).join('|');
+		const opt = mckpSolve(groups, budget)!;
+		optFirst &&= spread[0]?.ids.join(',') === opt.ids.join(',');
+		if (spread.length === 6) full++;
+		const sets = spread.map(s => new Set(s.ids));
+		for (let a = 0; a < sets.length; a++) for (let b = a + 1; b < sets.length; b++) {
+			let d = 0;
+			for (const x of sets[a]) if (!sets[b].has(x)) d++;
+			for (const x of sets[b]) if (!sets[a].has(x)) d++;
+			minDiff = Math.min(minDiff, d);
+		}
+		const optSet = new Set(opt.ids);
+		const top = mckpTopK(groups, budget, 6);
+		for (const s of spread.slice(1)) { jacSpread += jaccard(optSet, new Set(s.ids)); nSpread++; }
+		for (const s of top.slice(1)) { jacTop += jaccard(optSet, new Set(s.ids)); nTop++; }
+	}
+	const spreadJ = jacSpread / nSpread, topJ = jacTop / nTop;
+	console.log(`  spread: full=${full}/12 minPicksDiff=${minDiff} overlapWithOpt spread=${spreadJ.toFixed(3)} topK=${topJ.toFixed(3)}`);
+	t.ok(optFirst, 'the first start is the exact optimum');
+	t.ok(repeat, 'the same rng seed gives the same starts');
+	t.ok(full >= 10, `six starts found on most instances (full=${full}/12)`);
+	t.ok(minDiff >= SPREAD_MIN_DIFF_PICKS, `every pair differs by >= ${SPREAD_MIN_DIFF_PICKS} picks (min=${minDiff})`);
+	t.ok(spreadJ < topJ, `starts sit further from the optimum than the default top-K (${spreadJ.toFixed(3)} < ${topJ.toFixed(3)})`);
+	t.end();
 });

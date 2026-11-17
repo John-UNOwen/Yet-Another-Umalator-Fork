@@ -131,6 +131,20 @@ export const THOROUGH: EffortConfig = {
  *  reached, so every start is explored before any one of them is kicked again. */
 export const KICKS_PER_VISIT = 10;
 
+/** Wider search: failed kicks in a row before the kick grows one level. */
+export const KICK_GROW_AFTER = 3;
+/** Wider search: the largest kick level (6 to 8 swaps). */
+export const KICK_MAX_LEVEL = 2;
+/** Kick level after `failed` kicks in a row (wider search only). */
+export function kickLevelOf(failed: number): number {
+	return Math.min(KICK_MAX_LEVEL, Math.floor(Math.max(0, failed) / KICK_GROW_AFTER));
+}
+/** Swaps one kick makes at a level: 2 to 4 at level 0 (the default kick),
+ *  then 4 to 6, then 6 to 8. A build with fewer skills stops at what it owns. */
+export function kickSizeRange(level: number): [number, number] {
+	return [2 + 2 * level, 4 + 2 * level];
+}
+
 /** Thorough sizes, no deadline, verification grows to the cap. */
 export const UNTIL_STOPPED: EffortConfig = {
 	preset: 'untilStopped',

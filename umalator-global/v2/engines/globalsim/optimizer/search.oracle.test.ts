@@ -17,7 +17,7 @@
 
 import test from 'tape';
 import { NS_SEARCH, NS_VERIFY } from './cache';
-import { EffortConfig, KICKS_PER_VISIT } from './config';
+import { EffortConfig, KICK_GROW_AFTER, KICK_MAX_LEVEL, kickLevelOf, kickSizeRange, KICKS_PER_VISIT } from './config';
 import { BuildRefLite, objectiveOf, pairedOf, SearchEvaluator, statsOf } from './evaluator';
 import { affordable, BuildSpace, OptOption, simIdentity } from './space';
 import { aggregateValues, clipLeadL, createController, LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS, leadClipL, runOptimizer, searchPickOf, SearchCurrency } from './search';
@@ -623,6 +623,60 @@ test('until stopped visits every starting build before a second pass', async t =
 	t.deepEqual([...firstPass].sort((a, b) => a - b), Array.from({ length: total }, (_, i) => i + 1),
 		'every starting build ran in the first pass');
 	t.comment(secondPass ? 'a second pass started' : 'the search ended by itself after the first pass');
+	t.end();
+});
+
+test('wide search: kick size grows after failed kicks, 2-4 then 4-6 then 6-8', t => {
+	t.deepEqual([0, 1, 2].map(kickSizeRange), [[2, 4], [4, 6], [6, 8]], 'swap ranges per level');
+	t.equal(kickLevelOf(0), 0, 'no failures: the default kick');
+	t.equal(kickLevelOf(KICK_GROW_AFTER - 1), 0, 'still level 0 just before the threshold');
+	t.equal(kickLevelOf(KICK_GROW_AFTER), 1, 'grows one level at the threshold');
+	t.equal(kickLevelOf(1000), KICK_MAX_LEVEL, 'capped at the top level');
+	t.end();
+});
+
+test('wide search: grown kicks run, results stay feasible and repeat, quality holds', async t => {
+	// A wide δ_min lets the climb certify at this harness's noise, so kicks run
+	// and fail often enough to grow.
+	const cfg: EffortConfig = { ...TEST_CFG, deltaMinL: 1, restarts: 4, kicks: 10, climbRaces: Infinity };
+	const run = async (inst: Instance, wide: boolean, onNote?: (n: string) => void) => {
+		const ev = new OracleEval(inst);
+		const res = await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: cfg, wideSearch: wide, wideSearchSeed: 7 },
+			createController(), (p: OptimizerProgress) => { if (p.note && onNote) onNote(p.note); });
+		ev.dispose();
+		return res;
+	};
+	// A larger pool (25 to 35 options) so builds own enough skills to kick.
+	const inst = genInstance(4242, 25, 35);
+	let grown = 0, sized = 0;
+	const a = await run(inst, true, n => {
+		const m = / ILS kick \d+\/\d+ · (\d+)-(\d+) swaps/.exec(n);
+		if (m) { sized++; if (Number(m[1]) > 2) grown++; }
+	});
+	const b = await run(inst, true);
+	let defaultSized = 0;
+	await run(inst, false, n => { if (/ swaps$/.test(n)) defaultSized++; });
+	t.ok(sized > 0, `the wide run kicked (${sized} kicks)`);
+	t.ok(grown > 0, `some kicks grew past 2-4 swaps (${grown} of ${sized})`);
+	t.equal(defaultSized, 0, 'the default run keeps the default kick');
+	t.equal(a.best.build.id, b.best.build.id, 'same recommendation across wide runs');
+	t.deepEqual(a.best.obj, b.best.obj, 'same verification numbers across wide runs');
+	for (const row of a.shortlist) t.ok(row.leftover >= 0 && affordable(inst.space, row.build.selection), 'never over budget');
+	// Quality: on 20 instances the wide search lands within δ_min of the model
+	// optimum at least as often as the default search, minus noise slack.
+	const near = async (wide: boolean) => {
+		let hits = 0;
+		for (let i = 0; i < 20; i++) {
+			const ins = genInstance(1234 + i * 97);
+			const res = await run(ins, wide);
+			const rec = refOf(ins.space, [...res.best.build.selection]);
+			if (ins.ranked[0].mu - ins.mu(rec.id) <= TEST_CFG.deltaMinL + 0.15) hits++;
+		}
+		return hits;
+	};
+	const hd = await near(false), hw = await near(true);
+	console.log(`  wide search: near-optimum default=${hd}/20 wide=${hw}/20`);
+	t.ok(hw >= hd - 2, `wide search keeps quality (${hw}/20 vs default ${hd}/20)`);
 	t.end();
 });
 

@@ -122,7 +122,7 @@ const TOPK_RESOLVE_CAP = 240;
  * of restart 1's skills: Jaccard overlap 0.00 and far worse starts.)
  * Values are noisy, so K solutions are RESTART POINTS, not rankings.
  */
-export function mckpTopK(groups: readonly KnapGroup[], budget: number, k: number): KnapSolution[] {
+export function mckpTopK(groups: readonly KnapGroup[], budget: number, k: number, minDiff: number = TOPK_MIN_DIFF_PICKS): KnapSolution[] {
 	const first = mckpSolve(groups, budget);
 	if (!first) return [];
 	const out: KnapSolution[] = [first];
@@ -170,12 +170,62 @@ export function mckpTopK(groups: readonly KnapGroup[], budget: number, k: number
 		cands.sort((a, b) => b.sol.value - a.sol.value || (key(b.sol) < key(a.sol) ? -1 : 1));
 		const next: ReturnType<typeof nodes> = [];
 		for (const c of cands) {
-			if (out.every(s => picksDiff(new Set(s.ids), c.ids) >= TOPK_MIN_DIFF_PICKS)) {
+			if (out.every(s => picksDiff(new Set(s.ids), c.ids) >= minDiff)) {
 				out.push(c.sol);
 				if (out.length >= k) break;
 			} else if (reSolvesLeft > 0) next.push(c); // too close: exclude one of its picks next round
 		}
 		level = next;
+	}
+	return out;
+}
+
+/** Picks two starts differ by: a skill in one and not the other counts once. */
+function picksApart(a: readonly string[], b: readonly string[]): number {
+	const sa = new Set(a), sb = new Set(b);
+	let d = 0;
+	for (const x of sa) if (!sb.has(x)) d++;
+	for (const x of sb) if (!sa.has(x)) d++;
+	return d;
+}
+
+/** Wider search: every start differs from every other by at least this many
+ *  picks, about three skills swapped (the default floor is 3). */
+export const SPREAD_MIN_DIFF_PICKS = 6;
+/** Wider search: noise added to each option's value for the shuffled starts,
+ *  in units of the median |value|. At 1 a skill worth a typical amount can
+ *  trade places with one worth nothing alone, which is how a skill that only
+ *  pays off next to another one gets into a start. */
+export const SPREAD_NOISE = 1;
+/** Shuffled-start tries per slot before the slot is given up. */
+const SPREAD_TRIES_PER_SLOT = 8;
+
+/**
+ * Starts for the wider search. Half the slots are the top-K solutions held
+ * SPREAD_MIN_DIFF_PICKS apart, the other half re-solve the knapsack with noise
+ * on every option's value, so they leave the area around the best additive
+ * build. Every start keeps the same distance from all the others. The first
+ * start is still the exact optimum. `rng` returns uniforms in [0, 1), so a
+ * fixed seed gives the same starts.
+ */
+export function mckpSpreadStarts(groups: readonly KnapGroup[], budget: number, k: number, rng: () => number): KnapSolution[] {
+	const out = mckpTopK(groups, budget, Math.max(1, Math.ceil(k / 2)), SPREAD_MIN_DIFF_PICKS);
+	if (!out.length) return out;
+	const mags = groups.flatMap(g => g.options.map(o => Math.abs(o.value))).filter(v => v > 0).sort((a, b) => a - b);
+	const scale = (mags.length ? mags[Math.floor(mags.length / 2)] : 1) * SPREAD_NOISE;
+	const gauss = (): number => {
+		const u = Math.max(rng(), 1e-12), v = rng();
+		return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+	};
+	const valueOf = new Map(groups.flatMap(g => g.options.map(o => [`${g.groupId}\u0000${o.id}`, o.value] as const)));
+	for (let tries = 0; out.length < k && tries < k * SPREAD_TRIES_PER_SLOT; tries++) {
+		const noisy = groups.map(g => ({ ...g, options: g.options.map(o => ({ ...o, value: o.value + scale * gauss() })) }));
+		const sol = mckpSolve(noisy, budget);
+		if (!sol || !sol.ids.length) continue;
+		if (!out.every(s => picksApart(s.ids, sol.ids) >= SPREAD_MIN_DIFF_PICKS)) continue;
+		let value = 0;
+		for (const [gid, id] of sol.selection) value += valueOf.get(`${gid}\u0000${id}`) ?? 0;
+		out.push({ ...sol, value });
 	}
 	return out;
 }
