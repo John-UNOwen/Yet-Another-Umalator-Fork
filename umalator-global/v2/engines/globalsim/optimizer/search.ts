@@ -344,7 +344,7 @@ async function runSingleScenario(
 		return leaner;
 	};
 
-	// ── §K: the race plan behind the progress bar / ETA ───────────────────────
+	// ── §K: the race plan (racesPlanned) ──────────────────────────────────────
 	// The old plan (`restarts × dMaxIters × batchCap`) assumed a capped climb
 	// that no longer exists: the §C climb has no round cap. What bounds the
 	// search now is the per-restart climbRaces budget (config: "keep race
@@ -372,15 +372,71 @@ async function runSingleScenario(
 		const at = done ? restartRaceMarks[done - 1] : searchRaces0;
 		return Math.round(at + Math.max(races - at, 6 * cfg.gSeedsMin));
 	};
+	// ── §K: time left on the progress line ────────────────────────────────────
+	// The race plan charges the start in progress the average of the finished
+	// ones, however long it has already run. A start's cost swings tenfold (a
+	// climb can end after one round or adopt ten times, and kicks follow only a
+	// certified peak), so after a cheap first start the bar sat full and "1 s
+	// left" held through a long second one. The time left works from the
+	// finished starts' durations instead. The start in progress is charged the
+	// larger of what the average still leaves and as long again as it has run
+	// (the median guess for a task of unknown length), so an overrun raises the
+	// figure instead of pinning it at zero. The preset's time limit caps the
+	// search part, and Stage G's races are added at the race rate so far.
+	const restartMs: number[] = []; // each finished start's duration
+	let restartAt: number | null = null; // when the start in progress began
+	let skillsGuess = 0; // skills in the latest provisional best: Stage G races a drop per skill
+	let verifyRacesLeft: (() => number) | null = null; // Stage G's own count, once it runs
+	const endless = !Number.isFinite(cfg.timeBudgetMs) && !Number.isFinite(cfg.kicks); // Until stopped
+	const contribSeeds = cfg.contribSeeds ?? CONTRIB_SEEDS;
+	/** Search time left, capped by the time limit, or undefined with nothing to go on. */
+	const searchMsLeft = (now: number, msPerRace: number): { ms: number; capped: boolean } | undefined => {
+		if (verifyRacesLeft) return { ms: 0, capped: false };
+		if (endless) return undefined;
+		const prior = perRestartPlan();
+		const avg = restartMs.length
+			? restartMs.reduce((a, b) => a + b, 0) / restartMs.length
+			: prior === undefined ? undefined : prior * msPerRace;
+		if (avg === undefined) return undefined;
+		let ms = 0;
+		let perStart = avg;
+		let inProgress = 0;
+		if (restartAt !== null) {
+			const spent = now - restartAt;
+			const left = Math.max(avg - spent, spent);
+			ms += left;
+			inProgress = 1;
+			// The starts still ahead cost the average of the finished ones and this one's projection.
+			perStart = (avg * restartMs.length + spent + left) / (restartMs.length + 1);
+		}
+		ms += Math.max(0, startCount - restartMs.length - inProgress) * perStart;
+		const cap = cfg.timeBudgetMs - (now - t0);
+		return ms > cap ? { ms: Math.max(0, cap), capped: true } : { ms, capped: false };
+	};
+	/** Stage G's races before it starts: every shortlisted build at the seed
+	 *  floor and a drop per skill at the worth setting (drops the climb already
+	 *  raced cost less, so this leans long). */
+	const verifyRacesGuess = (): number =>
+		(shortK + (vs ? 1 : 0)) * cfg.gSeedsMin + shortK * skillsGuess * contribSeeds;
 	const emit = (stage: OptimizerProgress['stage'], note?: string, best?: ScoredBuild): void => {
 		const races = ev.racesRun();
 		const planned = planOf(races);
+		const now = Date.now();
+		if (best) skillsGuess = best.build.selection.length;
+		let etaMs: number | undefined;
+		let etaCapped: boolean | undefined;
+		if (stage === 'done') etaMs = 0;
+		else if (races > 100) {
+			const msPerRace = (now - t0) / races;
+			const search = searchMsLeft(now, msPerRace);
+			if (search) {
+				etaMs = Math.round(search.ms + (verifyRacesLeft ?? verifyRacesGuess)() * msPerRace);
+				if (search.capped) etaCapped = true;
+			}
+		}
 		onProgress({
-			stage, racesRun: races, racesPlanned: planned ?? 0, elapsedMs: Date.now() - t0,
-			etaMs: planned !== undefined && races > 100
-				? Math.round((Date.now() - t0) / races * Math.max(0, planned - races))
-				: undefined,
-			best, note,
+			stage, racesRun: races, racesPlanned: planned ?? 0, elapsedMs: now - t0,
+			etaMs, etaCapped, best, note,
 		});
 	};
 	const provisional = (b: BuildRefLite): ScoredBuild | undefined => {
@@ -442,7 +498,15 @@ async function runSingleScenario(
 			.filter(x => x.obj && x.obj.n > 0 && Number.isFinite(x.obj!.mean))
 			.sort((a, b) => b.obj!.mean - a.obj!.mean || (a.b.id < b.b.id ? -1 : 1));
 		let n = nMin;
+		// §K time left: the races this stage still has to run. Growth past the
+		// current seed count only happens on a tie, so it is not counted ahead,
+		// and a stopped run skips the worth races.
+		const reportRows = Math.min(pool.length, cfg.shortlistSize ?? pool.length);
+		let worthLeft = (): number => reportRows * skillsGuess * contribSeeds;
+		verifyRacesLeft = () => pool.reduce((a, b) => a + Math.max(0, n - filled(ev, NS_VERIFY, si, b)), 0)
+			+ (ctrl.stopped() ? 0 : worthLeft());
 		for (;;) {
+			emit('verify', `verifying ${n}/${nCap} seeds`);
 			const positions = Array.from({ length: n }, (_, i) => i);
 			await ev.ensure(pool.map(b => ({ ns: NS_VERIFY, scenarioIdx: si, build: b, positions })));
 			const ranked = rankedOf();
@@ -450,7 +514,6 @@ async function runSingleScenario(
 				const top = ev.paired(NS_VERIFY, si, ranked[0].b, ranked[1].b, pick);
 				if (top && !isTie(top.ci95)) break; // #1 vs #2 resolved (§G)
 			}
-			emit('verify', `verifying ${n}/${nCap} seeds`);
 			// Stop mid-verify: truncate on the spot like verifyAcross (anytime, P5).
 			if (ctrl.stopped() || n >= nCap) break;
 			n = Math.min(nCap, n + Math.max(500, Math.floor(cfg.gSeedsMin / 4)));
@@ -501,14 +564,20 @@ async function runSingleScenario(
 		// runner-up may never have been a climb end. Any drop with fewer shared
 		// seeds than the setting is raced here, so every skill has a number. A
 		// stopped run skips the extra races and reports what the cache holds.
-		const contribSeeds = cfg.contribSeeds ?? CONTRIB_SEEDS;
 		const worthRows = rows.filter(r => r.build.selection.length > 0);
+		const sharedSeeds = (r: ScoredBuild, id: string): number =>
+			ev.paired(NS_SEARCH, si, r.build, refOf(r.build.selection.filter((x) => x !== id)), searchPick)?.n ?? 0;
+		// The worth races each row still needs, for the time left (the loop
+		// reads the cache again, since one row's races can cover another's drop).
+		const needs = worthRows.map(r => r.build.selection.reduce((a, id) => a + Math.max(0, contribSeeds - sharedSeeds(r, id)), 0));
+		let worthAt = 0;
+		worthLeft = () => needs.slice(worthAt).reduce((a, b) => a + b, 0);
 		for (let i = 0; i < worthRows.length; i++) {
 			const r = worthRows[i];
+			worthAt = i;
 			const dropOf = (id: string) => refOf(r.build.selection.filter((x) => x !== id));
 			if (!ctrl.stopped()) {
-				const thin = r.build.selection.filter((id) =>
-					(ev.paired(NS_SEARCH, si, r.build, dropOf(id), searchPick)?.n ?? 0) < contribSeeds);
+				const thin = r.build.selection.filter((id) => sharedSeeds(r, id) < contribSeeds);
 				if (thin.length) {
 					emit('verify', `measuring skill worth · build ${i + 1} of ${worthRows.length}`);
 					const positions = Array.from({ length: contribSeeds }, (_, k) => k);
@@ -525,6 +594,7 @@ async function runSingleScenario(
 			r.activations = tele(r.build) ?? undefined;
 		}
 		const contributions = best.contributions ?? contributionsOf(best.build.selection, () => ({ lead: null, win: null }));
+		worthAt = worthRows.length;
 		emit('done');
 		let maxSearchFilled = 0;
 		for (const b of evaluated.values()) maxSearchFilled = Math.max(maxSearchFilled, filled(ev, NS_SEARCH, si, b));
@@ -684,6 +754,7 @@ async function runSingleScenario(
 	for (let s = 0; s < startBuilds.length; s++) {
 		if (ctrl.stopped()) break;
 		if (Date.now() - t0 > cfg.timeBudgetMs) { dbg('time budget hit at restart', s); break; }
+		restartAt = Date.now(); // §K time left
 		let X = startBuilds[s];
 		const value = new Map<string, number>();   // in-context option values (ℓ deltas)
 		const valueN = new Map<string, number>();  // …and the seed count each was measured at
@@ -1202,7 +1273,9 @@ async function runSingleScenario(
 		traceRestartEnd(X);
 		peakCerts.set(X.id, { p1: peak.p1, p2: peak.p2 });
 		pinSearch(X); // §K: the end just reached is pinned from here on
-		restartRaceMarks.push(ev.racesRun()); // §K ETA: this restart's measured cost is now the estimate for the rest
+		restartRaceMarks.push(ev.racesRun()); // §K plan: this restart's measured cost is now the estimate for the rest
+		restartMs.push(Date.now() - (restartAt ?? Date.now())); // §K time left: and its duration
+		restartAt = null;
 		// Until stopped: the pass is over, so queue its peaks for another pass.
 		// A pass that ran no new races found nothing left to try (every move is
 		// cached), so the search ends there and Stage G takes over.

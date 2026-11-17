@@ -166,7 +166,13 @@ export interface OptimizerProgress {
 	/** Current best (search seeds, provisional) — visible within ~20 s and ever-improving. */
 	best?: ScoredBuild;
 	elapsedMs: number;
+	/** Time to the end of the run, the checking stage included. Missing while
+	 *  nothing bounds the run (Until stopped, or no race budget and no finished
+	 *  starting build to time). */
 	etaMs?: number;
+	/** The time limit, not the work left, ends the search: etaMs is the limit
+	 *  plus the checking stage, and a longer limit would let it try more. */
+	etaCapped?: boolean;
 	note?: string;
 }
 

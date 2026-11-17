@@ -203,6 +203,19 @@ function fmtDuration(ms: number): string {
 	return `${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
+/** A time estimate, rounded to what it can promise: 5 s steps under a minute,
+ *  10 s steps under 10 minutes, whole minutes after that. */
+function fmtEstimate(ms: number): string {
+	const sec = Math.max(0, ms / 1000);
+	if (sec < 60) return `${Math.max(5, Math.round(sec / 5) * 5)} s`;
+	if (sec < 600) {
+		const s = Math.round(sec / 10) * 10;
+		return `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ''}`;
+	}
+	const min = Math.round(sec / 60);
+	return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}`;
+}
+
 // ── goal, effort and stage vocabulary ───────────────────────────────────────
 
 interface GoalInfo { id: ObjectiveKind; label: string; short: string; rate: boolean; unit: string }
@@ -379,7 +392,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		setRunningState(v);
 		onRunningChange?.(v);
 	};
-	const [progress, setProgress] = useState<OptimizerProgress | null>(null);
+	const [progress, setProgress] = useState<LiveProgress | null>(null);
 	const [runResult, setRunResult] = useState<RunSnapshot | null>(null);
 	const [warnings, setWarnings] = useState<string[]>([]);
 	const [message, setMessage] = useState<string | null>(null); // errors and hints share one line
@@ -401,6 +414,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const ctrlRef = useRef<SearchController | null>(null);
 	const runningRef = useRef(false);
 	const lastUiRef = useRef(0); // progress-throttle timestamp
+	const heldUiRef = useRef<OptimizerProgress | null>(null); // newest event the throttle held back
+	const flushUiRef = useRef<number | null>(null); // timer that shows it when the gap ends
 	// False once unmounted. app-v2 renders this pane only on the Optimizer tab, so
 	// switching tabs unmounts it while a run is still in flight. Every post-await
 	// setState below is gated on this so nothing touches a dead component.
@@ -653,12 +668,29 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				(p) => {
 					// A mid-run unmount can still emit before the abort unwinds the run.
 					if (!mountedRef.current) return;
-					// Stage events fire often: cap state updates at about 10/s (the
-					// terminal 'done' event always passes through).
-					const now = Date.now();
-					if (p.stage === 'done' || now - lastUiRef.current >= 100) {
-						lastUiRef.current = now;
-						setProgress(p);
+					// Stage events fire often: cap state updates at about 10/s. The
+					// newest event held back is shown when the gap ends, so a long
+					// quiet stretch never leaves an older one on screen (the terminal
+					// 'done' event always passes straight through).
+					const show = (q: OptimizerProgress) => {
+						lastUiRef.current = Date.now();
+						setProgress({ ...q, receivedAt: lastUiRef.current });
+					};
+					const wait = 100 - (Date.now() - lastUiRef.current);
+					if (p.stage === 'done' || wait <= 0) {
+						if (flushUiRef.current != null) window.clearTimeout(flushUiRef.current);
+						flushUiRef.current = null;
+						show(p);
+						return;
+					}
+					heldUiRef.current = p;
+					if (flushUiRef.current == null) {
+						flushUiRef.current = window.setTimeout(() => {
+							flushUiRef.current = null;
+							const q = heldUiRef.current;
+							heldUiRef.current = null;
+							if (q && mountedRef.current && runningRef.current) show(q);
+						}, wait);
 					}
 				},
 			);
@@ -685,6 +717,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			}
 			ev?.dispose();
 			if (evRef.current === ev) evRef.current = null;
+			if (flushUiRef.current != null) window.clearTimeout(flushUiRef.current);
+			flushUiRef.current = null;
+			heldUiRef.current = null;
 			ctrlRef.current = null;
 			runningRef.current = false;
 			if (mountedRef.current) setRunning(false);
@@ -921,7 +956,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			{/* ── Live progress ── */}
 			{running && (
 				<section class="v2-opt-card v2-opt-progress">
-					{progress ? <ProgressView progress={progress} objective={objective} untilStopped={preset === 'untilStopped'} />
+					{progress ? <ProgressView progress={progress} objective={objective} untilStopped={preset === 'untilStopped'}
+						limitMs={cfgNow.timeBudgetMs} />
 						: <div class="v2-opt-muted">Starting the engine…</div>}
 					<div class="v2-opt-muted">Press STOP at the top to end the run early and check what it has found.</div>
 				</section>
@@ -942,17 +978,29 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	);
 }
 
-/** Live progress: the stage, a bar of races run against races planned, timing
- *  and the provisional best build. Until stopped has no plan, so its bar only
+/** A progress event and when the pane received it, so the clock can tick on
+ *  between events. */
+type LiveProgress = OptimizerProgress & { receivedAt: number };
+
+/** Live progress: the stage, a bar of time spent against the estimated total,
+ *  timing and the provisional best build. The clock and the time left tick
+ *  every second between events. Until stopped has no end, so its bar only
  *  names the stage. The search moves back and forth between the testing and
  *  improving stages for every starting build, so the step shows where it is
  *  now, not how much is done. */
-function ProgressView(props: { progress: OptimizerProgress; objective: ObjectiveKind; untilStopped: boolean }) {
-	const { progress, objective, untilStopped } = props;
+function ProgressView(props: { progress: LiveProgress; objective: ObjectiveKind; untilStopped: boolean; limitMs: number }) {
+	const { progress, objective, untilStopped, limitMs } = props;
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(id);
+	}, []);
+	const since = Math.max(0, now - progress.receivedAt);
+	const elapsed = progress.elapsedMs + since;
+	const left = progress.etaMs != null ? Math.max(0, progress.etaMs - since) : null;
 	const step = STAGE_ORDER.indexOf(progress.stage);
 	const done = progress.stage === 'done';
-	const frac = done ? 1
-		: progress.racesPlanned > 0 ? Math.min(0.99, progress.racesRun / progress.racesPlanned) : null;
+	const frac = done ? 1 : left != null ? Math.min(0.99, elapsed / Math.max(1, elapsed + left)) : null;
 	const note = plainNote(progress.note);
 	return (
 		<Fragment>
@@ -960,8 +1008,8 @@ function ProgressView(props: { progress: OptimizerProgress; objective: Objective
 				<strong>{STAGE_LABEL[progress.stage]}</strong>
 				<span class="v2-opt-muted">
 					{step >= 0 ? `step ${step + 1} of ${STAGE_ORDER.length} · ` : ''}
-					{progress.racesRun.toLocaleString()} races · {fmtDuration(progress.elapsedMs)}
-					{progress.etaMs != null ? ` · about ${fmtDuration(progress.etaMs)} left` : ''}
+					{progress.racesRun.toLocaleString()} races · {fmtDuration(elapsed)}
+					{left != null ? ` of about ${fmtEstimate(elapsed + left)} · ${left < 5000 ? 'finishing' : `about ${fmtEstimate(left)} left`}` : ''}
 				</span>
 			</div>
 			<div class={`v2-opt-progressbar${frac == null ? ' indeterminate' : ''}`} role="progressbar"
@@ -970,6 +1018,12 @@ function ProgressView(props: { progress: OptimizerProgress; objective: Objective
 			</div>
 			{(note || (frac == null && untilStopped)) && (
 				<div class="v2-opt-muted">{note}{frac == null && untilStopped ? `${note ? ' · ' : ''}runs until you press STOP` : ''}</div>
+			)}
+			{progress.etaCapped && Number.isFinite(limitMs) && (
+				<div class="v2-opt-muted">
+					The search will likely run into its {fmtEstimate(limitMs)} time limit, then check the best builds.
+					A longer limit would let it try more.
+				</div>
 			)}
 			{progress.best && (
 				<div class="v2-opt-provisional">

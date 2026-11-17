@@ -569,6 +569,32 @@ test('§K ETA: the plan tracks the real per-restart budgets', async t => {
 	t.end();
 });
 
+// §K time left: the search stops at the preset's time limit, so the estimate
+// never plans past it (it reports the limit, flagged, plus the checking
+// stage), and Until stopped, which has no end, reports no time left while it
+// searches. With a 1 ms limit every search event after the first millisecond
+// is past the limit.
+test('§K time left: the time limit caps the estimate, Until stopped has none', async t => {
+	const inst = genInstance(4242);
+	const run = async (cfg: EffortConfig, cap = Infinity): Promise<OptimizerProgress[]> => {
+		const ev = new OracleEval(inst);
+		const ctrl = createController();
+		const seen: OptimizerProgress[] = [];
+		await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: cfg },
+			ctrl, (x: OptimizerProgress) => { seen.push(x); if (x.racesRun > cap) ctrl.stop(); });
+		ev.dispose();
+		return seen;
+	};
+	const searching = (x: OptimizerProgress) => x.stage !== 'verify' && x.stage !== 'done' && x.stage !== 'noise';
+	const limited = (await run({ ...TEST_CFG, restarts: 3, timeBudgetMs: 1 })).filter(x => searching(x) && x.elapsedMs >= 2);
+	t.ok(limited.length > 0, `search events after the limit (${limited.length})`);
+	t.ok(limited.every(x => x.etaMs !== undefined && x.etaCapped === true), 'every one is an estimate flagged as the time limit');
+	const endless = await run({ ...TEST_CFG, restarts: 2, deltaMinL: 1, kicks: Infinity, climbRaces: Infinity, timeBudgetMs: Infinity }, 60_000);
+	t.ok(endless.filter(searching).every(x => x.etaMs === undefined), 'Until stopped: no time left while it searches');
+	t.ok(endless.some(x => x.stage === 'verify' && x.etaMs !== undefined), 'the checking stage after Stop has one');
+	t.end();
+});
+
 // Until stopped (kicks and climbRaces both unbounded) caps each visit to a
 // starting build at KICKS_PER_VISIT, so every start runs before any of them is
 // kicked again. Before the cap, restart 1 kicked until Stop and restarts 2..n
