@@ -1,23 +1,29 @@
 /**
- * Skill Optimizer Pane (SKILL-OPTIMIZER-PLAN Phase 2 UI).
+ * Skill Optimizer pane.
  *
- * Minimal real UI over the optimizer engine in ./engines/globalsim/optimizer:
- * pick candidate skills + SP budget, choose objective/effort/seed, run the
- * anytime search with live progress, and read the verified shortlist with
- * honest ties ("≈ best" = CI of the paired difference contains 0).
+ * Setup (SP, goal, effort, settings), the skill pool (each skill Off, Allowed
+ * or Must have), live progress, and the verified results: one card per build,
+ * and for the selected build what each of its skills is worth. The app's RUN
+ * button starts and stops a run (controlRef).
  *
- * The pane owns only UI state; every number comes from runOptimizer's Stage G
- * verification (never from the search cache).
+ * The pane owns only UI state. Every reported number comes from runOptimizer's
+ * Stage G verification or from its per-build worth measurement, never from
+ * the search's provisional estimates.
  */
 
-import { h } from 'preact';
+import { h, Fragment } from 'preact';
 import { useState, useRef, useEffect, useMemo } from 'preact/hooks';
+import { Wand2 } from 'lucide-react';
 
 import { buildSpace, BuildSpace, activationCountSkill, simIdentity } from './engines/globalsim/optimizer/space';
 import { BuildRefLite, createEvaluator, Evaluator } from './engines/globalsim/optimizer/evaluator';
 import { createController, runOptimizer, SearchController } from './engines/globalsim/optimizer/search';
-import { bookKey, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
-import { CUSTOM_STARTS_MAX, DEFAULT_CUSTOM, effortConfig } from './engines/globalsim/optimizer/config';
+import { bookCount, bookKey, clearBook, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
+import {
+	applyTuning, CUSTOM_STARTS_MAX, DEFAULT_CUSTOM, effortConfig, KICK_GROW_AFTER, KICKS_PER_VISIT,
+	SearchTuning, TUNING_LIMITS,
+} from './engines/globalsim/optimizer/config';
+import { SPREAD_MIN_DIFF_PICKS, SPREAD_NOISE } from './engines/globalsim/optimizer/knapsack';
 import type {
 	ActivationTelemetry, ContributionDiff, EffortPreset, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult,
 	ScenarioSpec, ScoredBuild,
@@ -33,25 +39,30 @@ import { PoolExclusionList } from './pool-exclusions';
 import { STRATEGY_LABELS } from './uma-panel';
 import { pickCareerDump, type CareerImport } from './career-import';
 import { convertUmaStateForWorker } from './simulation-utils';
+import {
+	Badge, Button, CustomSelect, Dice5, Input, NumberInput, RotateCcw, Search, SegmentedControl, Switch, Trash2, Upload,
+} from './components';
 import { HorseState } from '../../components/HorseDefTypes';
+import { BASE_PATH } from '../../components/base-path';
 import { Grade } from '../../uma-skill-tools/RaceParameters';
 import { fromJS, Map as ImmMap } from 'immutable';
 import skillnames from '../skillnames.json';
+import skillmeta from '../../skill_meta.json';
 
 export interface OptimizerPaneProps {
 	/** GlobalSim worker-pool factory (app-v2 globalsimWorkerFactory). */
 	workerFactory: WorkerFactory;
-	/** The current UmaState (uma1) — converted to HorseState here, exactly like the chart run. */
+	/** The current UmaState (uma1), converted to HorseState here like the chart run. */
 	uma: any;
 	/** Offerable skill ids, already coverage-filtered by the caller. */
 	candidates: string[];
 	/** Skills the caller left out of `candidates`, each with its reason (skill-chart-utils partitionPool). */
 	excluded: PoolExclusion[];
-	/** Merged GlobalSim skill table; null while the engine assets load. */
+	/** Merged GlobalSim skill table, null while the engine assets load. */
 	skillData: unknown | null;
-	/** courseData[courseId] — only .distance is read here. */
+	/** courseData[courseId], only .distance is read here. */
 	course: { distance: number } & any;
-	/** app-v2 holds courseId as a number; ChartRaceConditions accepts both. */
+	/** app-v2 holds courseId as a number, ChartRaceConditions accepts both. */
 	courseId: string | number;
 	/** Current UI race-condition values (same numeric enums the app holds). */
 	conditions: { ground: number; weather: number; season: number; time: number };
@@ -60,18 +71,17 @@ export interface OptimizerPaneProps {
 	 *  they cannot end up filtered for one style and raced for another. */
 	onStrategyChange?: (style: string) => void;
 	mobPreset: MobPreset;
-	/** Fixed gate field index (app-v2 globalsimGate, "auto" → undefined): the
-	 *  optimizer must race on the SAME gate the main sim / compare uses, not
-	 *  always the per-seed auto-paired gate. */
+	/** Fixed gate field index (app-v2 globalsimGate, "auto" is undefined): the
+	 *  optimizer races on the SAME gate the compare and chart runs use. */
 	fixedGate?: number;
 	/** groupId → learned skill id (app-v2 hasSkills). */
 	ownedByGroup: Map<string, string>;
 	/** skillHints (skill id → hint level). */
 	hints: Map<string, number>;
-	/** App base seed — pre-fills the seed input. */
+	/** App base seed, pre-fills the seed input. */
 	seed: number;
-	/** "Open in Compare": hand the recommended build's added skills to the app,
-	 *  which merges them onto a copy of the current uma as Uma 2 (optional). */
+	/** "Open in Compare": hand a build's added skills to the app, which merges
+	 *  them onto a copy of the current uma as Uma 2 (optional). */
 	onOpenInCompare?: (addedSkillIds: string[]) => void;
 	/** A Hachimi career dump was imported: the app owns the uma and hint state, so
 	 *  it applies those (stats, aptitudes, outfit, learned skills, hint levels). */
@@ -89,133 +99,238 @@ export interface OptimizerControl {
 	stop(): void;
 }
 
-/** skillnames values are arrays like ["JP", "EN"] — prefer last (EN), same as skill-chart-pane. */
+// ── skill display helpers ───────────────────────────────────────────────────
+
+const meta = skillmeta as Record<string, { iconId?: string | number; groupId?: string }>;
+
+/** skillnames values are arrays like ["JP", "EN"], prefer the last (EN), same as skill-chart-pane. */
 const skillName = (id: string): string => {
 	const names = (skillnames as Record<string, string[]>)[id];
 	return names?.[names.length - 1] || names?.[0] || id;
 };
 
+const skillIcon = (id: string): string => `${BASE_PATH}/icons/${meta[id]?.iconId || 'skill_empty'}.png`;
+
+/** Skill kinds for the pool's groups. Inherited uniques (9xxxxx ids) get their
+ *  own group, the rest go by the icon family the game uses for the skill
+ *  (1xxxx stat boosts, 2001x speed, 2002x recovery, 2004x acceleration, 3xxxx
+ *  debuffs). */
+type SkillKind = 'speed' | 'accel' | 'recovery' | 'debuff' | 'green' | 'other' | 'unique';
+const KIND_ORDER: SkillKind[] = ['speed', 'accel', 'recovery', 'debuff', 'green', 'other', 'unique'];
+const KIND_LABEL: Record<SkillKind, string> = {
+	speed: 'Speed', accel: 'Acceleration', recovery: 'Recovery', debuff: 'Debuffs', green: 'Stat boosts', other: 'Other',
+	unique: 'Inherited uniques',
+};
+function kindOf(id: string): SkillKind {
+	if (id.startsWith('9')) return 'unique';
+	const icon = String(meta[id]?.iconId ?? '');
+	if (icon.startsWith('1')) return 'green';
+	if (icon.startsWith('3')) return 'debuff';
+	if (icon.startsWith('2001')) return 'speed';
+	if (icon.startsWith('2002')) return 'recovery';
+	if (icon.startsWith('2004')) return 'accel';
+	return 'other';
+}
+
+function SkillChip(props: { id: string; tone?: 'added' | 'missing' | 'must' }) {
+	const { id, tone } = props;
+	return (
+		<span class={`v2-opt-chip${tone ? ` ${tone}` : ''}`} title={`${skillName(id)} (${id})`}>
+			<img src={skillIcon(id)} alt="" loading="lazy" />
+			<span>{skillName(id)}</span>
+		</span>
+	);
+}
+
+// ── number formatting ───────────────────────────────────────────────────────
+
 const fmtN = (x: number | undefined | null, d = 2): string =>
-	x != null && Number.isFinite(x) ? x.toFixed(d).replace('-0.00', '0.00') : '—';
+	x != null && Number.isFinite(x) ? x.toFixed(d).replace(/^-0\.(0+)$/, '0.$1') : '—';
 const fmtPct = (x: number | undefined | null): string =>
 	x != null && Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : '—';
 
-/** §E: an activation rate under this share of the races already run gets
- *  flagged (same amber as the stopped-early note). */
-const LOW_ACTIVATION = 0.05;
-
-/**
- * §E one skill's activation cell in the recommended-build table: the share
- * of the already-run (search) races it activated in (fired/seed, the same
- * rule as the skill chart). Zero reads "never fired", under 5% is flagged
- * amber, and no engine counts renders "—".
- */
-function activationCell(id: string, act: ActivationTelemetry | undefined) {
-	if (!act || act.seeds <= 0) {
-		return <span style={{ opacity: 0.5 }} title="The engine reported no activation counts for these races">—</span>;
-	}
-	const fired = act.fired[id] ?? 0;
-	const races = act.seeds.toLocaleString();
-	if (fired === 0) {
-		return <span style={{ color: '#d0a030' }} title={`Never activated in ${races} measured races`}>never fired</span>;
-	}
-	const rate = fired / act.seeds;
-	return rate < LOW_ACTIVATION
-		? <span style={{ color: '#d0a030' }} title={`Low activation: fired in only ${fmtPct(rate)} of ${races} measured races, under 5%`}>{fmtPct(rate)}</span>
-		: <span title={`Fired in ${fmtPct(rate)} of ${races} measured races`}>{fmtPct(rate)}</span>;
-}
-
-/**
- * One skill's worth: this build against the same build without that skill, on
- * the search's own seeds. "±" is the 95% half-width, an interval over zero is
- * the search's "not worth chasing" answer, and an empty cell means that drop was never raced.
- */
-function contributionCell(d: ContributionDiff | null, unit: 'L' | 'pp') {
-	if (!d) {
-		return <span style={{ opacity: 0.5 }} title="This drop was never raced, so the run holds no number for it">—</span>;
-	}
-	const scale = unit === 'pp' ? 100 : 1;
-	const digits = unit === 'pp' ? 1 : 2;
-	const text = `${fmtN(d.mean * scale, digits)} ± ${fmtN(ciHalfWidth(d.ci95) * scale, digits)} ${unit}`;
-	const seeds = `${d.seeds.toLocaleString()} shared search seeds`;
-	return resolvedDiff(d.ci95)
-		? <span title={seeds}>{text}</span>
-		: <span style={{ opacity: 0.6 }} title={`${seeds}: the 95% interval holds 0, so this is indistinguishable from no effect`}>{text} ≈0</span>;
-}
-
-/** mean ± 95% CI half-width from a MeanSem: ci95 takes the STANDARD DEVIATION,
- *  so reconstruct it from the SEM (sd = sem·√n) — same math as search.ts pairedOf. */
-const fmtMeanCi = (m: MeanSem | undefined, d = 2): string => {
+/** Mean ± 95% CI half-width from a MeanSem. ci95 takes the STANDARD DEVIATION,
+ *  so it is rebuilt from the SEM (sd = sem·√n), the same math as search.ts pairedOf. */
+const fmtMeanCi = (m: MeanSem | undefined, d = 2, scale = 1, unit = ''): string => {
 	if (!m || !Number.isFinite(m.mean)) return '—';
 	const sd = (Number.isFinite(m.sem) ? m.sem : 0) * Math.sqrt(Math.max(1, m.n));
 	const [lo, hi] = ci95(m.mean, sd, m.n);
 	const half = Number.isFinite(hi) ? (hi - lo) / 2 : NaN;
-	return `${fmtN(m.mean, d)} ± ${fmtN(half, d)}`;
+	return `${fmtN(m.mean * scale, d)} ± ${fmtN(half * scale, d)}${unit}`;
 };
 
-/** Decimal places the objective value is shown with — a pure function of the
- *  objective (rates get 4, lengths/placings 2). Snapshotted per run so the
- *  finished table keeps the digits that match the run, not live state. */
-const objDigitsOf = (o: ObjectiveKind): number => (o === 'p1' || o === 'pTop3' ? 4 : 2);
-
-/** A finished run plus the objective that produced it. Stored as ONE value so
- *  the finished table can never re-label a stored result with the live
- *  Objective dropdown (the result numbers are frozen, and the labels must be
- *  frozen with them, see the results render below). */
-interface RunSnapshot {
-	result: OptimizerResult;
-	objective: ObjectiveKind;
-	objDigits: number;
-	/** Skills that stayed out of that run's pool. */
-	leftOut: number;
+/** 75 s → "1 min 15 s", 3,700 s → "1 h 1 min". */
+function fmtDuration(ms: number): string {
+	const sec = Math.max(0, Math.round(ms / 1000));
+	if (sec < 60) return `${sec} s`;
+	const min = Math.floor(sec / 60);
+	if (min < 60) return `${min} min ${sec % 60} s`;
+	return `${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
+// ── goal, effort and stage vocabulary ───────────────────────────────────────
 
-const OBJECTIVES: { id: ObjectiveKind; label: string }[] = [
-	{ id: 'p1', label: 'Win rate' },
-	{ id: 'meanLead', label: 'Mean lead ℓ' },
-	{ id: 'pTop3', label: 'P(top-3)' },
-	{ id: 'meanPlacing', label: 'Mean placing' },
-	{ id: 'gainVsCurrent', label: 'Gain vs current' },
+interface GoalInfo { id: ObjectiveKind; label: string; short: string; rate: boolean; unit: string }
+const GOALS: GoalInfo[] = [
+	{ id: 'p1', label: 'Win rate', short: 'Win rate', rate: true, unit: '' },
+	{ id: 'pTop3', label: 'Top-3 rate', short: 'Top-3 rate', rate: true, unit: '' },
+	{ id: 'meanLead', label: 'Margin vs winner', short: 'Margin', rate: false, unit: ' L' },
+	{ id: 'meanPlacing', label: 'Average placing', short: 'Avg placing', rate: false, unit: '' },
+	{ id: 'gainVsCurrent', label: 'Gain over current', short: 'Gain', rate: false, unit: ' L' },
 ];
-const PRESETS: { id: EffortPreset; label: string }[] = [
-	{ id: 'quick', label: 'Quick' },
-	{ id: 'standard', label: 'Standard' },
-	{ id: 'thorough', label: 'Thorough' },
-	{ id: 'custom', label: 'Custom' },
-	{ id: 'untilStopped', label: 'Until stopped' },
+const goalOf = (o: ObjectiveKind): GoalInfo => GOALS.find((g) => g.id === o) ?? GOALS[0];
+/** A goal's value as shown: rates as percentages, the rest in their own unit. */
+const fmtGoal = (m: MeanSem | undefined, o: ObjectiveKind): string => {
+	const g = goalOf(o);
+	return g.rate ? fmtMeanCi(m, 1, 100, '%') : fmtMeanCi(m, 2, 1, g.unit);
+};
+
+const PRESETS: { value: EffortPreset; label: string }[] = [
+	{ value: 'quick', label: 'Quick' },
+	{ value: 'standard', label: 'Standard' },
+	{ value: 'thorough', label: 'Thorough' },
+	{ value: 'custom', label: 'Custom' },
+	{ value: 'untilStopped', label: 'Until stopped' },
 ];
+function effortHint(preset: EffortPreset, starts: number, minutes: number): string {
+	switch (preset) {
+		case 'quick': return 'About 1 minute of searching, 1 starting build.';
+		case 'standard': return 'About 5 minutes of searching, 3 starting builds.';
+		case 'thorough': return 'About 20 minutes of searching, 5 starting builds.';
+		case 'custom': return minutes > 0
+			? `About ${minutes} minutes of searching, ${starts} starting builds.`
+			: `${starts} starting builds, no time limit.`;
+		case 'untilStopped': return 'Keeps searching until you press STOP.';
+	}
+}
+
 const STAGE_LABEL: Record<OptimizerProgress['stage'], string> = {
-	noise: 'Calibrating noise',
-	screen: 'Screening options',
-	knapsack: 'Knapsack starts',
-	incontext: 'In-context search',
-	local: 'Local search',
-	verify: 'Verifying (fresh seeds)',
+	noise: 'Measuring race noise',
+	screen: 'Testing each skill alone',
+	knapsack: 'Picking starting builds',
+	incontext: 'Testing skills inside builds',
+	local: 'Improving builds',
+	verify: 'Checking the best builds on new races',
 	done: 'Done',
 	stopped: 'Stopped',
 };
+/** The order the pipeline runs its stages in, for the "step k of n" label. */
+const STAGE_ORDER: OptimizerProgress['stage'][] = ['noise', 'screen', 'knapsack', 'incontext', 'local', 'verify'];
 
-const inputStyle = {
-	background: 'rgba(0,0,0,0.15)', color: 'inherit', border: '1px solid rgba(128,128,128,0.4)',
-	borderRadius: 6, padding: '4px 8px', fontSize: 13,
-} as const;
-const labelStyle = { fontSize: 12, opacity: 0.8, display: 'block', marginBottom: 2 } as const;
-const thStyle = { textAlign: 'left' as const, padding: '4px 8px', fontSize: 12, opacity: 0.75, whiteSpace: 'nowrap' as const };
-const tdStyle = { padding: '4px 8px', fontSize: 13, verticalAlign: 'top' as const };
+/** The engine's progress notes in the pane's words. */
+const plainNote = (note?: string): string | undefined => note
+	?.replace(/\brestart (\d+)\/(\d+)/g, 'start $1 of $2')
+	.replace(/\brestart (\d+)\b/g, 'start $1')
+	.replace(/(\d+) restart points/, '$1 starting builds')
+	.replace(/ILS kick (\d+)\/(\d+)/g, 'shake-up $1 of $2')
+	.replace(/ILS kick/g, 'shake-up')
+	.replace(/ N2\b/g, ' two-skill swaps')
+	.replace(/\bclimb\b/g, 'improving')
+	.replace(/(\d+)\/(\d+) moves screened/, '$1 of $2 changes tested')
+	.replace(/verifying (\d+)\/(\d+) seeds/, 'checking on $1 of up to $2 races');
+
+// ── result cells ────────────────────────────────────────────────────────────
+
+/** 95% half-width of one skill's worth × √races, from a real end-of-career
+ *  run (200 races gave about ±0.25 L), so the hint can say how tight a count is. */
+const WORTH_SPREAD_L = 3.5;
+
+/** An activation rate under this share of the races run gets flagged. */
+const LOW_ACTIVATION = 0.05;
+
+/** One skill's activation share in the races already run for its build (fired
+ *  per race, the skill chart's rule). Zero reads "never", under 5% is flagged. */
+function activationCell(id: string, act: ActivationTelemetry | undefined) {
+	if (!act || act.seeds <= 0) {
+		return <span class="v2-opt-muted" title="The engine reported no activation counts for these races">—</span>;
+	}
+	const fired = act.fired[id] ?? 0;
+	const races = act.seeds.toLocaleString();
+	if (fired === 0) return <span class="v2-opt-warn" title={`Never activated in ${races} races`}>never</span>;
+	const rate = fired / act.seeds;
+	return rate < LOW_ACTIVATION
+		? <span class="v2-opt-warn" title={`Fired in only ${fmtPct(rate)} of ${races} races, under 5%`}>{fmtPct(rate)}</span>
+		: <span title={`Fired in ${fmtPct(rate)} of ${races} races`}>{fmtPct(rate)}</span>;
+}
+
+/** One skill's worth as a bar on a shared scale: the bar is the mean, the thin
+ *  line the 95% interval, and the vertical line zero. An interval over zero is
+ *  drawn faint: the run cannot tell that skill from no effect. */
+function WorthBar(props: { d: ContributionDiff | null; lo: number; hi: number }) {
+	const { d, lo, hi } = props;
+	if (!d) return <span class="v2-opt-muted" title="This drop was never raced, so the run holds no number for it">not measured</span>;
+	const span = hi - lo || 1;
+	const pos = (x: number) => `${(((Math.min(hi, Math.max(lo, x)) - lo) / span) * 100).toFixed(2)}%`;
+	const zero = pos(0);
+	const resolved = resolvedDiff(d.ci95);
+	const left = d.mean >= 0 ? zero : pos(d.mean);
+	const width = `${((Math.abs(d.mean) / span) * 100).toFixed(2)}%`;
+	return (
+		<div class={`v2-opt-worth-cell${resolved ? '' : ' unresolved'}`}
+			title={`${d.seeds.toLocaleString()} shared races${resolved ? '' : ': the 95% interval holds 0, so this is indistinguishable from no effect'}`}>
+			<div class="v2-opt-bar">
+				<span class="v2-opt-bar-ci" style={{ left: pos(d.ci95[0]), width: `${((Math.min(hi, d.ci95[1]) - Math.max(lo, d.ci95[0])) / span * 100).toFixed(2)}%` }} />
+				<span class={`v2-opt-bar-fill${d.mean < 0 ? ' neg' : ''}`} style={{ left, width }} />
+				<span class="v2-opt-bar-zero" style={{ left: zero }} />
+			</div>
+			<span class="v2-opt-worth-text">
+				{fmtN(d.mean)} ± {fmtN(ciHalfWidth(d.ci95))} L{resolved ? '' : ' ≈0'}
+			</span>
+		</div>
+	);
+}
+
+/** A finished run plus what shaped it. Stored as ONE value so the finished
+ *  results can never be relabelled by later changes to the live controls. */
+interface RunSnapshot {
+	result: OptimizerResult;
+	objective: ObjectiveKind;
+	/** Skills that stayed out of that run's pool. */
+	leftOut: number;
+	/** SP held back from that run's budget. */
+	reserve: number;
+	/** Must-have skills of that run (in every build, outside `selection`). */
+	mustHave: string[];
+}
+
+/** Advanced settings: null keeps the preset's value. */
+interface AdvancedSettings {
+	deltaMinL: number | null;
+	verifySeeds: number | null;
+	kicksPerStart: number | null;
+	kickGrowAfter: number | null;
+	spreadMinDiff: number | null;
+	spreadNoise: number | null;
+}
+const NO_ADVANCED: AdvancedSettings = {
+	deltaMinL: null, verifySeeds: null, kicksPerStart: null, kickGrowAfter: null, spreadMinDiff: null, spreadNoise: null,
+};
+
+type PoolState = 'off' | 'allow' | 'must';
+const POOL_OPTIONS = (disabled: boolean) => [
+	{ value: 'off' as PoolState, label: 'Off', title: 'Never buy this skill', disabled },
+	{ value: 'allow' as PoolState, label: 'Allow', title: 'The search may buy this skill', disabled },
+	{ value: 'must' as PoolState, label: 'Must', title: 'Buy this skill in every build', disabled },
+];
 
 export function OptimizerPane(props: OptimizerPaneProps) {
 	const { workerFactory, uma, skillData, course, courseId, conditions, mobPreset, fixedGate, ownedByGroup, hints, excluded } = props;
 
 	// ── UI state ──────────────────────────────────────────────────────────────
+	/** Allowed skills. A must-have skill lives in `mustHave` instead. */
 	const [chosen, setChosen] = useState<Set<string>>(() => new Set(props.candidates));
+	const [mustHave, setMustHave] = useState<Set<string>>(() => new Set());
 	const [filter, setFilter] = useState('');
 	const [budget, setBudget] = useState(10000);
+	const [reserve, setReserve] = useState(0);
 	const [objective, setObjective] = useState<ObjectiveKind>('p1');
 	const [preset, setPreset] = useState<EffortPreset>('standard');
 	/** Custom effort: starting builds and a time limit in minutes (0 = none). */
 	const [customStarts, setCustomStarts] = useState(DEFAULT_CUSTOM.starts);
 	const [customMinutes, setCustomMinutes] = useState(DEFAULT_CUSTOM.minutes);
+	const [buildsShown, setBuildsShown] = useState(5);
+	const [worthRaces, setWorthRaces] = useState(500);
+	const [advanced, setAdvanced] = useState<AdvancedSettings>(NO_ADVANCED);
 	const [seed, setSeed] = useState(props.seed);
 	const [useBook, setUseBook] = useState(true);
 	/** Wider search: spread-out starting builds and kicks that grow. */
@@ -227,14 +342,14 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		onRunningChange?.(v);
 	};
 	const [progress, setProgress] = useState<OptimizerProgress | null>(null);
-	/** Finished run + the objective/digits that shaped it (one value
-	 *  so the results table can't drift from live dropdowns after the run). */
 	const [runResult, setRunResult] = useState<RunSnapshot | null>(null);
 	const [warnings, setWarnings] = useState<string[]>([]);
-	const [message, setMessage] = useState<string | null>(null); // errors + hints share one line
+	const [message, setMessage] = useState<string | null>(null); // errors and hints share one line
 	/** Exclusion list: the master switch and the ids put back by hand. */
 	const [focusOn, setFocusOn] = useState(true);
 	const [included, setIncluded] = useState<Set<string>>(() => new Set());
+	/** Bumped when the opening book changes, so its count re-reads. */
+	const [bookTick, setBookTick] = useState(0);
 
 	/** The pool this pane offers: the caller's candidates plus whatever was put back. */
 	const candidates = useMemo(
@@ -249,20 +364,17 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const runningRef = useRef(false);
 	const lastUiRef = useRef(0); // progress-throttle timestamp
 	// False once unmounted. app-v2 renders this pane only on the Optimizer tab, so
-	// switching tabs unmounts it while a run is still in flight; every post-await
+	// switching tabs unmounts it while a run is still in flight. Every post-await
 	// setState below is gated on this so nothing touches a dead component.
 	const mountedRef = useRef(true);
 
 	// The pane is conditionally mounted, so this cleanup can fire MID-RUN. Mark
 	// unmounted, then hard-stop the in-flight work:
-	//  - dispose() only RESOLVES the running pool batch (pool.ts running?.resolve()),
-	//    which does NOT stop the search — the orphaned runOptimizer would keep going
-	//    and ensurePool() would respawn a pool nothing later releases.
-	//  - ctrl.stop() winds the pipeline down; abort() REJECTS the running batch so
+	//  - dispose() only RESOLVES the running pool batch, which does NOT stop the
+	//    search, so the orphaned runOptimizer would keep going.
+	//  - ctrl.stop() winds the pipeline down, abort() REJECTS the running batch so
 	//    the current ensure() throws and the run unwinds immediately.
-	// The pool THIS run created is released in run()'s finally (on the local ev),
-	// which — unlike evRef.current here — always reaches it even after the ref is
-	// nulled (that nulling is exactly the window the leak used to slip through).
+	// The pool THIS run created is released in run()'s finally, on the local ev.
 	useEffect(() => () => {
 		mountedRef.current = false;
 		props.onRunningChange?.(false);
@@ -273,15 +385,20 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	}, []);
 
 	// candidates arrives async (the skill table loads after mount): the first
-	// non-empty list defaults to all chosen. A skill newly in the pool (put back,
-	// or freed by a focus change) then joins the selection, and one leaving drops out.
+	// non-empty list defaults to all allowed. A skill newly in the pool (put
+	// back, or freed by a focus change) joins as allowed, and one leaving drops
+	// out of both sets.
 	const seededRef = useRef(false);
 	const pooledRef = useRef<Set<string>>(new Set());
 	useEffect(() => {
+		// The app passes an empty list for a moment while it re-derives the pool
+		// (a layout change does it). Remembering that empty list would make every
+		// skill "new" on the next one and allow them all again, wiping the
+		// user's choices, so an empty list is skipped.
+		if (!candidates.length) return;
 		const before = pooledRef.current;
 		const now = new Set(candidates);
 		pooledRef.current = now;
-		if (!candidates.length) return;
 		if (!seededRef.current) {
 			seededRef.current = true;
 			setChosen(new Set(candidates));
@@ -289,10 +406,28 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		}
 		setChosen((prev) => {
 			const next = new Set([...prev].filter((id) => now.has(id)));
-			for (const id of candidates) if (!before.has(id)) next.add(id);
+			for (const id of candidates) if (!before.has(id) && !mustHave.has(id)) next.add(id);
 			return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
 		});
+		setMustHave((prev) => {
+			const next = new Set([...prev].filter((id) => now.has(id)));
+			return next.size === prev.size ? prev : next;
+		});
 	}, [candidates, excluded]);
+
+	const stateOf = (id: string): PoolState => (mustHave.has(id) ? 'must' : chosen.has(id) ? 'allow' : 'off');
+	const setState = (id: string, s: PoolState) => {
+		setChosen((prev) => {
+			const next = new Set(prev);
+			if (s === 'allow') next.add(id); else next.delete(id);
+			return next;
+		});
+		setMustHave((prev) => {
+			const next = new Set(prev);
+			if (s === 'must') next.add(id); else next.delete(id);
+			return next;
+		});
+	};
 
 	const filtered = useMemo(() => {
 		const q = filter.trim().toLowerCase();
@@ -300,20 +435,38 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		return candidates.filter((id) => id.includes(q) || skillName(id).toLowerCase().includes(q));
 	}, [candidates, filter]);
 
-	const chosenCost = useMemo(() => {
-		let c = 0;
-		for (const id of chosen) c += calculateSkillCost(id, hints, ownedByGroup);
-		return c;
-	}, [chosen, hints, ownedByGroup]);
+	/** The filtered pool, grouped by skill kind, cheapest first inside a group. */
+	const grouped = useMemo(() => {
+		const by = new Map<SkillKind, { id: string; cost: number }[]>();
+		for (const id of filtered) {
+			const k = kindOf(id);
+			if (!by.has(k)) by.set(k, []);
+			by.get(k)!.push({ id, cost: calculateSkillCost(id, hints, ownedByGroup) });
+		}
+		for (const list of by.values()) list.sort((a, b) => skillName(a.id).localeCompare(skillName(b.id)));
+		return KIND_ORDER.filter((k) => by.has(k)).map((k) => ({ kind: k, skills: by.get(k)! }));
+	}, [filtered, hints, ownedByGroup]);
 
-	const toggle = (id: string) =>
-		setChosen((prev) => {
-			const next = new Set(prev);
-			if (next.has(id)) next.delete(id); else next.add(id);
-			return next;
-		});
+	const costOfIds = (ids: Iterable<string>) => {
+		let c = 0;
+		for (const id of ids) c += calculateSkillCost(id, hints, ownedByGroup);
+		return c;
+	};
+	const allowedCost = useMemo(() => costOfIds(chosen), [chosen, hints, ownedByGroup]);
+	const mustCost = useMemo(() => costOfIds(mustHave), [mustHave, hints, ownedByGroup]);
+	const spendable = Math.max(0, (Number(budget) || 0) - (Number(reserve) || 0));
 
 	const stop = () => ctrlRef.current?.stop();
+
+	// ── opening book ──────────────────────────────────────────────────────────
+	/** The book's key for the race as set up now (the run computes the same). */
+	const bookKeyNow = (): string | null => course ? bookKey({
+		courseId: String(courseId), distance: course.distance,
+		strategy: String((uma as any)?.strategy ?? ''), mobPresetId: String((mobPreset as any)?.id ?? (mobPreset as any)?.name ?? 'default'),
+		ground: conditions.ground,
+	}) : null;
+	const bk = bookKeyNow();
+	const savedBuilds = useMemo(() => (bk ? bookCount(bk) : 0), [bk, bookTick]);
 
 	// ── career dump import ────────────────────────────────────────────────────
 	/** The offer pool from an imported Hachimi career dump, kept as a set so the
@@ -323,7 +476,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [career, setCareer] = useState<CareerImport | null>(null);
 	useEffect(() => {
 		if (!poolFilter || !candidates.length) return;
-		setChosen(new Set(candidates.filter((id) => poolFilter.has(id))));
+		setChosen(new Set(candidates.filter((id) => poolFilter.has(id) && !mustHave.has(id))));
+		setMustHave((prev) => new Set([...prev].filter((id) => poolFilter.has(id))));
 	}, [poolFilter, candidates]);
 
 	const importCareer = async () => {
@@ -336,6 +490,17 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		setCareer(imp);
 	};
 
+	/** The user's settings for applyTuning. Blank advanced fields keep the preset. */
+	const tuningNow = (): SearchTuning => ({
+		buildsShown, contribSeeds: worthRaces,
+		deltaMinL: advanced.deltaMinL ?? undefined,
+		verifySeeds: advanced.verifySeeds ?? undefined,
+		kicksPerStart: advanced.kicksPerStart ?? undefined,
+		kickGrowAfter: advanced.kickGrowAfter ?? undefined,
+		spreadMinDiff: advanced.spreadMinDiff ?? undefined,
+		spreadNoise: advanced.spreadNoise ?? undefined,
+	});
+
 	const run = async () => {
 		if (runningRef.current || !skillData || !workerFactory) return;
 		runningRef.current = true;
@@ -344,32 +509,33 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		setRunResult(null);
 		setProgress(null);
 		setWarnings([]);
-		// A previous run's pool must not linger (spec: dispose before each new run).
+		// A previous run's pool must not linger (dispose before each new run).
 		evRef.current?.dispose();
 		evRef.current = null;
 
-		const budgetUse = Math.max(0, Math.floor(Number(budget) || 0));
+		const reserveUse = Math.max(0, Math.floor(Number(reserve) || 0));
+		const budgetUse = Math.max(0, Math.floor(Number(budget) || 0) - reserveUse);
 		const runLeftOut = leftOut;
+		const runMust = [...mustHave];
 		const seedUse = Math.floor(Number(seed) || 0);
+		// Must-have skills are locks: always in, their cost reserved once
+		// (space.ts include), so they never appear in a build's `selection`.
 		const space: BuildSpace = buildSpace({
-			purchasable: [...chosen], ownedByGroup, fixedIds: [], hints, budget: budgetUse,
+			purchasable: [...chosen, ...runMust], include: runMust, ownedByGroup, fixedIds: [], hints, budget: budgetUse,
 		});
 		setWarnings(space.warnings);
-		if (space.error) {
-			setMessage(space.error);
+		const fail = (msg: string) => {
+			setMessage(msg);
 			runningRef.current = false; setRunning(false);
-			return;
+		};
+		if (space.error) return fail(space.error);
+		if (space.forcedCost > budgetUse) {
+			return fail(`The must-have skills cost ${space.forcedCost} SP, more than the ${budgetUse} SP left after the reserve.`);
 		}
-		if (space.options.length === 0) {
-			setMessage('No purchasable options in the chosen set (already owned, purple, or outside the active table) — nothing to search.');
-			runningRef.current = false; setRunning(false);
-			return;
+		if (space.options.length === 0 && !runMust.length) {
+			return fail('No skill in the pool can be bought (already owned, purple, or outside the active table), so there is nothing to search.');
 		}
-		if (!course) {
-			setMessage('Course data unavailable.');
-			runningRef.current = false; setRunning(false);
-			return;
-		}
+		if (!course) return fail('Course data unavailable.');
 
 		// UmaState → HorseState, the exact chart-run conversion (app-v2).
 		const w: any = convertUmaStateForWorker(uma);
@@ -383,15 +549,15 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 
 		const ctrl = createController();
 		ctrlRef.current = ctrl;
-		// Hoisted so the finally disposes THIS run's pool (below), not evRef.current
-		// — an unmount nulls evRef.current, so disposing through the ref would
-		// strand whatever pool the (possibly orphaned) run still ends up creating.
+		// Hoisted so the finally disposes THIS run's pool, not evRef.current: an
+		// unmount nulls evRef.current, so disposing through the ref would strand
+		// whatever pool the (possibly orphaned) run still ends up creating.
 		let ev: Evaluator | null = null;
 		try {
 			const courseIds = await loadGlobalsimCourseIds();
 			if (!courseIds) {
 				throw new Error(
-					`GlobalSim course table unavailable (/globalsim/courses.json) — run \`node umalator-global/build.mjs\` once to generate the GlobalSim assets.`,
+					`GlobalSim course table unavailable (/globalsim/courses.json). Run \`node umalator-global/build.mjs\` once to generate the GlobalSim assets.`,
 				);
 			}
 			const conds: ChartRaceConditions = {
@@ -406,39 +572,29 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				skillData: skillData as Record<string, unknown>,
 				courseIds,
 				mobPreset,
-				// The user's fixed gate (undefined = auto-paired per seed) — the
-				// same wiring the compare/chart runs use in app-v2.
+				// The user's fixed gate (undefined = auto-paired per seed), the same
+				// wiring the compare and chart runs use in app-v2.
 				fixedGate,
 			};
-			// One scenario: the race the user set up. The track and conditions are
-			// fixed for the calculation, so no variants are scored.
+			// One scenario: the race the user set up.
 			const scenarios: ScenarioSpec[] = [{ id: 'main', label: 'Current setup', conds, mobPreset }];
 			ev = createEvaluator({
 				workerFactory, space, baseHorse, scenarios, baseSeed: seedUse, skillData,
-				// Every optimizer race (Stages A–G) runs paired: the search is a
-				// chain of paired comparisons, and paired draws cut σΔ(ℓ) ~10×.
+				// Every optimizer race runs paired: the search is a chain of paired
+				// comparisons, and paired draws cut σΔ(ℓ) about 10×.
 				paired: true,
 			});
 			evRef.current = ev;
 
-			// §8 A opening book: fingerprint the primary setup, seed the search
-			// from prior strong builds for it (re-filtered to today's roster).
-			const bk = bookKey({
-				courseId: String(courseId), distance: course.distance,
-				strategy: String((uma as any)?.strategy ?? ''), mobPresetId: String((mobPreset as any)?.id ?? (mobPreset as any)?.name ?? 'default'),
-				ground: conditions.ground,
-			});
-			const bookStarts = useBook ? selectStarts(space, bk) : [];
+			// Opening book: seed the search from prior strong builds for this race
+			// (re-filtered to today's roster).
+			const key = bookKeyNow()!;
+			const bookStarts = useBook ? selectStarts(space, key) : [];
 
-			// gainVsCurrent measures the paired ℓ gain against the user's ACTUAL
-			// build, so that objective needs the reference build in the SearchInput —
-			// without it every objective value is a diff against nothing (NaN) and
-			// nothing is measurable. The user's build = learned skills + locked
-			// picks (+ uniques), and ALL of those are implicit in space.fixedIds —
-			// learned ids ride on baseHorse, locked ids join fixedIds and the
-			// simulated horse too — so the reference build IS the base build.
-			// An empty selection keeps its identity and SP accounting exact (a
-			// locked id in `selection` would double-charge forcedCost in costOf).
+			// gainVsCurrent pairs every build against the user's ACTUAL build. That
+			// build is the base build: learned skills ride on baseHorse and
+			// must-have skills join fixedIds, so an empty selection is the
+			// reference (a must-have id in `selection` would double-charge it).
 			let current: BuildRefLite | undefined;
 			if (objective === 'gainVsCurrent') {
 				current = { id: simIdentity(space, []), selection: [] };
@@ -448,15 +604,15 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				ev,
 				{
 					space, scenarioIdx: 0, objective, aggregation: 'mean',
-					bookStarts, current, effort: effortConfig(preset, { starts: customStarts, minutes: customMinutes }),
+					bookStarts, current,
+					effort: applyTuning(effortConfig(preset, { starts: customStarts, minutes: customMinutes }), tuningNow()),
 					wideSearch, wideSearchSeed: seedUse,
 				},
 				ctrl,
 				(p) => {
-					// A mid-run unmount can still emit an event before the abort
-					// rejection unwinds the run — never setState on a dead component.
+					// A mid-run unmount can still emit before the abort unwinds the run.
 					if (!mountedRef.current) return;
-					// Stage events fire often; cap state updates at ~10/s (the
+					// Stage events fire often: cap state updates at about 10/s (the
 					// terminal 'done' event always passes through).
 					const now = Date.now();
 					if (p.stage === 'done' || now - lastUiRef.current >= 100) {
@@ -465,39 +621,27 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					}
 				},
 			);
-			// A mid-run unmount aborts/rejects the run, so this is reached only when
-			// the search actually completed while mounted. If the pane unmounted in
-			// the tiny window between resolve and here, skip every post-await update
-			// (and the book write) — the finally still releases the pool.
 			if (!mountedRef.current) return;
-			// Contract kept visible in the console next to the table (§13 debugging).
 			console.log('[optimizer]', res);
-			// Freeze the objective/digits with the result: they are the
-			// closure values this run actually searched under (same as the input at
-			// runOptimizer above), so the finished table can never be relabelled by
-			// later changes to the live dropdowns.
-			setRunResult({ result: res, objective, objDigits: objDigitsOf(objective), leftOut: runLeftOut });
+			setRunResult({ result: res, objective, leftOut: runLeftOut, reserve: reserveUse, mustHave: runMust });
 			setProgress(null);
 			if (useBook) {
-				saveBook(bk, res.shortlist.slice(0, 5).map(r => ({
+				saveBook(key, res.shortlist.slice(0, 5).map(r => ({
 					selection: [...r.build.selection], value: r.obj.mean, savedAt: Date.now(),
 				})));
+				setBookTick((t) => t + 1);
 			}
 		} catch (e) {
-			// A mid-run unmount routes the abort rejection here — never setState
-			// once the component is gone; the finally still releases the pool.
+			// A mid-run unmount routes the abort rejection here: never setState
+			// once the component is gone. The finally still releases the pool.
 			if (mountedRef.current) setMessage(e instanceof Error ? e.message : String(e));
 		} finally {
-			// Engine/worker job failures the search worked around (retried seeds,
-			// or seeds dropped after repeated failures) — never silent.
+			// Engine job failures the search worked around: never silent.
 			const jobErrors = ev?.jobErrorLog() ?? [];
 			if (jobErrors.length && mountedRef.current) {
 				setWarnings((prev) => [...prev, ...jobErrors.map(({ error, count }) =>
 					`Engine job failed ${count}× (seeds retried, then dropped after 3 failures): ${error}`)]);
 			}
-			// Dispose the evaluator this run owns (its possibly-respawned pool) even
-			// if the pane unmounted mid-run — the leak was releasing through the
-			// (nulled) evRef.current instead. dispose() is idempotent on a dead pool.
 			ev?.dispose();
 			if (evRef.current === ev) evRef.current = null;
 			ctrlRef.current = null;
@@ -505,16 +649,20 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			if (mountedRef.current) setRunning(false);
 		}
 	};
-	// The app's RUN button reaches the latest run/stop through this ref.
+	// The app's RUN button reaches the latest run and stop through this ref.
 	if (props.controlRef) props.controlRef.current = { run: () => { void run(); }, stop };
 
 	// ── guards ────────────────────────────────────────────────────────────────
 	if (!skillData || !workerFactory) {
 		return (
-			<div class="v2-optimizer-pane" style={{ padding: 16 }}>
-				<h2>Skill Optimizer</h2>
-				<p style={{ opacity: 0.8 }}>The GlobalSim engine is still loading — the optimizer
-					needs the merged skill table and the wasm worker pool.</p>
+			<div class="v2-optimizer">
+				<div class="v2-opt-card v2-opt-empty">
+					<div class="v2-results-placeholder">
+						<Wand2 size={40} />
+						<h2>Skill Optimizer</h2>
+						<p>The GlobalSim engine is still loading. The optimizer needs the skill table and the engine workers.</p>
+					</div>
+				</div>
 			</div>
 		);
 	}
@@ -529,353 +677,439 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			focusOn={focusOn} onFocusChange={setFocusOn} disabled={running}
 		/>
 	);
-	if (!candidates.length) {
-		return (
-			<div class="v2-optimizer-pane" style={{ padding: 16 }}>
-				<h2>Skill Optimizer</h2>
-				<p style={{ opacity: 0.8 }}>No candidate skills for this uma/course — nothing to optimize.</p>
-				{exclusionList}
-			</div>
-		);
-	}
 
-	const objDigits = objDigitsOf(objective); // live, for the provisional readout during a run
+	const cfgNow = effortConfig(preset, { starts: customStarts, minutes: customMinutes });
+	const fieldName = mobPreset?.name ? (/field$/i.test(mobPreset.name) ? mobPreset.name : `${mobPreset.name} field`) : '9-runner field';
+	const setAdv = (k: keyof AdvancedSettings) => (v: number | null) => setAdvanced((a) => ({ ...a, [k]: v }));
+	const advancedChanged = Object.values(advanced).some((v) => v != null);
+	const L = TUNING_LIMITS;
 
 	return (
-		<div class="v2-optimizer-pane" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-			<div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-				<h2 style={{ margin: 0 }}>Skill Optimizer</h2>
-				<span style={{ fontSize: 12, opacity: 0.7 }}>
-					SP-budgeted skill-build search vs a {mobPreset?.name ? (/field$/i.test(mobPreset.name) ? mobPreset.name : `${mobPreset.name} field`) : '9-runner field'} — reported numbers come from fresh verification seeds.
-				</span>
-			</div>
-
-			{/* ── Controls ── */}
-			<div class="v2-optimizer-controls" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-				<div>
-					<label style={labelStyle}>SP budget</label>
-					<input type="number" min={0} step={50} style={{ ...inputStyle, width: 90 }} value={budget}
-						disabled={running} onInput={(e) => setBudget((e.target as HTMLInputElement).valueAsNumber as number)} />
-				</div>
-				<div>
-					<label style={labelStyle}>Running style</label>
-					<select style={inputStyle} disabled={running} value={uma.strategy}
-						title="The style the pool is filtered for and the search races. This is the uma's own style, so the Uma drawer shows the same value."
-						onChange={(e) => props.onStrategyChange?.((e.target as HTMLSelectElement).value)}>
-						{Object.entries(STRATEGY_LABELS).map(([v, l]) => <option value={v}>{l}</option>)}
-					</select>
-				</div>
-				<div>
-					<label style={labelStyle}>Objective</label>
-					<select style={inputStyle} disabled={running} value={objective}
-						onChange={(e) => setObjective((e.target as HTMLSelectElement).value as ObjectiveKind)}>
-						{OBJECTIVES.map((o) => <option value={o.id}>{o.label}</option>)}
-					</select>
-				</div>
-				<div>
-					<label style={labelStyle}>Effort</label>
-					<select style={inputStyle} disabled={running} value={preset}
-						onChange={(e) => setPreset((e.target as HTMLSelectElement).value as EffortPreset)}>
-						{PRESETS.map((p) => <option value={p.id}>{p.label}</option>)}
-					</select>
-				</div>
-				{preset === 'custom' && (
-					<div title="How many starting builds the search explores. Each one gets its own climb and up to 10 shake-ups, so more starts cover more of the build space and take longer.">
-						<label style={labelStyle}>Starting builds</label>
-						<input type="number" min={1} max={CUSTOM_STARTS_MAX} step={1} style={{ ...inputStyle, width: 70 }} value={customStarts}
-							disabled={running} onInput={(e) => setCustomStarts((e.target as HTMLInputElement).valueAsNumber as number)} />
+		<div class="v2-optimizer">
+			{/* ── Setup ── */}
+			<section class="v2-opt-card v2-opt-setup">
+				<header class="v2-opt-card-header">
+					<h2>Skill Optimizer</h2>
+					<span class="v2-opt-subtitle">Finds the skills worth buying with your SP, raced against the {fieldName}.</span>
+				</header>
+				<div class="v2-opt-fields">
+					<NumberInput label="SP budget" value={budget} min={0} step={50} suffix="SP" disabled={running}
+						onChange={(v) => setBudget(v ?? 0)} />
+					<NumberInput label="Keep in reserve" value={reserve} min={0} step={50} suffix="SP" disabled={running}
+						helperText="Not spent by any build"
+						onChange={(v) => setReserve(v ?? 0)} />
+					<div class="v2-input-field">
+						<label class="v2-input-label">Running style</label>
+						<CustomSelect value={String(uma.strategy)} disabled={running}
+							options={Object.entries(STRATEGY_LABELS).map(([v, l]) => ({ value: v, label: l as string }))}
+							onChange={(v) => props.onStrategyChange?.(String(v))} />
 					</div>
-				)}
-				{preset === 'custom' && (
-					<div title="Search time limit in minutes. 0 means no limit: the run ends once every starting build is done. The final check on fresh seeds runs after the limit.">
-						<label style={labelStyle}>Time limit (min)</label>
-						<input type="number" min={0} step={5} style={{ ...inputStyle, width: 70 }} value={customMinutes}
-							disabled={running} onInput={(e) => setCustomMinutes((e.target as HTMLInputElement).valueAsNumber as number)} />
+					<div class="v2-input-field">
+						<label class="v2-input-label">Goal</label>
+						<CustomSelect value={objective} disabled={running}
+							options={GOALS.map((g) => ({ value: g.id, label: g.label }))}
+							onChange={(v) => setObjective(v as ObjectiveKind)} />
 					</div>
-				)}
-				<div>
-					<label style={labelStyle}>Seed</label>
-					<input type="number" step={1} style={{ ...inputStyle, width: 130 }} value={seed}
-						disabled={running} onInput={(e) => setSeed((e.target as HTMLInputElement).valueAsNumber as number)} />
+					<NumberInput label="Builds shown" value={buildsShown} min={L.buildsShown.min} max={L.buildsShown.max} step={1} disabled={running}
+						helperText="Best builds checked and listed"
+						onChange={(v) => setBuildsShown(v ?? 5)} />
+					<NumberInput label="Races per skill worth" value={worthRaces} min={L.contribSeeds.min} max={L.contribSeeds.max} step={100} disabled={running}
+						helperText={`Typically ±${fmtN(WORTH_SPREAD_L / Math.sqrt(Math.max(1, worthRaces)), 2)} L per skill`}
+						onChange={(v) => setWorthRaces(v ?? 500)} />
 				</div>
-				<label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, paddingBottom: 4, cursor: 'pointer' }}>
-					<input type="checkbox" checked={useBook} disabled={running} onChange={() => setUseBook((v) => !v)} />
-					<span style={{ opacity: 0.85 }}>Use &amp; save opening book</span>
-				</label>
-				<label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, paddingBottom: 4, cursor: 'pointer' }}
-					title="Look further from the first answer. Starting builds are held further apart and half of them come from a shuffled knapsack, and a shake-up that keeps failing swaps more skills (2 to 4, then 4 to 6, then 6 to 8). Each starting build covers more ground, so give it more time.">
-					<input type="checkbox" checked={wideSearch} disabled={running} onChange={() => setWideSearch((v) => !v)} />
-					<span style={{ opacity: 0.85 }}>Wider search</span>
-				</label>
-				<span style={{ fontSize: 12, opacity: 0.6, paddingBottom: 4 }}>
-					{running ? 'Press STOP at the top to end the run early.' : 'Press RUN at the top to start.'}
-				</span>
-			</div>
 
-			{/* ── Candidate picker ── */}
-			<div class="v2-optimizer-candidates">
-				<div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
-					<input style={{ ...inputStyle, flex: '1 1 180px' }} placeholder="Filter skills…" value={filter}
-						disabled={running} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
-					<button type="button" class="v2-optimizer-import" style={inputStyle} disabled={running}
-						title="Load a Hachimi career dump: sets the uma from that career (outfit, stats, aptitudes, mood, learned skills), takes its SP budget and hint levels, and limits the pool to the skills the game was offering"
-						onClick={importCareer}>Import career dump…</button>
-					<button type="button" style={inputStyle} disabled={running}
-						onClick={() => setChosen((prev) => new Set([...prev, ...filtered]))}>Select all</button>
-					<button type="button" style={inputStyle} disabled={running} onClick={() => setChosen(new Set())}>Clear</button>
-					<span style={{ fontSize: 12, opacity: 0.8 }}>
-						{chosen.size} chosen · {chosenCost} SP to buy every one, budget {budget} SP
+				<div class="v2-opt-effort">
+					<div class="v2-input-field">
+						<label class="v2-input-label">Effort</label>
+						<SegmentedControl<EffortPreset> value={preset} size="sm" ariaLabel="Effort"
+							options={PRESETS.map((p) => ({ ...p, disabled: running }))}
+							onChange={setPreset} />
+						<div class="v2-input-helper">{effortHint(preset, customStarts, customMinutes)} Checking the results comes after.</div>
+					</div>
+					{preset === 'custom' && (
+						<Fragment>
+							<NumberInput label="Starting builds" value={customStarts} min={1} max={CUSTOM_STARTS_MAX} step={1} disabled={running}
+								onChange={(v) => setCustomStarts(v ?? 1)} />
+							<NumberInput label="Time limit" value={customMinutes} min={0} step={5} suffix="min" disabled={running}
+								helperText="0 means no limit"
+								onChange={(v) => setCustomMinutes(v ?? 0)} />
+						</Fragment>
+					)}
+				</div>
+
+				<div class="v2-opt-switches">
+					<Switch checked={wideSearch} disabled={running} onChange={setWideSearch}
+						label={<span title="Starting builds are held further apart and half of them come from a shuffled knapsack, and a shake-up that keeps failing swaps more skills. Each start covers more ground, so give the run more time.">Wider search</span>} />
+					<Switch checked={useBook} disabled={running} onChange={setUseBook}
+						label={<span title="Start from the best builds earlier runs found for this race, and save this run's best builds for next time.">Use saved builds{savedBuilds ? ` (${savedBuilds})` : ''}</span>} />
+				</div>
+
+				<details class="v2-opt-advanced">
+					<summary>Advanced settings{advancedChanged ? ' · changed' : ''}</summary>
+					<div class="v2-opt-fields">
+						<NumberInput label="Smallest gain worth chasing" value={advanced.deltaMinL} allowEmpty precision={3}
+							min={L.deltaMinL.min} max={L.deltaMinL.max} step={0.01} suffix="L" placeholder={String(cfgNow.deltaMinL)} disabled={running}
+							helperText="Lower finds smaller gains but each takes more races to prove"
+							onChange={setAdv('deltaMinL')} />
+						<NumberInput label="Checking races per build" value={advanced.verifySeeds} allowEmpty
+							min={L.verifySeeds.min} max={L.verifySeeds.max} step={500} placeholder={String(cfgNow.gSeedsMin)} disabled={running}
+							helperText="Grows up to 4× while the top two stay tied"
+							onChange={setAdv('verifySeeds')} />
+						<NumberInput label="Shake-ups per start" value={advanced.kicksPerStart} allowEmpty
+							min={L.kicksPerStart.min} max={L.kicksPerStart.max} step={1}
+							placeholder={String(Number.isFinite(cfgNow.kicks) ? cfgNow.kicks : KICKS_PER_VISIT)} disabled={running}
+							helperText="Random swaps that try to escape a peak"
+							onChange={setAdv('kicksPerStart')} />
+						<NumberInput label="Grow shake-ups after" value={advanced.kickGrowAfter} allowEmpty
+							min={L.kickGrowAfter.min} max={L.kickGrowAfter.max} step={1} suffix="fails" placeholder={String(KICK_GROW_AFTER)}
+							disabled={running || !wideSearch} helperText="Wider search only"
+							onChange={setAdv('kickGrowAfter')} />
+						<NumberInput label="Start spread" value={advanced.spreadMinDiff} allowEmpty
+							min={L.spreadMinDiff.min} max={L.spreadMinDiff.max} step={1} suffix="skills" placeholder={String(SPREAD_MIN_DIFF_PICKS)}
+							disabled={running || !wideSearch} helperText="Wider search only: how different starts must be"
+							onChange={setAdv('spreadMinDiff')} />
+						<NumberInput label="Shuffle strength" value={advanced.spreadNoise} allowEmpty precision={2}
+							min={L.spreadNoise.min} max={L.spreadNoise.max} step={0.25} placeholder={String(SPREAD_NOISE)}
+							disabled={running || !wideSearch} helperText="Wider search only: noise on shuffled starts"
+							onChange={setAdv('spreadNoise')} />
+						<div class="v2-input-field">
+							<label class="v2-input-label">Seed</label>
+							<div class="v2-opt-inline">
+								<NumberInput value={seed} step={1} disabled={running} onChange={(v) => setSeed(v ?? 0)} />
+								<Button size="sm" variant="secondary" disabled={running} title="New random seed"
+									icon={<Dice5 size={14} />} onClick={() => setSeed(Math.floor(Math.random() * 0xffffffff))}>{''}</Button>
+							</div>
+							<div class="v2-input-helper">The same seed and settings repeat a run</div>
+						</div>
+						<div class="v2-input-field">
+							<label class="v2-input-label">Saved builds for this race</label>
+							<div class="v2-opt-inline">
+								<span class="v2-opt-muted">{savedBuilds} saved</span>
+								<Button size="sm" variant="ghost" disabled={running || !savedBuilds || !bk} icon={<Trash2 size={14} />}
+									onClick={() => { if (bk) { clearBook(bk); setBookTick((t) => t + 1); } }}>Forget</Button>
+							</div>
+						</div>
+					</div>
+					{advancedChanged && (
+						<Button size="sm" variant="ghost" icon={<RotateCcw size={14} />} disabled={running}
+							onClick={() => setAdvanced(NO_ADVANCED)}>Back to the preset's values</Button>
+					)}
+				</details>
+			</section>
+
+			{/* ── Skill pool ── */}
+			<section class="v2-opt-card v2-opt-pool">
+				<header class="v2-opt-card-header">
+					<h3>Skill pool</h3>
+					<span class="v2-opt-subtitle">
+						{chosen.size} allowed · {mustHave.size} must have · {allowedCost.toLocaleString()} SP to buy every allowed skill
+						{mustHave.size ? ` · must-haves cost ${mustCost.toLocaleString()} SP` : ''} · {spendable.toLocaleString()} SP to spend
 					</span>
+				</header>
+				{mustCost > spendable && (
+					<div class="v2-opt-notice warn">The must-have skills cost more than the SP left after the reserve.</div>
+				)}
+				<div class="v2-opt-toolbar">
+					<Input value={filter} placeholder="Filter skills…" iconLeft={<Search size={14} />} disabled={running}
+						className="v2-opt-filter" onInput={setFilter} />
+					<Button size="sm" variant="secondary" icon={<Upload size={14} />} disabled={running} onClick={importCareer}
+						title="Load a Hachimi career dump: sets the uma from that career (outfit, stats, aptitudes, mood, learned skills), takes its SP budget and hint levels, and limits the pool to the skills the game was offering">
+						Import career dump
+					</Button>
+					<Button size="sm" variant="ghost" disabled={running}
+						onClick={() => setChosen((prev) => new Set([...prev, ...filtered.filter((id) => !mustHave.has(id))]))}>Allow all</Button>
+					<Button size="sm" variant="ghost" disabled={running}
+						onClick={() => {
+							const shown = new Set(filtered);
+							setChosen((prev) => new Set([...prev].filter((id) => !shown.has(id))));
+							setMustHave((prev) => new Set([...prev].filter((id) => !shown.has(id))));
+						}}>None</Button>
 				</div>
 				{career && (
-					<div class="v2-optimizer-career" style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
+					<div class="v2-opt-career">
 						<span>{career.summary}</span>
-						{poolFilter && <span style={{ opacity: 0.7 }}> · pool limited to what that career was offering</span>}
+						{poolFilter && <span class="v2-opt-muted"> · pool limited to what that career was offering</span>}
 						{career.warnings.length > 0 && (
-							<details style={{ display: 'inline', marginLeft: 6 }}>
-								<summary style={{ display: 'inline', cursor: 'pointer', opacity: 0.8 }}>
-									{career.warnings.length} import note{career.warnings.length > 1 ? 's' : ''}
-								</summary>
-								<ul style={{ margin: '4px 0 0', paddingLeft: 20, opacity: 0.75 }}>
-									{career.warnings.map((w) => <li>{w}</li>)}
-								</ul>
+							<details class="v2-opt-inline-details">
+								<summary>{career.warnings.length} import note{career.warnings.length > 1 ? 's' : ''}</summary>
+								<ul>{career.warnings.map((w) => <li>{w}</li>)}</ul>
 							</details>
 						)}
 					</div>
 				)}
-				<div class="v2-optimizer-candidate-list"
-					style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid rgba(128,128,128,0.3)', borderRadius: 6, padding: 4 }}>
-					{filtered.map((id) => {
-						const cost = calculateSkillCost(id, hints, ownedByGroup);
-						return (
-							<label key={id} class="v2-optimizer-candidate" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, padding: '2px 4px', cursor: 'pointer' }}>
-								<input type="checkbox" checked={chosen.has(id)} disabled={running} onChange={() => toggle(id)} />
-								<span style={{ flex: 1 }}>{skillName(id)}</span>
-								<span style={{ opacity: 0.6, fontSize: 12 }}>{id}</span>
-								<span style={{ minWidth: 52, textAlign: 'right' }}>{cost} SP</span>
-							</label>
-						);
-					})}
-				</div>
-			</div>
+				{candidates.length === 0 ? (
+					<div class="v2-opt-muted">No candidate skills for this uma and course, so there is nothing to optimize.</div>
+				) : (
+					<div class="v2-opt-pool-list">
+						{grouped.map(({ kind, skills }) => (
+							<div class="v2-opt-pool-group" key={kind}>
+								<div class="v2-opt-pool-group-title">{KIND_LABEL[kind]} · {skills.length}</div>
+								{skills.map(({ id, cost }) => {
+									const st = stateOf(id);
+									return (
+										<div class={`v2-opt-skill ${st}`} key={id}>
+											<img src={skillIcon(id)} alt="" loading="lazy" />
+											<span class="v2-opt-skill-name" title={id}>{skillName(id)}</span>
+											<span class="v2-opt-skill-cost">{cost} SP</span>
+											<SegmentedControl<PoolState> value={st} size="sm" ariaLabel={`${skillName(id)}: off, allow or must have`}
+												options={POOL_OPTIONS(running)} onChange={(s) => setState(id, s)} />
+										</div>
+									);
+								})}
+							</div>
+						))}
+					</div>
+				)}
+				{exclusionList}
+				{warnings.length > 0 && (
+					<details class="v2-opt-inline-details">
+						<summary>{warnings.length} warning{warnings.length > 1 ? 's' : ''}</summary>
+						<ul>{warnings.map((wmsg) => <li>{wmsg}</li>)}</ul>
+					</details>
+				)}
+			</section>
 
-			{/* ── Skills that left the pool (collapsed) ── */}
-			{exclusionList}
-
-			{/* ── Space warnings (collapsed) ── */}
-			{warnings.length > 0 && (
-				<details class="v2-optimizer-warnings" style={{ fontSize: 12 }}>
-					<summary style={{ cursor: 'pointer', opacity: 0.8 }}>{warnings.length} warning(s)</summary>
-					<ul style={{ margin: '4px 0', paddingLeft: 20, opacity: 0.7 }}>
-						{warnings.map((wmsg) => <li>{wmsg}</li>)}
-					</ul>
-				</details>
-			)}
-
-			{message && <div class="v2-optimizer-message" style={{ color: '#e06060', fontSize: 13 }}>{message}</div>}
+			{message && <div class="v2-opt-notice error" role="alert">{message}</div>}
 
 			{/* ── Live progress ── */}
-			{(running || progress) && progress && (
-				<div class="v2-optimizer-progress" style={{ border: '1px solid rgba(128,128,128,0.3)', borderRadius: 6, padding: 8, fontSize: 13 }}>
-					<div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'baseline' }}>
-						<strong>{STAGE_LABEL[progress.stage]}</strong>
-						<span>{progress.racesRun.toLocaleString()} races{(progress.racesPlanned ? ` / ${progress.racesPlanned.toLocaleString()} planned` : '')}</span>
-						<span>{fmtDuration(progress.elapsedMs)} elapsed</span>
-						{progress.etaMs != null && <span>≈ {fmtDuration(progress.etaMs)} left</span>}
-						{progress.note && <span style={{ opacity: 0.7 }}>{progress.note}</span>}
-					</div>
-					<ProgressBar progress={progress} untilStopped={preset === 'untilStopped'} />
-					{progress.best && (
-						<div style={{ marginTop: 4, opacity: 0.85 }}>
-							provisional best:{' '}
-							{progress.best.build.selection.length
-								? progress.best.build.selection.map(skillName).join(', ')
-								: '(no additions)'}{' '}
-							— {fmtMeanCi(progress.best.obj, objDigits)} · {progress.best.sp} SP
-						</div>
-					)}
-				</div>
+			{running && (
+				<section class="v2-opt-card v2-opt-progress">
+					{progress ? <ProgressView progress={progress} objective={objective} untilStopped={preset === 'untilStopped'} />
+						: <div class="v2-opt-muted">Starting the engine…</div>}
+					<div class="v2-opt-muted">Press STOP at the top to end the run early and check what it has found.</div>
+				</section>
 			)}
 
-			{/* ── Results ── (rendered from the frozen snapshot, never live state) */}
-			{runResult && (
-				<OptimizerResults
-					result={runResult.result} objective={runResult.objective} objDigits={runResult.objDigits}
-					leftOut={runResult.leftOut}
-					hints={hints} ownedByGroup={ownedByGroup}
-					onOpenInCompare={props.onOpenInCompare}
-				/>
+			{/* ── Results (from the frozen snapshot, never live state) ── */}
+			{runResult ? (
+				<OptimizerResults snapshot={runResult} hints={hints} ownedByGroup={ownedByGroup} onOpenInCompare={props.onOpenInCompare} />
+			) : !running && (
+				<section class="v2-opt-card v2-opt-empty">
+					<div class="v2-results-placeholder">
+						<Wand2 size={40} />
+						<p>Set the SP and the skill pool, then press RUN at the top.</p>
+					</div>
+				</section>
 			)}
 		</div>
 	);
 }
 
-/** 75 s → "1 min 15 s", 3,700 s → "1 h 1 min". */
-function fmtDuration(ms: number): string {
-	const sec = Math.max(0, Math.round(ms / 1000));
-	if (sec < 60) return `${sec} s`;
-	const min = Math.floor(sec / 60);
-	if (min < 60) return `${min} min ${sec % 60} s`;
-	return `${Math.floor(min / 60)} h ${min % 60} min`;
-}
-
-/** The order the pipeline runs its stages in, for the "step k of n" label. */
-const STAGE_ORDER: OptimizerProgress['stage'][] = ['noise', 'screen', 'knapsack', 'incontext', 'local', 'verify'];
-
-/**
- * The run as a bar: races run against the races planned. Until stopped has no
- * plan, so its bar only names the step. The search jumps back and forth
- * between the in-context and local steps for every starting build, so the
- * step label shows where it is now, not a count of what is done.
- */
-function ProgressBar({ progress, untilStopped }: { progress: OptimizerProgress; untilStopped: boolean }) {
+/** Live progress: the stage, a bar of races run against races planned, timing
+ *  and the provisional best build. Until stopped has no plan, so its bar only
+ *  names the stage. The search moves back and forth between the testing and
+ *  improving stages for every starting build, so the step shows where it is
+ *  now, not how much is done. */
+function ProgressView(props: { progress: OptimizerProgress; objective: ObjectiveKind; untilStopped: boolean }) {
+	const { progress, objective, untilStopped } = props;
 	const step = STAGE_ORDER.indexOf(progress.stage);
 	const done = progress.stage === 'done';
 	const frac = done ? 1
 		: progress.racesPlanned > 0 ? Math.min(0.99, progress.racesRun / progress.racesPlanned) : null;
+	const note = plainNote(progress.note);
 	return (
-		<div class="v2-optimizer-progressbar" style={{ marginTop: 6 }}>
-			<div style={{ height: 6, borderRadius: 3, background: 'rgba(128,128,128,0.25)', overflow: 'hidden' }}
-				role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={frac == null ? undefined : Math.round(frac * 100)}>
-				<div style={{
-					height: '100%', borderRadius: 3, background: 'currentColor', opacity: 0.6,
-					width: frac == null ? '100%' : `${(frac * 100).toFixed(1)}%`,
-					...(frac == null ? { opacity: 0.2 } : {}),
-					transition: 'width 0.3s ease',
-				}} />
+		<Fragment>
+			<div class="v2-opt-progress-head">
+				<strong>{STAGE_LABEL[progress.stage]}</strong>
+				<span class="v2-opt-muted">
+					{step >= 0 ? `step ${step + 1} of ${STAGE_ORDER.length} · ` : ''}
+					{progress.racesRun.toLocaleString()} races · {fmtDuration(progress.elapsedMs)}
+					{progress.etaMs != null ? ` · about ${fmtDuration(progress.etaMs)} left` : ''}
+				</span>
 			</div>
-			<div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
-				{step >= 0 ? `step ${step + 1} of ${STAGE_ORDER.length}` : STAGE_LABEL[progress.stage]}
-				{frac != null && !done ? ` · ${Math.round(frac * 100)}% of planned races` : ''}
-				{frac == null && untilStopped ? ' · runs until you press Stop' : ''}
+			<div class={`v2-opt-progressbar${frac == null ? ' indeterminate' : ''}`} role="progressbar"
+				aria-valuemin={0} aria-valuemax={100} aria-valuenow={frac == null ? undefined : Math.round(frac * 100)}>
+				<span style={{ width: frac == null ? '100%' : `${(frac * 100).toFixed(1)}%` }} />
 			</div>
-		</div>
+			{(note || (frac == null && untilStopped)) && (
+				<div class="v2-opt-muted">{note}{frac == null && untilStopped ? `${note ? ' · ' : ''}runs until you press STOP` : ''}</div>
+			)}
+			{progress.best && (
+				<div class="v2-opt-provisional">
+					<span class="v2-opt-muted">Best so far: {fmtGoal(progress.best.obj, objective)} · {progress.best.sp} SP (not yet checked)</span>
+					<div class="v2-opt-chips">
+						{progress.best.build.selection.length
+							? progress.best.build.selection.map((id) => <SkillChip id={id} key={id} />)
+							: <span class="v2-opt-muted">no skills added</span>}
+					</div>
+				</div>
+			)}
+		</Fragment>
 	);
 }
 
 function OptimizerResults(props: {
-	result: OptimizerResult; objective: ObjectiveKind; objDigits: number; leftOut: number;
-	hints: Map<string, number>; ownedByGroup: Map<string, string>; onOpenInCompare?: (ids: string[]) => void;
+	snapshot: RunSnapshot; hints: Map<string, number>; ownedByGroup: Map<string, string>; onOpenInCompare?: (ids: string[]) => void;
 }) {
-	const { result, objective, objDigits, leftOut, hints, ownedByGroup, onOpenInCompare } = props;
-	const objLabel = OBJECTIVES.find((o) => o.id === objective)?.label ?? objective;
-	const best = result.best;
-	const contribs = result.contributions?.length ? new Map(result.contributions.map((c) => [c.id, c])) : null;
-	const openCompare = () => onOpenInCompare?.([...best.build.selection]);
-	// Win rate and P(top-3) can only rank builds that sometimes win or place.
-	// An end-of-career uma with nothing bought yet often does neither against
-	// a full field, and then every row ties at 0.
-	const rateObjective = objective === 'p1' || objective === 'pTop3';
-	const allZero = rateObjective && result.shortlist.length > 0
-		&& result.shortlist.every((r) => r.obj.mean === 0);
-	const bestLead = Math.max(...result.shortlist.map((r) => r.stats?.lead.mean ?? -Infinity));
+	const { snapshot, hints, ownedByGroup, onOpenInCompare } = props;
+	const { result, objective, leftOut, reserve, mustHave } = snapshot;
+	const goal = goalOf(objective);
+	const refId = result.reference?.build.id;
+	const builds = result.shortlist.filter((r) => r.build.id !== refId);
+	const [sel, setSel] = useState(0);
+	const selected = builds[Math.min(sel, builds.length - 1)] ?? builds[0];
+	const best = builds[0];
+	const bestSet = new Set(best?.build.selection ?? []);
+
+	// Win rate and top-3 rate can only rank builds that sometimes win or place.
+	// An end-of-career uma with nothing bought often does neither against a
+	// full field, and then every build ties at 0.
+	const allZero = goal.rate && builds.length > 0 && builds.every((r) => r.obj.mean === 0);
+	const bestLead = Math.max(...builds.map((r) => r.stats?.lead.mean ?? -Infinity));
+
 	return (
-		<div class="v2-optimizer-results">
+		<section class="v2-opt-card v2-opt-results">
+			<header class="v2-opt-card-header">
+				<h3>Results</h3>
+				<span class="v2-opt-subtitle">
+					Ranked by {goal.label.toLowerCase()}, checked on {result.verificationSeeds.toLocaleString()} new races per build.
+					Click a build to see what each skill is worth.
+				</span>
+			</header>
 			{allZero && (
-				<div class="v2-optimizer-notice" role="status"
-					style={{ border: '1px solid #d0a030', borderRadius: 6, padding: '6px 10px', marginBottom: 8, fontSize: 13 }}>
-					<strong style={{ color: '#d0a030' }}>No build {objective === 'p1' ? 'won' : 'placed in the top 3 in'} a single race against this field.</strong>{' '}
+				<div class="v2-opt-notice warn" role="status">
+					<strong>No build {objective === 'p1' ? 'won' : 'placed in the top 3 in'} a single race against this field.</strong>{' '}
 					{Number.isFinite(bestLead) ? `The best one still finished ${fmtN(Math.abs(bestLead), 1)} lengths behind the winner. ` : ''}
-					That is normal at the end of a career with no skills bought yet, but it means {objLabel} cannot tell
-					these builds apart, so the rows below are a tie, not a ranking.
-					Set Objective to <strong>Mean lead ℓ</strong> to rank builds by how much ground they gain.
+					That is normal at the end of a career with nothing bought yet, but it means the {goal.short.toLowerCase()} cannot tell
+					these builds apart, so they are a tie, not a ranking. Set the goal to <strong>Margin vs winner</strong> to rank
+					builds by how much ground they gain.
 				</div>
 			)}
-			<table class="v2-optimizer-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-				<thead>
-					<tr>
-						<th style={thStyle}>#</th>
-						<th style={thStyle}>Skills</th>
-						<th style={{ ...thStyle, textAlign: 'right' }}>SP spent / left</th>
-						<th style={{ ...thStyle, textAlign: 'right' }}>{objLabel} (95% CI)</th>
-						<th style={{ ...thStyle, textAlign: 'right' }}>P(1st)</th>
-						<th style={{ ...thStyle, textAlign: 'right' }}>P(top-3)</th>
-						<th style={{ ...thStyle, textAlign: 'right' }}>mean ℓ</th>
-					</tr>
-				</thead>
-				<tbody>
-					{result.shortlist.map((row: ScoredBuild, i: number) => (
-						<tr class="v2-optimizer-row" key={`${row.build.id}#${i}`}>
-							<td style={tdStyle}>
-								{i + 1}
-								{i > 0 && row.tiedWithBest && (
-									<span class="v2-optimizer-tie" title="Statistically indistinguishable from the recommended build (CI of the paired difference contains 0)"
-										style={{ marginLeft: 6, fontSize: 11, padding: '1px 5px', borderRadius: 4, border: '1px solid rgba(128,128,128,0.5)', opacity: 0.8 }}>
-										≈ best
-									</span>
-								)}
-							</td>
-							<td style={tdStyle}>
-								{row.build.selection.length ? row.build.selection.map(skillName).join(', ') : '(no additions)'}
-							</td>
-							<td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>{row.sp} / {row.leftover}</td>
-							<td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: i === 0 ? 600 : 400 }}>
-								{fmtMeanCi(row.obj, objDigits)}
-							</td>
-							<td style={{ ...tdStyle, textAlign: 'right' }}>{fmtPct(row.stats?.win.mean)}</td>
-							<td style={{ ...tdStyle, textAlign: 'right' }}>{fmtPct(row.stats?.top3.mean)}</td>
-							<td style={{ ...tdStyle, textAlign: 'right' }}>{fmtN(row.stats?.lead.mean)}</td>
-						</tr>
-					))}
-				</tbody>
-			</table>
-			{best.build.selection.length > 0 && (
-				<details class="v2-optimizer-inbuild" open style={{ marginTop: 8, fontSize: 13 }}>
-					<summary style={{ cursor: 'pointer', opacity: 0.85 }}>
-						Recommended build · {best.build.selection.length} skill{best.build.selection.length > 1 ? 's' : ''} · {best.sp} SP
-					</summary>
-					<table style={{ marginTop: 6, borderCollapse: 'collapse' }}>
-						<thead>
-							<tr>
-								<th style={thStyle}>Skill</th>
-								<th style={{ ...thStyle, textAlign: 'right' }}>SP</th>
-								<th style={{ ...thStyle, textAlign: 'right' }} title="Share of the races the optimizer already ran in which this skill activated (search seeds, no extra races). Under 5% is flagged.">Activation</th>
-								{contribs && <th style={{ ...thStyle, textAlign: 'right' }} title="Δ lead in clipped lengths if this skill were dropped, from the races the search already ran. Its own decision currency, so the tighter of the two columns.">Δ ℓ if dropped</th>}
-								{contribs && <th style={{ ...thStyle, textAlign: 'right' }} title="Δ P(1st) in percentage points if this skill were dropped, on the same seeds, so wider. Skills overlap, so this column does not add up to the build total.">Δ P(1st) if dropped</th>}
-							</tr>
-						</thead>
-						<tbody>
-							{best.build.selection.map((id) => (
-								<tr key={id}>
-									<td style={tdStyle}>
-										{skillName(id)}
-										{activationCountSkill(id) && <span title="Its condition reads an activate_count_* condition: it can only fire after other skills have, so the pipeline can only judge it from measured rates">*</span>}
-									</td>
-									<td style={{ ...tdStyle, textAlign: 'right' }}>{calculateSkillCost(id, hints, ownedByGroup)} SP</td>
-									<td style={{ ...tdStyle, textAlign: 'right' }}>{activationCell(id, result.bestActivations)}</td>
-									{contribs && <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>{contributionCell(contribs.get(id)?.lead ?? null, 'L')}</td>}
-									{contribs && <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>{contributionCell(contribs.get(id)?.win ?? null, 'pp')}</td>}
-								</tr>
-							))}
-						</tbody>
-					</table>
-					{contribs && (
-						<div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-							Δ columns: the same build without that skill, measured from the races the search already ran, so they cost no extra races. The search decides on the clipped lead, which is why Δ ℓ is the tighter column and Δ P(1st) the wider one. Skills overlap, so neither column adds up to the build total.
-						</div>
-					)}
-					{best.build.selection.some(activationCountSkill) && (
-						<div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-							* activation depends on earlier activations (activate_count condition): the rate shown is measured from races, not predicted
-						</div>
-					)}
-					{onOpenInCompare && (
-						<button type="button" class="v2-optimizer-compare" style={{ marginTop: 8, padding: '5px 12px', borderRadius: 6, cursor: 'pointer' }}
-							title="Load this build onto a copy of your current uma as Uma 2, to compare against it"
-							onClick={openCompare}>
-							Open in Compare →
-						</button>
-					)}
-				</details>
+			{result.stoppedEarly && (
+				<div class="v2-opt-notice warn">Stopped early: the builds were only checked on a short run of new races.</div>
 			)}
-			<div class="v2-optimizer-footnote" style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-				verification: {result.verificationSeeds.toLocaleString()} fresh seeds · noise σΔ(ℓ) {fmtN(result.noise.sigmaDeltaLead)} L
+			{mustHave.length > 0 && (
+				<div class="v2-opt-must">
+					<span class="v2-opt-muted">In every build (must have):</span>
+					<div class="v2-opt-chips">{mustHave.map((id) => <SkillChip id={id} tone="must" key={id} />)}</div>
+				</div>
+			)}
+
+			<div class="v2-opt-builds">
+				{builds.map((row, i) => {
+					const isSel = row === selected;
+					const missing = i > 0 ? [...bestSet].filter((id) => !row.build.selection.includes(id)) : [];
+					const pick = () => setSel(i);
+					return (
+						<div class={`v2-opt-build${isSel ? ' selected' : ''}`} key={row.build.id} role="button" tabIndex={0}
+							aria-pressed={isSel} onClick={pick}
+							onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } }}>
+							<div class="v2-opt-build-head">
+								<span class="v2-opt-build-rank">#{i + 1}</span>
+								{i === 0 && <Badge variant="primary" size="sm">Recommended</Badge>}
+								{i > 0 && row.tiedWithBest && (
+									<Badge variant="neutral" size="sm" outline title="The 95% interval of its difference from #1 holds 0, so the two cannot be told apart">
+										Tie with #1
+									</Badge>
+								)}
+								<span class="v2-opt-build-score" title={`${goal.label}, mean ± 95% interval`}>{fmtGoal(row.obj, objective)}</span>
+							</div>
+							<div class="v2-opt-build-stats">
+								<span>Win {fmtPct(row.stats?.win.mean)}</span>
+								<span>Top-3 {fmtPct(row.stats?.top3.mean)}</span>
+								<span>Margin {fmtN(row.stats?.lead.mean)} L</span>
+								<span>{row.sp.toLocaleString()} SP · {row.leftover.toLocaleString()} spare{reserve ? ` + ${reserve.toLocaleString()} reserved` : ''}</span>
+								<span>{row.build.selection.length} skill{row.build.selection.length === 1 ? '' : 's'}</span>
+							</div>
+							<div class="v2-opt-chips">
+								{row.build.selection.length
+									? row.build.selection.map((id) => <SkillChip id={id} key={id} tone={i > 0 && !bestSet.has(id) ? 'added' : undefined} />)
+									: <span class="v2-opt-muted">no skills added</span>}
+							</div>
+							{missing.length > 0 && (
+								<div class="v2-opt-missing">
+									<span class="v2-opt-muted">Not in this build, but in #1:</span>
+									<div class="v2-opt-chips">{missing.map((id) => <SkillChip id={id} key={id} tone="missing" />)}</div>
+								</div>
+							)}
+						</div>
+					);
+				})}
+			</div>
+
+			{result.reference && (
+				<div class="v2-opt-reference">
+					<span class="v2-opt-muted">Your current build{mustHave.length ? ' (with the must-have skills)' : ''}:</span>{' '}
+					margin {fmtN(result.reference.stats?.lead.mean)} L · win {fmtPct(result.reference.stats?.win.mean)} · top-3 {fmtPct(result.reference.stats?.top3.mean)}
+				</div>
+			)}
+
+			{selected && (
+				<BuildBreakdown row={selected} rank={builds.indexOf(selected) + 1} mustHave={mustHave}
+					hints={hints} ownedByGroup={ownedByGroup} onOpenInCompare={onOpenInCompare} />
+			)}
+
+			<div class="v2-opt-footnote">
+				{result.verificationSeeds.toLocaleString()} checking races per build · race noise σΔ {fmtN(result.noise.sigmaDeltaLead)} L
 				{leftOut > 0 ? ` · ${leftOut} skill${leftOut === 1 ? '' : 's'} left the pool before the search` : ''}
-				{result.stoppedEarly && (
-					<span style={{ color: '#d0a030', marginLeft: 10 }}>
-						Stopped early — results come from the short Stage G verification only.
-					</span>
+			</div>
+		</section>
+	);
+}
+
+/** What each skill of one build is worth: the build against the same build
+ *  without that skill, on shared races, sorted from most to least. */
+function BuildBreakdown(props: {
+	row: ScoredBuild; rank: number; mustHave: string[];
+	hints: Map<string, number>; ownedByGroup: Map<string, string>; onOpenInCompare?: (ids: string[]) => void;
+}) {
+	const { row, rank, mustHave, hints, ownedByGroup, onOpenInCompare } = props;
+	const contribs = new Map((row.contributions ?? []).map((c) => [c.id, c]));
+	const items = row.build.selection.map((id) => {
+		const cost = calculateSkillCost(id, hints, ownedByGroup);
+		const d = contribs.get(id)?.lead ?? null;
+		return { id, cost, d, win: contribs.get(id)?.win ?? null };
+	}).sort((a, b) => (b.d?.mean ?? -Infinity) - (a.d?.mean ?? -Infinity));
+	const ends = items.flatMap((x) => (x.d ? [x.d.ci95[0], x.d.ci95[1]] : [])).filter(Number.isFinite);
+	const lo = Math.min(0, ...ends);
+	const hi = Math.max(0, ...ends, 0.1);
+	if (!row.build.selection.length) {
+		return <div class="v2-opt-breakdown v2-opt-muted">Build #{rank} adds no skills, so there is nothing to break down.</div>;
+	}
+	return (
+		<div class="v2-opt-breakdown">
+			<div class="v2-opt-breakdown-head">
+				<h4>Build #{rank} · {row.build.selection.length} skill{row.build.selection.length === 1 ? '' : 's'} · {row.sp.toLocaleString()} SP</h4>
+				{onOpenInCompare && (
+					<Button size="sm" variant="secondary" title="Load this build onto a copy of your current uma as Uma 2, to compare against it"
+						onClick={() => onOpenInCompare([...mustHave, ...row.build.selection])}>
+						Open in Compare
+					</Button>
 				)}
+			</div>
+			<div class="v2-opt-table-wrap">
+				<table class="v2-opt-worth">
+					<thead>
+						<tr>
+							<th>Skill</th>
+							<th class="num">SP</th>
+							<th class="num" title="Share of this build's races in which the skill activated. Under 5% is flagged.">Fires</th>
+							<th title="How much ground the build loses without this skill, in lengths. The bar is the average, the thin line the 95% interval. A faint bar crosses zero, so the run cannot tell it from no effect.">Worth if dropped</th>
+							<th class="num" title="Worth per 100 SP spent on the skill">Per 100 SP</th>
+						</tr>
+					</thead>
+					<tbody>
+						{items.map(({ id, cost, d, win }) => (
+							<tr key={id} title={win ? `Win rate without it: ${fmtN(-win.mean * 100, 1)} ± ${fmtN(ciHalfWidth(win.ci95) * 100, 1)} points` : undefined}>
+								<td>
+									<div class="v2-opt-skill-cell">
+										<img src={skillIcon(id)} alt="" loading="lazy" />
+										<span>{skillName(id)}</span>
+										{activationCountSkill(id) && <span class="v2-opt-muted" title="It only fires after other skills have, so its rate is measured from races, not predicted">*</span>}
+									</div>
+								</td>
+								<td class="num">{cost}</td>
+								<td class="num">{activationCell(id, row.activations)}</td>
+								<td><WorthBar d={d} lo={lo} hi={hi} /></td>
+								<td class="num">{d && cost > 0 ? `${fmtN((d.mean / cost) * 100)} L` : '—'}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+			<div class="v2-opt-footnote">
+				Worth is measured on the same races with and without the skill. Skills overlap, so the worths do not add up to the build's total.
+				{row.build.selection.some(activationCountSkill) ? ' * fires only after other skills have, so its rate comes from races.' : ''}
 			</div>
 		</div>
 	);
