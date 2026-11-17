@@ -9,10 +9,10 @@ branch, not an upstream tag — read
 [Fork deviation: the paired-draws submodule](#fork-deviation-the-paired-draws-submodule)
 first.
 
-The invariants this runbook protects (integration plan §7): the pinned submodule
-is consumed unmodified, the validated runtime profile is copied verbatim from
-the example, and every layer below it (goldens, acceptance suites, coverage
-gate) is re-verified against the new engine before the fork ships it.
+The invariants this runbook protects (integration plan §7): the only engine edits
+are the `paired-draws` commits described below, the validated runtime profile is
+copied verbatim from the example, and every layer below it (goldens, acceptance
+suites, coverage gate) is re-verified against the new engine before the fork ships it.
 
 Work on a branch (e.g. `globalsim-v78`), one commit per numbered step.
 
@@ -274,6 +274,11 @@ fork), built on top of the pinned v77 commit `27a4d13`. Step 1's
 "never track a branch" rule is about upstream tags; this branch is the
 fork's own work, so the branch pin is deliberate.
 
+To read what the branch changes:
+`git -C vendor/GlobalSim diff --ignore-cr-at-eol 27a4d13..HEAD` is 315 insertions
+over 43 deletions in five files. Without the flag the same range reads 1268 over
+996, because the first branch commit rewrote line endings in three of those files.
+
 The branch adds one request flag, `pairedRandomStreams` (omitted unless the
 app asks for it). With the flag the in-race random stream is keyed by
 (seed, runner), each skill's initialization windows and wisdom lottery by
@@ -317,8 +322,8 @@ generated output and gitignored — never committed.
 ## Decision record: panic strategy
 
 Upstream GlobalSim ships **`panic = "abort"`** in its release profile and this
-fork keeps that (the submodule is consumed unmodified — plan D8, and the stdin
-worker / upstream tests run exactly as upstream ships them). The fork's wrapper
+fork keeps that (the branch leaves `[profile.release]` untouched, plan D8, and the
+stdin worker / upstream tests run exactly as upstream ships them). The fork's wrapper
 crate, `globalsim-wasm/Cargo.toml`, deliberately builds **`panic = "unwind"`**
 for its release profile: an engine panic then becomes a rejected run
 (`"engine panic: …"`, killing only that handle, which `pool.ts` recreates)

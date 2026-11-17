@@ -40,7 +40,7 @@ GitHub Pages has no server components: `_redirects` and `functions/` are Cloudfl
 │   ├── skill_data.json         # English game data
 │   └── course_data.json
 ├── globalsim-wasm/              # wasm-bindgen wrapper around the engine
-├── vendor/GlobalSim/            # the engine, unmodified submodule (pinned by VERSION)
+├── vendor/GlobalSim/            # the engine submodule (fork branch paired-draws, based on upstream v77)
 ├── globalsim/                   # deploy assets: wasm/, geometry/, skills.json generated; supplement committed
 ├── events/                      # Events page (source only, not deployed)
 ├── uma-skill-tools/             # Shared library (enums, course data, skill parsing, cost calc)
@@ -176,9 +176,14 @@ TypeScript config uses `"moduleResolution": "bundler"` and targets ES2018.
 ### Engine: GlobalSim only
 
 There is one simulation engine: **GlobalSim**, the Rust engine vendored at
-`vendor/GlobalSim` (pinned by `vendor/GlobalSim/VERSION`, currently `v77`), compiled to wasm
-by the `globalsim-wasm/` crate and run in the browser by the worker in
+`vendor/GlobalSim` and pinned to commit `00d79fa`, three commits past upstream `v77`
+(`27a4d13`) on the `paired-draws` branch of this fork's engine fork. `vendor/GlobalSim/VERSION`
+names the upstream base (`v77`), not the pin. The branch adds one request flag,
+`pairedRandomStreams`, and requests without it reply byte-identical to `27a4d13`. It is
+compiled to wasm by the `globalsim-wasm/` crate and run in the browser by the worker in
 `umalator-global/v2/engines/globalsim/` (`globalsim.worker.ts` + `workerCore.ts`).
+[docs/globalsim-upgrade.md](docs/globalsim-upgrade.md) documents the branch and its acceptance
+numbers.
 
 The classic TypeScript engine has been removed: the JP v1 app, the classic Global v1 app,
 the v2 classic worker (`v2/simulator.worker.ts`) and the HP/stamina calculator all went with

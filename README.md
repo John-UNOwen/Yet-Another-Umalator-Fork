@@ -6,7 +6,7 @@
 
 Live: **https://john-unowen.github.io/Yet-Another-Umalator-Fork/**
 
-A personal fork of [TheCing/uma-tools](https://github.com/TheCing/uma-tools) (Moomoolator), which itself is a hybrid fork of [alpha123/umalator](https://github.com/alpha123/umalator) and [kachi-dev/umalator](https://github.com/kachi-dev/umalator). All three modes — Compare, Skill and Optimizer — run [GlobalSim](https://github.com/daftuyda/GlobalSim), a full-field Rust race engine, in place of the idealized single-uma solver; the classic TypeScript engine and the JP and HP-calculator apps are gone. GlobalSim is vendored as an unmodified git submodule (currently v77) and compiled to WebAssembly that runs in browser Web Workers.
+A personal fork of [TheCing/uma-tools](https://github.com/TheCing/uma-tools) (Moomoolator), which itself is a hybrid fork of [alpha123/umalator](https://github.com/alpha123/umalator) and [kachi-dev/umalator](https://github.com/kachi-dev/umalator). All three modes (Compare, Skill and Optimizer) run [GlobalSim](https://github.com/daftuyda/GlobalSim), a full-field Rust race engine, in place of the idealized single-uma solver. The classic TypeScript engine and the JP and HP-calculator apps are gone. GlobalSim is vendored as a git submodule at upstream v77 (`27a4d13`) plus three commits on this fork's `paired-draws` branch, and compiled to WebAssembly that runs in browser Web Workers. [docs/globalsim-upgrade.md](docs/globalsim-upgrade.md) describes the branch and its acceptance numbers.
 
 ![Umalator interface](docs/screenshot.png)
 
@@ -75,7 +75,8 @@ CI (`.github/workflows/ci.yml`) runs the engine's own `cargo test`, the parity c
 
 ```
 globalsim-wasm/                    wasm-bindgen wrapper around the engine
-vendor/GlobalSim/                  the engine, unmodified submodule
+vendor/GlobalSim/                  the engine submodule (fork branch paired-draws
+                                   on upstream v77)
 umalator-global/v2/                the simulator app
   engines/globalsim/               adapter, worker core, pool, compare, chart, metrics
 globalsim/                         deploy assets; skills-supplement.json is committed,
@@ -94,7 +95,7 @@ docs/globalsim-upgrade.md          engine upgrade runbook
 ## Credits
 
 - **alpha123/umalator** by alpha123 & pecan, and **kachi-dev/umalator (VFalator)** by kachi & Jecht, for the simulator this fork builds on
-- **daftuyda/GlobalSim** for the full-field race engine (pinned as a submodule; it ships without a license declaration upstream, so it is vendored unmodified and unaffiliated)
+- **daftuyda/GlobalSim** for the full-field race engine (the submodule sits on this fork's `paired-draws` branch, based on upstream v77. Upstream ships no license declaration, so it is vendored unaffiliated)
 - **Skill data** from [GameTora](https://gametora.com/umamusume)
 - **Game**: Uma Musume: Pretty Derby, (C) Cygames
 - **Community**: [Moomoo Discord](https://discord.gg/moomoocows)

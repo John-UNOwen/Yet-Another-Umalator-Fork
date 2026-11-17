@@ -1,11 +1,13 @@
 # globalsim-wasm
 
 Thin [wasm-bindgen](https://rustwasm.github.io/wasm-bindgen/) wrapper around the
-GlobalSim engine pinned at `vendor/GlobalSim` (tag **v77**, commit `27a4d13`).
-GlobalSim is consumed unmodified with `default-features = false,
-features = ["external-geometry"]`; course geometry is registered at runtime
-(`register_geometry`) instead of embedded, so the `.wasm` stays small and each
-worker fetches only the course it needs.
+GlobalSim engine pinned at `vendor/GlobalSim` (branch **`paired-draws`**, commit
+`00d79fa`, based on upstream **v77** `27a4d13`). The vendored sources are built as
+they are, with `default-features = false, features = ["external-geometry"]`, so
+course geometry is registered at runtime (`register_geometry`) instead of embedded,
+the `.wasm` stays small and each worker fetches only the course it needs. The branch
+adds one request flag, `pairedRandomStreams`, and replies to unflagged requests stay
+byte-identical to `27a4d13`.
 
 ## API (one instance per Web Worker)
 
