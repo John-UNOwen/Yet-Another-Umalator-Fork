@@ -2,6 +2,12 @@
 
 This document summarizes the changes needed to implement dueling and spot struggle features from kachi-dev.
 
+> **Scope (checked 2026-11-16):** a porting note from the classic TypeScript engine, which has been
+> removed from this fork. The paths in the table below are the kachi-dev snapshots kept in this
+> directory, not this repo's sources. The v2 app still carries `competeFight` and `leadCompetition`
+> in its result types, but GlobalSim does not report them: `engines/globalsim/compare.ts:379-380`
+> fills both with empty placeholders, so those overlay sections stay hidden.
+
 ## Files Extracted
 
 | File | Purpose |

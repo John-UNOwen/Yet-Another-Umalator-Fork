@@ -2,6 +2,9 @@
 
 *Reviewed: 2026-01-28*
 
+> **Scope (checked 2026-11-16):** this reviews the v1 (classic) UI, which has been removed from
+> this fork. The grades below are judgements from that sitting, not measurements.
+
 ## Executive Summary
 
 **Overall UX Grade: C+ (75/100)**
@@ -280,14 +283,3 @@ Skill list shows filtered results but no count like "45 skills match".
 | RaceTrack.tsx | B- | Beautiful viz, drag UX needs work |
 | SkillList.tsx | C+ | Rich features, accessibility gaps |
 | HorseDef.tsx | C | Dense, small touch targets |
-
----
-
-## Estimated Impact
-
-| Fix Category | Usability Improvement |
-|--------------|----------------------|
-| Critical fixes | +40% mobile usability |
-| High priority | -30% user errors |
-| Medium priority | +25% perceived performance |
-| Low priority | +20% feature discoverability |

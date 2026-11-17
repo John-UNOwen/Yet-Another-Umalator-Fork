@@ -2,6 +2,10 @@
 
 This document maps the relationship between `/umalator` (JP) and `/umalator-global` (Global/English) builds.
 
+> **Scope (checked 2026-11-16):** the `/umalator` (JP) build and the classic Global v1 build have
+> been removed, so the aliasing described here no longer exists. What survives of it is the
+> `CC_GLOBAL` flag still read by the shared components.
+
 ---
 
 ## Quick Reference
@@ -18,7 +22,7 @@ This document maps the relationship between `/umalator` (JP) and `/umalator-glob
 
 ## File Categories
 
-### 🔵 Shared Source Files (from /umalator)
+### Shared Source Files (from /umalator)
 
 These files are **used by both builds**. The Global build references them via `../umalator/`:
 
@@ -40,7 +44,7 @@ umalator/
 entryPoints: [{in: '../umalator/app.tsx', out: 'bundle'}, '../umalator/simulator.worker.ts']
 ```
 
-### 🟢 Global-Only Files (in /umalator-global)
+### Global-Only Files (in /umalator-global)
 
 These files are **unique to umalator-global**:
 
@@ -65,13 +69,12 @@ umalator-global/
 ├── course_data.json        # Course definitions (same structure, different IDs possible)
 ├── tracknames.json         # English track names
 ├── umas.json               # Character data with English names
-└── courseeventparams/      # Course event parameter files (112 files)
+└── courseeventparams/      # Course event parameter files (110 files)
 ```
 
 #### Data Generation Scripts
 ```
 umalator-global/
-├── make_global_skill_data.pl
 ├── make_global_skillnames.pl
 ├── make_global_skill_meta.pl
 ├── make_global_course_data.pl
@@ -122,10 +125,10 @@ Entry Points:
   ../umalator/simulator.worker.ts → simulator.worker.js
 
 Plugins:
-  1. redirectData    - ⭐ Redirects data imports to local files
+  1. redirectData    - Redirects data imports to local files
   2. mockAssert      - Same as JP
   3. redirectTable   - Same as JP
-  4. seedrandomPlugin - ⭐ Provides seedrandom polyfill
+  4. seedrandomPlugin - Provides seedrandom polyfill
 
 Defines:
   CC_GLOBAL: 'true'                        ← Key difference!
@@ -286,6 +289,8 @@ Some icons use `/uma-tools/icons/global/` prefix for Global-specific assets.
 ## Development Workflow
 
 ### Editing Source Code
+
+Applies to the retired layout. `/umalator/` was the source of truth for both builds:
 
 1. **Edit files in `/umalator/`** - These are the source of truth
 2. **Rebuild Global**: `cd umalator-global && node build.mjs`

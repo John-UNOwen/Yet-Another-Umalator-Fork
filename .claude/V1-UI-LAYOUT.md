@@ -2,6 +2,9 @@
 
 *Reference for v2 redesign*
 
+> The v1 app this diagram describes has been removed (checked 2026-11-16). Kept as the record of
+> the layout the v2 UI replaced.
+
 ## Desktop Layout (Two-Level CSS Grid)
 
 ### Root Grid (body or #app)

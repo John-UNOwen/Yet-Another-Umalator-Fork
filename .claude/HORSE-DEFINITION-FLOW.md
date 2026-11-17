@@ -2,6 +2,11 @@
 
 This document traces how horse data is defined, edited in the UI, and used in simulation.
 
+> **Scope (checked 2026-11-16):** the v1 chain in this document is gone. `umalator/app.tsx`,
+> `umalator/simulator.worker.ts`, `umalator/compare.ts` and `components/HorseDef.tsx` no longer
+> exist, and the app runs GlobalSim instead of the classic solver. The `uma-skill-tools/` half
+> still describes live code.
+
 ---
 
 ## Quick Answer
@@ -160,7 +165,7 @@ export interface HorseParameters {
 
 ## Conversion: HorseState → HorseParameters
 
-**Location**: [uma-skill-tools/RaceSolverBuilder.ts:182](../uma-skill-tools/RaceSolverBuilder.ts#L182)
+**Location**: [uma-skill-tools/RaceSolverBuilder.ts:203](../uma-skill-tools/RaceSolverBuilder.ts#L203)
 
 ```typescript
 export function buildBaseStats(horseDesc: HorseDesc, mood: Mood) {
@@ -207,8 +212,6 @@ speed: 1200, stamina: 1200, power: 800, guts: 400, wisdom: 400
 ```typescript
 speed: 1850, stamina: 1700, power: 1700, guts: 1200, wisdom: 1300
 ```
-
-The JP defaults are higher because JP players have been playing longer and have better developed horses.
 
 ---
 
@@ -293,7 +296,7 @@ Edit `uma-skill-tools/RaceSolverBuilder.ts`:
 // In app.tsx or components
 const speed = uma1.speed;              // Direct property access
 const strategy = uma1.strategy;        // String: 'Senkou'
-const skills = uma1.skills;            // SortedSet of skill IDs
+const skills = uma1.skills;            // Immutable Map of skill IDs
 ```
 
 ### Updating Horse State
@@ -334,7 +337,10 @@ function resetThisHorse() {
 
 ### JSON Export/Import
 
-**Location**: [components/HorseDef.tsx](../components/HorseDef.tsx) lines 35-100
+**Location**: `components/HorseDef.tsx` (v1, removed), lines 35-100. The live equivalents are
+`validateAndParseUmaJson` ([umalator-global/v2/storage.ts:30](../umalator-global/v2/storage.ts#L30)),
+`downloadHorseJson` ([storage.ts:371](../umalator-global/v2/storage.ts#L371)) and
+`importHorseJsonMulti` ([storage.ts:403](../umalator-global/v2/storage.ts#L403)).
 
 **Export Function** (`horseStateToJson`):
 ```typescript

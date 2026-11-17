@@ -2,6 +2,10 @@
 
 *Reviewed: 2026-01-28*
 
+> **Scope (checked 2026-11-16):** this reviews the v1 (classic) app, which has been removed from
+> this fork. The components, line counts and grades below describe that snapshot, and
+> `components/HorseDef.tsx` no longer exists.
+
 ## Executive Summary
 
 This Preact/TypeScript codebase is functionally complete with solid foundations. Key strengths include Immutable.js state management, clean utility separation (UmaCard, GeminiOCR), and excellent accessibility in Dropdown.tsx. Main weaknesses are component size (HorseDef.tsx at 975 lines), type safety gaps, and duplicated patterns.
