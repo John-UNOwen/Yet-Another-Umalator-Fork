@@ -8,7 +8,7 @@ Live: **https://john-unowen.github.io/Yet-Another-Umalator-Fork/**
 
 A personal fork of [TheCing/uma-tools](https://github.com/TheCing/uma-tools) (Moomoolator), which itself is a hybrid fork of [alpha123/umalator](https://github.com/alpha123/umalator) and [kachi-dev/umalator](https://github.com/kachi-dev/umalator). All three modes (Compare, Skill and Optimizer) run [GlobalSim](https://github.com/daftuyda/GlobalSim), a full-field Rust race engine, in place of the idealized single-uma solver. The classic TypeScript engine and the JP and HP-calculator apps are gone. GlobalSim is vendored as a git submodule at upstream v77 (`27a4d13`) plus three commits on this fork's `paired-draws` branch, and compiled to WebAssembly that runs in browser Web Workers. [docs/globalsim-upgrade.md](docs/globalsim-upgrade.md) describes the branch and its acceptance numbers.
 
-![Umalator interface](docs/screenshot.png)
+![Umalator Skill mode](docs/screenshot.png)
 
 ## The live site
 
