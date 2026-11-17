@@ -64,6 +64,20 @@ export interface EffortConfig {
 	/** §7.3 noise calibration seeds (base + ~4 variants → ~2k races). */
 	noiseSeeds: number;
 	noiseVariants: number;
+	/** User settings (applyTuning), absent on the presets. Each one falls back
+	 *  to the constant named in its comment. */
+	/** Kicks per visit to a start (KICKS_PER_VISIT on Until stopped, `kicks` otherwise). */
+	kicksPerVisit?: number;
+	/** Wider search: failed kicks in a row before the kick grows (KICK_GROW_AFTER). */
+	kickGrowAfter?: number;
+	/** Wider search: picks two starts must differ by (knapsack SPREAD_MIN_DIFF_PICKS). */
+	spreadMinDiff?: number;
+	/** Wider search: noise on the shuffled starts' values (knapsack SPREAD_NOISE). */
+	spreadNoise?: number;
+	/** Races each "worth if dropped" number rests on (CONTRIB_SEEDS). */
+	contribSeeds?: number;
+	/** Builds verified and reported (5, or 3 after Stop). */
+	shortlistSize?: number;
 }
 
 const SCREEN_COMMON = {
@@ -136,8 +150,8 @@ export const KICK_GROW_AFTER = 3;
 /** Wider search: the largest kick level (6 to 8 swaps). */
 export const KICK_MAX_LEVEL = 2;
 /** Kick level after `failed` kicks in a row (wider search only). */
-export function kickLevelOf(failed: number): number {
-	return Math.min(KICK_MAX_LEVEL, Math.floor(Math.max(0, failed) / KICK_GROW_AFTER));
+export function kickLevelOf(failed: number, growAfter: number = KICK_GROW_AFTER): number {
+	return Math.min(KICK_MAX_LEVEL, Math.floor(Math.max(0, failed) / Math.max(1, growAfter)));
 }
 /** Swaps one kick makes at a level: 2 to 4 at level 0 (the default kick),
  *  then 4 to 6, then 6 to 8. A build with fewer skills stops at what it owns. */
@@ -181,6 +195,73 @@ export function effortConfig(preset: EffortPreset, custom: CustomEffort = DEFAUL
 		case 'standard':
 		default: return STANDARD;
 	}
+}
+
+/**
+ * Settings the user can change on top of an effort preset. A missing field
+ * keeps the preset's value. The statistical internals (adoption threshold,
+ * bandit ladder, surrogate, cache) are not here on purpose: they are what
+ * keeps the search from adopting a change that only looked good by luck.
+ */
+export interface SearchTuning {
+	/** Smallest gain worth chasing, in lengths. */
+	deltaMinL?: number;
+	/** Verification races per build (the cap grows to 4×). */
+	verifySeeds?: number;
+	/** Races behind each "worth if dropped" number. */
+	contribSeeds?: number;
+	/** Builds verified and reported. */
+	buildsShown?: number;
+	/** Kicks per starting build (per visit on Until stopped). */
+	kicksPerStart?: number;
+	/** Wider search: failed kicks in a row before the kick grows. */
+	kickGrowAfter?: number;
+	/** Wider search: skills two starting builds must differ by. */
+	spreadMinDiff?: number;
+	/** Wider search: noise on the shuffled starts, in median skill values. */
+	spreadNoise?: number;
+}
+
+/** Bounds the pane's inputs share with applyTuning, so both clamp alike. */
+export const TUNING_LIMITS = {
+	deltaMinL: { min: 0.005, max: 1 },
+	verifySeeds: { min: 100, max: 15_000 },
+	contribSeeds: { min: 50, max: 5_000 },
+	buildsShown: { min: 1, max: 15 },
+	kicksPerStart: { min: 0, max: 100 },
+	kickGrowAfter: { min: 1, max: 20 },
+	spreadMinDiff: { min: 2, max: 20 },
+	spreadNoise: { min: 0, max: 5 },
+} as const;
+
+const clampTo = (v: number, lim: { min: number; max: number }): number => Math.min(lim.max, Math.max(lim.min, v));
+const given = (v: number | undefined): v is number => v != null && Number.isFinite(v);
+
+/** The preset with the user's settings applied. With no settings it returns
+ *  the preset unchanged, so a run without them behaves exactly as before. */
+export function applyTuning(cfg: EffortConfig, t: SearchTuning = {}): EffortConfig {
+	const L = TUNING_LIMITS;
+	const out: EffortConfig = { ...cfg };
+	if (given(t.deltaMinL)) out.deltaMinL = clampTo(t.deltaMinL, L.deltaMinL);
+	if (given(t.verifySeeds)) {
+		const n = Math.round(clampTo(t.verifySeeds, L.verifySeeds));
+		// The verify seed list holds 3 × SEED_LIST_SIZE (60,000) positions.
+		out.gSeedsMin = n;
+		out.gSeedsCap = Math.min(60_000, 4 * n);
+	}
+	if (given(t.contribSeeds)) out.contribSeeds = Math.round(clampTo(t.contribSeeds, L.contribSeeds));
+	if (given(t.buildsShown)) out.shortlistSize = Math.round(clampTo(t.buildsShown, L.buildsShown));
+	if (given(t.kicksPerStart)) {
+		const k = Math.round(clampTo(t.kicksPerStart, L.kicksPerStart));
+		// Until stopped keeps kicking pass after pass, so the setting is the
+		// count per visit. Every other preset kicks one visit per start.
+		if (Number.isFinite(cfg.kicks)) out.kicks = k;
+		else out.kicksPerVisit = Math.max(1, k);
+	}
+	if (given(t.kickGrowAfter)) out.kickGrowAfter = Math.round(clampTo(t.kickGrowAfter, L.kickGrowAfter));
+	if (given(t.spreadMinDiff)) out.spreadMinDiff = Math.round(clampTo(t.spreadMinDiff, L.spreadMinDiff));
+	if (given(t.spreadNoise)) out.spreadNoise = clampTo(t.spreadNoise, L.spreadNoise);
+	return out;
 }
 
 // ── global tunables (§11, bottom line) ───────────────────────────────────────

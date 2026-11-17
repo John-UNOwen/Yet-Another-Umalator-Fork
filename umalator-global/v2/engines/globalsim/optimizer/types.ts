@@ -129,6 +129,11 @@ export interface ScoredBuild {
 	provisional: boolean;
 	/** Stage G tie flag vs the recommended build (CI of the pair diff contains 0). */
 	tiedWithBest?: boolean;
+	/** Final rows: what each skill of this build is worth (the build against
+	 *  itself minus that skill), ordered like `build.selection`. */
+	contributions?: SkillContribution[];
+	/** Final rows: activation telemetry from the search races of this build. */
+	activations?: ActivationTelemetry;
 }
 
 /** A paired difference the run already holds: the effect, its 95% interval and
@@ -195,6 +200,9 @@ export interface OptimizerResult {
 	 *  run (no extra races). Ordered like `best.build.selection`. Absent when
 	 *  the run had nothing to read. */
 	contributions?: SkillContribution[];
+	/** gainVsCurrent: the user's current build, verified on the same seeds as
+	 *  the rows. Reported here instead of as a row, unless it won. */
+	reference?: ScoredBuild;
 }
 
 /** §7.3 noise calibration output. */

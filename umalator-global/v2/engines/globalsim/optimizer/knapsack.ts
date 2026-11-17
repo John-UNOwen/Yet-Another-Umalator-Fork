@@ -208,11 +208,15 @@ const SPREAD_TRIES_PER_SLOT = 8;
  * start is still the exact optimum. `rng` returns uniforms in [0, 1), so a
  * fixed seed gives the same starts.
  */
-export function mckpSpreadStarts(groups: readonly KnapGroup[], budget: number, k: number, rng: () => number): KnapSolution[] {
-	const out = mckpTopK(groups, budget, Math.max(1, Math.ceil(k / 2)), SPREAD_MIN_DIFF_PICKS);
+export function mckpSpreadStarts(
+	groups: readonly KnapGroup[], budget: number, k: number, rng: () => number,
+	opts: { minDiff?: number; noise?: number } = {},
+): KnapSolution[] {
+	const minDiff = opts.minDiff ?? SPREAD_MIN_DIFF_PICKS;
+	const out = mckpTopK(groups, budget, Math.max(1, Math.ceil(k / 2)), minDiff);
 	if (!out.length) return out;
 	const mags = groups.flatMap(g => g.options.map(o => Math.abs(o.value))).filter(v => v > 0).sort((a, b) => a - b);
-	const scale = (mags.length ? mags[Math.floor(mags.length / 2)] : 1) * SPREAD_NOISE;
+	const scale = (mags.length ? mags[Math.floor(mags.length / 2)] : 1) * (opts.noise ?? SPREAD_NOISE);
 	const gauss = (): number => {
 		const u = Math.max(rng(), 1e-12), v = rng();
 		return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
@@ -222,7 +226,7 @@ export function mckpSpreadStarts(groups: readonly KnapGroup[], budget: number, k
 		const noisy = groups.map(g => ({ ...g, options: g.options.map(o => ({ ...o, value: o.value + scale * gauss() })) }));
 		const sol = mckpSolve(noisy, budget);
 		if (!sol || !sol.ids.length) continue;
-		if (!out.every(s => picksApart(s.ids, sol.ids) >= SPREAD_MIN_DIFF_PICKS)) continue;
+		if (!out.every(s => picksApart(s.ids, sol.ids) >= minDiff)) continue;
 		let value = 0;
 		for (const [gid, id] of sol.selection) value += valueOf.get(`${gid}\u0000${id}`) ?? 0;
 		out.push({ ...sol, value });

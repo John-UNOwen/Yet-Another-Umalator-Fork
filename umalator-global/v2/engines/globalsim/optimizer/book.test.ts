@@ -4,7 +4,7 @@
  * roster" filter that decides which saved builds may seed a new search.
  */
 import test from 'tape';
-import { bookKey, BookEntry, distanceBand, loadBook, saveBook, selectStarts } from './book';
+import { bookCount, bookKey, BookEntry, clearBook, distanceBand, loadBook, saveBook, selectStarts } from './book';
 import { BOOK_STORAGE_KEY } from './config';
 import { BuildSpace, OptOption } from './space';
 
@@ -59,6 +59,20 @@ test('saveBook → loadBook round-trips, dedupes and honours the cap', t => {
 	saveBook('k', [e(['d'], 1), e(['f'], 2), e(['g'], 3)], 2, s);
 	t.equal(loadBook(s).entries['k'].length, 2, 'cap enforced');
 	t.deepEqual(loadBook(s).entries['k'].map(x => x.selection.join()), ['d', 'f'], 'cap keeps most-recent');
+	t.end();
+});
+
+test('clearBook forgets one race and keeps the others', t => {
+	const s = new MemStore();
+	const e = (sel: string[]): BookEntry => ({ selection: sel, value: 1 });
+	saveBook('a', [e(['x']), e(['y'])], 5, s);
+	saveBook('b', [e(['z'])], 5, s);
+	t.equal(bookCount('a', s), 2, 'two saved builds for race a');
+	clearBook('a', s);
+	t.equal(bookCount('a', s), 0, 'race a forgotten');
+	t.equal(bookCount('b', s), 1, 'race b kept');
+	clearBook('missing', s);
+	t.equal(bookCount('b', s), 1, 'clearing an unknown race changes nothing');
 	t.end();
 });
 

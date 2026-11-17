@@ -86,6 +86,25 @@ export function saveBook(key: string, entries: BookEntry[], cap = 5, store?: Pic
 	}
 }
 
+/** Saved builds under `key` (0 when there are none or storage is unusable). */
+export function bookCount(key: string, store?: Pick<Storage, 'getItem'>): number {
+	return loadBook(store).entries[key]?.length ?? 0;
+}
+
+/** Forget the saved builds under `key`. Best-effort like saveBook. */
+export function clearBook(key: string, store?: Pick<Storage, 'setItem' | 'getItem'>): void {
+	try {
+		const s = store ?? globalThis.localStorage;
+		if (!s?.setItem) return;
+		const file = loadBook(store);
+		if (!(key in file.entries)) return;
+		delete file.entries[key];
+		s.setItem(BOOK_STORAGE_KEY, JSON.stringify(file));
+	} catch {
+		/* disabled storage: nothing saved, nothing to clear */
+	}
+}
+
 /** Book entries for `key` that are legal for the CURRENT space: affordable and
  *  one-per-group. These become extra Stage C restart candidates. A saved build
  *  whose skills are no longer purchasable (or now over budget) is skipped. */

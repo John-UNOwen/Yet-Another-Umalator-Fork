@@ -298,6 +298,12 @@ async function runSingleScenario(
 	const { space, scenarioIdx: si, objective, effort: cfg } = input;
 	const t0 = Date.now();
 	const pick = objPick(objective);
+	// Builds to verify and report: the setting when given, else 5 (3 after Stop).
+	const shortK = cfg.shortlistSize ?? 5;
+	const stopK = cfg.shortlistSize ?? 3;
+	// With a set build count the current build is reported apart, so it must
+	// not take one of the shortlist's filler slots.
+	const fillSkip = cfg.shortlistSize != null ? input.current?.id : undefined;
 	// What the search screens, adopts and certifies against is built right after
 	// the §7.3 noise calibration below (§F: the win-rate objectives search the
 	// lead clipped to the band the objective can still see, the rest keep ℓ, the
@@ -483,29 +489,42 @@ async function runSingleScenario(
 		// paired one build's lead with another build's win rate.
 		const both = lens.map((l, i) => [l, wins[i]] as const).filter(([l, w]) => Number.isFinite(l) && Number.isFinite(w));
 		const orderingCorrelation = spearman(both.map(([l]) => l), both.map(([, w]) => w));
-		// Per-skill worth of the recommendation: this build against the same build
-		// minus one skill, on search seeds. The climb usually raced those drops
-		// already, but a long run evicts them from the cache and a tie-group pick
-		// may never have been a climb end. Any drop with fewer than CONTRIB_SEEDS
-		// shared seeds is raced here, so every row has a number. A stopped run
-		// skips the extra races and reports what the cache still holds.
-		const dropOf = (id: string) => refOf(best.build.selection.filter((x) => x !== id));
-		if (!ctrl.stopped()) {
-			const short = best.build.selection.filter((id) =>
-				(ev.paired(NS_SEARCH, si, best.build, dropOf(id), searchPick)?.n ?? 0) < CONTRIB_SEEDS);
-			if (short.length) {
-				emit('verify', `measuring ${short.length} skill${short.length === 1 ? '' : 's'}' worth`);
-				const positions = Array.from({ length: CONTRIB_SEEDS }, (_, i) => i);
-				await ev.ensure([best.build, ...short.map(dropOf)].map(b => ({ ns: NS_SEARCH, scenarioIdx: si, build: b, positions })));
+		// The user's own build rides along as the gainVsCurrent reference and is
+		// reported apart (`reference`) unless it won. A set `shortlistSize` takes
+		// it out of the rows and cuts them to that many builds (restart ends can
+		// outnumber it). Without the setting the rows stay as they were.
+		const reference = vs && best.build.id !== vs.id ? rows.find(r => r.build.id === vs.id) : undefined;
+		if (cfg.shortlistSize != null) rows = rows.filter(r => r !== reference).slice(0, Math.max(1, cfg.shortlistSize));
+		// Per-skill worth of every reported build: the build against the same
+		// build minus one skill, on search seeds. The climb usually raced those
+		// drops already, but a long run evicts them from the cache and a
+		// runner-up may never have been a climb end. Any drop with fewer shared
+		// seeds than the setting is raced here, so every skill has a number. A
+		// stopped run skips the extra races and reports what the cache holds.
+		const contribSeeds = cfg.contribSeeds ?? CONTRIB_SEEDS;
+		const worthRows = rows.filter(r => r.build.selection.length > 0);
+		for (let i = 0; i < worthRows.length; i++) {
+			const r = worthRows[i];
+			const dropOf = (id: string) => refOf(r.build.selection.filter((x) => x !== id));
+			if (!ctrl.stopped()) {
+				const thin = r.build.selection.filter((id) =>
+					(ev.paired(NS_SEARCH, si, r.build, dropOf(id), searchPick)?.n ?? 0) < contribSeeds);
+				if (thin.length) {
+					emit('verify', `measuring skill worth · build ${i + 1} of ${worthRows.length}`);
+					const positions = Array.from({ length: contribSeeds }, (_, k) => k);
+					await ev.ensure([r.build, ...thin.map(dropOf)].map(b => ({ ns: NS_SEARCH, scenarioIdx: si, build: b, positions })));
+				}
 			}
+			r.contributions = contributionsOf(r.build.selection, (id) => {
+				const without = dropOf(id);
+				return {
+					lead: ev.paired(NS_SEARCH, si, r.build, without, searchPick),
+					win: ev.paired(NS_SEARCH, si, r.build, without, (v) => v.win),
+				};
+			});
+			r.activations = tele(r.build) ?? undefined;
 		}
-		const contributions = contributionsOf(best.build.selection, (id) => {
-			const without = dropOf(id);
-			return {
-				lead: ev.paired(NS_SEARCH, si, best.build, without, searchPick),
-				win: ev.paired(NS_SEARCH, si, best.build, without, (v) => v.win),
-			};
-		});
+		const contributions = best.contributions ?? contributionsOf(best.build.selection, () => ({ lead: null, win: null }));
 		emit('done');
 		let maxSearchFilled = 0;
 		for (const b of evaluated.values()) maxSearchFilled = Math.max(maxSearchFilled, filled(ev, NS_SEARCH, si, b));
@@ -523,10 +542,11 @@ async function runSingleScenario(
 			// skill and flags one under 5%).
 			bestActivations: tele(best.build) ?? undefined,
 			contributions,
+			reference,
 		};
 	};
 
-	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, stopK, space, fillSkip, cfg.shortlistSize != null), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage B: screening chart — out-of-context v⁰ (chart-parity filter) ──
 	emit('screen', `screening ${space.options.filter(o => !o.forced).length} options`);
@@ -565,7 +585,7 @@ async function runSingleScenario(
 		}
 	}
 	dbg('v0', [...v0.entries()].map(([k, v]) => k + ':' + v.mean.toFixed(2) + '±' + v.sem.toFixed(2)).join(' '));
-	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, stopK, space, fillSkip, cfg.shortlistSize != null), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage C: starting builds by multiple-choice knapsack ──────────────────
 	emit('knapsack');
@@ -585,7 +605,9 @@ async function runSingleScenario(
 	// Wider search: starts held further apart, half of them from a knapsack
 	// re-solved on shuffled values. Seeded from the run seed, so a run repeats.
 	const knapStarts = input.wideSearch
-		? mckpSpreadStarts(knapGroups(), space.budget, Math.max(1, cfg.restarts), mulberry32(fnv1a(`spread\u0000${input.wideSearchSeed ?? 0}`)))
+		? mckpSpreadStarts(knapGroups(), space.budget, Math.max(1, cfg.restarts), mulberry32(fnv1a(`spread\u0000${input.wideSearchSeed ?? 0}`)), {
+			minDiff: cfg.spreadMinDiff, noise: cfg.spreadNoise,
+		})
 		: mckpTopK(knapGroups(), space.budget, Math.max(1, cfg.restarts));
 	for (const sol of knapStarts) {
 		const b = remember(refOf(selFromKnap(sol.selection.values())));
@@ -653,7 +675,7 @@ async function runSingleScenario(
 	// at KICKS_PER_VISIT, so all starts get their turn, and then queues another
 	// pass over the peaks the last pass reached. Without the cap the first start
 	// kicked until Stop and the others never ran.
-	const kicksPerVisit = Number.isFinite(cfg.kicks) ? cfg.kicks : KICKS_PER_VISIT;
+	const kicksPerVisit = cfg.kicksPerVisit ?? (Number.isFinite(cfg.kicks) ? cfg.kicks : KICKS_PER_VISIT);
 	const passOf: number[] = startBuilds.map(() => 0);
 	const passEnds: BuildRefLite[] = [];
 	let passRaces0 = ev.racesRun();
@@ -1145,7 +1167,7 @@ async function runSingleScenario(
 		// A wide search also kicks a peak the climb could not certify: that peak
 		// is where the search would otherwise stop looking.
 		while ((peak.p1 || wide) && kickIdx < kicksPerVisit && !climbOut()) {
-			const level = wide ? kickLevelOf(failedKicks) : 0;
+			const level = wide ? kickLevelOf(failedKicks, cfg.kickGrowAfter) : 0;
 			const Xk = makeKick(peak.X, kickIdx, level);
 			kickIdx++;
 			// Degenerate space (nothing kickable): the kick could not change the
@@ -1196,10 +1218,10 @@ async function runSingleScenario(
 			dbg('pass', next + 1, 'queued', startBuilds.length - s - 1, 'peaks');
 		}
 	}
-	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 3, space), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
+	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, stopK, space, fillSkip, cfg.shortlistSize != null), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage G: verification on fresh seeds (the only numbers reported) ──────
-	const short = await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, 5, space);
+	const short = await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, shortK, space, fillSkip, cfg.shortlistSize != null);
 	return verify(short, cfg.gSeedsMin, cfg.gSeedsCap, false);
 }
 
@@ -1554,7 +1576,7 @@ const SHORTLIST_MIN_SEEDS = 200;
  * for their knapsack numbers only and must never reach the report (§13.3).
  * Deterministic order.
  */
-async function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, BuildRefLite>, restartEnds: readonly BuildRefLite[], objective: ObjectiveKind, vs: BuildRefLite | undefined, k: number, space: BuildSpace): Promise<BuildRefLite[]> {
+async function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<string, BuildRefLite>, restartEnds: readonly BuildRefLite[], objective: ObjectiveKind, vs: BuildRefLite | undefined, k: number, space: BuildSpace, fillSkip?: string, relaxFill = false): Promise<BuildRefLite[]> {
 	/** §E: a skill of this build its telemetry never recorded firing. */
 	const neverFired = (b: BuildRefLite): boolean => {
 		const t = ev.activations?.(NS_SEARCH, si, b.id);
@@ -1592,10 +1614,21 @@ async function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<strin
 		.filter(x => !neverFired(x.b))[0];
 	if (incumbent) take(incumbent.b);
 	const fill = measured
-		.filter(x => x.obj!.n >= SHORTLIST_MIN_SEEDS && !out.some(o => o.id === x.b.id))
+		.filter(x => x.obj!.n >= SHORTLIST_MIN_SEEDS && x.b.id !== fillSkip && !out.some(o => o.id === x.b.id))
 		.map(x => ({ b: x.b, lcb: x.obj!.mean - 1.96 * (Number.isFinite(x.obj!.sem) ? x.obj!.sem : 0) }))
 		.sort((x, y) => y.lcb - x.lcb || (x.b.id < y.b.id ? -1 : 1));
 	for (const f of fill) { if (out.length >= k) break; take(f.b); }
+	// A set build count (relaxFill) fills what is still open from builds
+	// under the seed floor, ranked by the same lower bound: a thin build pays
+	// for its noise there, and Stage G re-races every pick on fresh seeds, so
+	// this only adds rows the user asked for and cannot displace the slots above.
+	if (relaxFill) {
+		const thin = measured
+			.filter(x => x.obj!.n >= 2 && Number.isFinite(x.obj!.sem) && x.b.id !== fillSkip && !neverFired(x.b) && !out.some(o => o.id === x.b.id))
+			.map(x => ({ b: x.b, lcb: x.obj!.mean - 1.96 * x.obj!.sem }))
+			.sort((x, y) => y.lcb - x.lcb || (x.b.id < y.b.id ? -1 : 1));
+		for (const f of thin) { if (out.length >= k) break; take(f.b); }
+	}
 	return out;
 }
 

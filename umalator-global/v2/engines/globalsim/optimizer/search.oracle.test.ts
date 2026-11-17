@@ -17,7 +17,7 @@
 
 import test from 'tape';
 import { NS_SEARCH, NS_VERIFY } from './cache';
-import { EffortConfig, KICK_GROW_AFTER, KICK_MAX_LEVEL, kickLevelOf, kickSizeRange, KICKS_PER_VISIT } from './config';
+import { applyTuning, EffortConfig, KICK_GROW_AFTER, KICK_MAX_LEVEL, kickLevelOf, kickSizeRange, KICKS_PER_VISIT } from './config';
 import { BuildRefLite, objectiveOf, pairedOf, SearchEvaluator, statsOf } from './evaluator';
 import { affordable, BuildSpace, OptOption, simIdentity } from './space';
 import { aggregateValues, clipLeadL, createController, LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS, leadClipL, runOptimizer, searchPickOf, SearchCurrency } from './search';
@@ -677,6 +677,33 @@ test('wide search: grown kicks run, results stay feasible and repeat, quality ho
 	const hd = await near(false), hw = await near(true);
 	console.log(`  wide search: near-optimum default=${hd}/20 wide=${hw}/20`);
 	t.ok(hw >= hd - 2, `wide search keeps quality (${hw}/20 vs default ${hd}/20)`);
+	t.end();
+});
+
+test('settings: builds shown caps the report, every build carries its skill worth, the current build stands apart', async t => {
+	const inst = genInstance(4242, 25, 35);
+	const cfg = applyTuning({ ...TEST_CFG, restarts: 4 }, { buildsShown: 2, contribSeeds: 300 });
+	// The current (empty) build is well measured, so it used to take a filler
+	// slot and then leave as the reference, one build short of the setting.
+	const current = refOf(inst.space, []);
+	const ev = new OracleEval(inst);
+	const res = await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'gainVsCurrent', aggregation: 'mean', effort: cfg, current },
+		createController(), () => undefined);
+	ev.dispose();
+	t.equal(res.shortlist.length, 2, 'exactly the 2 builds asked for');
+	t.equal(res.shortlist[0].build.id, res.best.build.id, 'the recommendation is the first row');
+	if (res.best.build.id !== current.id) {
+		t.equal(res.reference?.build.id, current.id, 'the current build is reported as the reference');
+		t.ok(!res.shortlist.some(r => r.build.id === current.id), 'and is not a row');
+	}
+	for (const [i, row] of res.shortlist.entries()) {
+		if (!row.build.selection.length) continue;
+		const c = row.contributions ?? [];
+		t.deepEqual(c.map(x => x.id), [...row.build.selection], `build ${i + 1}: one worth row per skill`);
+		t.ok(c.every(x => x.lead && x.lead.seeds >= 300), `build ${i + 1}: every worth rests on >= 300 races (min ${Math.min(...c.map(x => x.lead?.seeds ?? 0))})`);
+		t.ok(row.activations && row.activations.seeds >= 300, `build ${i + 1}: activation rates from the same races`);
+	}
+	t.deepEqual(res.contributions, res.best.contributions, 'the top-level worth is the one of the recommendation');
 	t.end();
 });
 
