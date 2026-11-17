@@ -67,6 +67,19 @@ export interface SeedCompactRecord {
 	lastSpurtStartDistance?: number;
 	startDelayTime?: number;
 	/**
+	 * Position and HP on the tick the engine plans the last spurt
+	 * (spurtPlanPoint). Present only when the preparation carried the course
+	 * length (compare does). Compare judges the full spurt from them.
+	 */
+	spurtPlanPos?: number;
+	spurtPlanHp?: number;
+	/**
+	 * Set on the main thread by compare (spurt.ts fullSpurtJudge), never by the
+	 * worker: true when the engine's plan at the final leg was the maximum
+	 * spurt speed from that point, null when it cannot be judged.
+	 */
+	fullSpurt?: boolean | null;
+	/**
 	 * Phase 5 chart: the player's activation count of the preparation's
 	 * trackSkillId (see workerCore PrepareMsg). Present only when the job
 	 * tracked a skill; per-seed count of THAT skill's activations.
@@ -171,6 +184,32 @@ export function samplePlayerTail(
 	return out;
 }
 
+/**
+ * A runner's position and HP on the tick the engine plans its last spurt
+ * (globalsim-wasm spurt_plan_point is the exact port). A tick sets the
+ * final-leg phase from the position before that tick's move, and the plan runs
+ * at the start of the next tick, so this is the frame after the first one at
+ * or past the final-leg boundary: section × 16 in float32, as the engine's
+ * retail_physics::phase_boundaries computes it. Null without a course length
+ * or when the frames end first.
+ */
+export function spurtPlanPoint(
+	frames: { horses: { pos: number; hp: number }[] }[],
+	index: number,
+	distance: number | undefined,
+): { pos: number; hp: number } | null {
+	if (!(distance != null && distance > 0)) return null;
+	const boundary = Math.fround(Math.fround(distance / 24) * 16);
+	let crossed = false;
+	for (let i = 0; i < frames.length; i++) {
+		const h = frames[i].horses[index];
+		if (!h) return null;
+		if (crossed) return { pos: h.pos, hp: h.hp };
+		if (h.pos >= boundary) crossed = true;
+	}
+	return null;
+}
+
 /** Linear interpolation of one tail column (1 = pos, 2 = speed) at `dtBefore` seconds before finish. */
 function tailAt(tail: number[][], dtBefore: number, col: number): number {
 	const kf = dtBefore / TAIL_STEP;
@@ -258,6 +297,8 @@ export interface CompareAggregate {
 	placing2: number[];
 	hpEmpty1: number; hpEmptyN: number;   // hpEmptyOnRace === true count / non-null count
 	hpEmpty2: number;
+	fullSpurt1: number; fullSpurt2: number;   // fullSpurt === true count, per uma
+	fullSpurtN1: number; fullSpurtN2: number; // non-null fullSpurt count, per uma
 	rushSeeds1: number; rushSeeds2: number;       // seeds with rushingStartCount > 0
 	rushStarts1: number; rushStarts2: number;     // total rushingStartCount
 	/** Streaming running totals — fold in arrival order, so their last bits DO depend on
@@ -273,6 +314,7 @@ export function newAggregate(): CompareAggregate {
 		n: 0, margins: [], ties: 0, win2: 0, win1: 0,
 		placing1: new Array(9).fill(0), placing2: new Array(9).fill(0),
 		hpEmpty1: 0, hpEmpty2: 0, hpEmptyN: 0,
+		fullSpurt1: 0, fullSpurt2: 0, fullSpurtN1: 0, fullSpurtN2: 0,
 		rushSeeds1: 0, rushSeeds2: 0, rushStarts1: 0, rushStarts2: 0,
 		marginSum: 0, marginSumSq: 0, minMargin: Infinity, maxMargin: -Infinity,
 		methodCounts: { frames: 0, 'delta-speed': 0, 'delta-avg': 0, tie: 0 },
@@ -302,6 +344,8 @@ export function addPair(agg: CompareAggregate, recA: SeedCompactRecord, recB: Se
 		if (recA.hpEmptyOnRace === true) agg.hpEmpty1 += 1;
 		if (recB.hpEmptyOnRace === true) agg.hpEmpty2 += 1;
 	}
+	countFullSpurt(agg, recA, 0);
+	countFullSpurt(agg, recB, 1);
 	if ((recA.rushingStartCount ?? 0) > 0) agg.rushSeeds1 += 1;
 	if ((recB.rushingStartCount ?? 0) > 0) agg.rushSeeds2 += 1;
 	agg.rushStarts1 += recA.rushingStartCount ?? 0;
@@ -368,6 +412,8 @@ export function addPairH2H(
 			}
 		}
 	}
+	countFullSpurt(agg, raceA[0], 0);
+	countFullSpurt(agg, raceB[1], 1);
 	// Rushing stays SEED-level (like mob mode): "this uma rushed in either
 	// mirrored race"; the per-race start counts are summed for the totals.
 	for (let side = 0; side < 2; side++) {
@@ -379,6 +425,17 @@ export function addPairH2H(
 	}
 }
 
+/**
+ * One race's full-spurt verdict. h2h counts each uma's own player race only
+ * (race A for UMA 1, race B for UMA 2): compare judges the player record,
+ * whose skill activations rebuild its in-race stats.
+ */
+function countFullSpurt(agg: CompareAggregate, r: SeedCompactRecord, side: number): void {
+	if (r.fullSpurt == null) return;
+	if (side) { agg.fullSpurtN2 += 1; if (r.fullSpurt) agg.fullSpurt2 += 1; }
+	else { agg.fullSpurtN1 += 1; if (r.fullSpurt) agg.fullSpurt1 += 1; }
+}
+
 /** Merge two aggregates (commutative — the merge of streamed partials is order-independent). */
 export function mergeAggregates(a: CompareAggregate, b: CompareAggregate): CompareAggregate {
 	const out = newAggregate();
@@ -387,6 +444,8 @@ export function mergeAggregates(a: CompareAggregate, b: CompareAggregate): Compa
 	out.ties = a.ties + b.ties; out.win2 = a.win2 + b.win2; out.win1 = a.win1 + b.win1;
 	for (let i = 0; i < 9; i++) { out.placing1[i] = a.placing1[i] + b.placing1[i]; out.placing2[i] = a.placing2[i] + b.placing2[i]; }
 	out.hpEmpty1 = a.hpEmpty1 + b.hpEmpty1; out.hpEmpty2 = a.hpEmpty2 + b.hpEmpty2; out.hpEmptyN = a.hpEmptyN + b.hpEmptyN;
+	out.fullSpurt1 = a.fullSpurt1 + b.fullSpurt1; out.fullSpurt2 = a.fullSpurt2 + b.fullSpurt2;
+	out.fullSpurtN1 = a.fullSpurtN1 + b.fullSpurtN1; out.fullSpurtN2 = a.fullSpurtN2 + b.fullSpurtN2;
 	out.rushSeeds1 = a.rushSeeds1 + b.rushSeeds1; out.rushSeeds2 = a.rushSeeds2 + b.rushSeeds2;
 	out.rushStarts1 = a.rushStarts1 + b.rushStarts1; out.rushStarts2 = a.rushStarts2 + b.rushStarts2;
 	out.marginSum = a.marginSum + b.marginSum; out.marginSumSq = a.marginSumSq + b.marginSumSq;
@@ -445,6 +504,7 @@ export interface CompareSummary {
 	winRateUma1: number; winRateUma2: number; tieRate: number;   // fractions of n
 	placing1: number[]; placing2: number[];
 	hpEmptyRate1: number; hpEmptyRate2: number;                  // fractions of hpEmptyN
+	fullSpurtRate1: number; fullSpurtRate2: number;              // fractions of fullSpurtN1/N2, NaN without verdicts
 	rushingRate1: number; rushingRate2: number;                   // fractions of n
 	methodCounts: CompareAggregate['methodCounts'];
 	seedErrors: number;
@@ -482,6 +542,8 @@ export function summarizeAggregate(agg: CompareAggregate): CompareSummary {
 		placing1: agg.placing1.slice(), placing2: agg.placing2.slice(),
 		hpEmptyRate1: agg.hpEmptyN ? agg.hpEmpty1 / agg.hpEmptyN : NaN,
 		hpEmptyRate2: agg.hpEmptyN ? agg.hpEmpty2 / agg.hpEmptyN : NaN,
+		fullSpurtRate1: agg.fullSpurtN1 ? agg.fullSpurt1 / agg.fullSpurtN1 : NaN,
+		fullSpurtRate2: agg.fullSpurtN2 ? agg.fullSpurt2 / agg.fullSpurtN2 : NaN,
 		rushingRate1: n ? agg.rushSeeds1 / n : NaN,
 		rushingRate2: n ? agg.rushSeeds2 / n : NaN,
 		methodCounts: { ...agg.methodCounts },

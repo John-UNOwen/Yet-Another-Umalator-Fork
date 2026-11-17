@@ -87,11 +87,12 @@ impl PreparedRace {
     /// reply — `{seed, finishTimeRaw, finishOrder, hpEmptyOnRace,
     /// rushingStartCount, rushingPenaltyCount, lastSpurtStartDistance,
     /// startDelayTime, tail}` (+ `opp` when `second_player_index >= 0`,
-    /// + `activations` counting `track_skill_id` for the player) — or
-    /// `{seed, error}` for a per-seed failure. Frames never serialize:
+    /// + `activations` counting `track_skill_id` for the player, + the
+    /// player's `spurtPlanPos`/`spurtPlanHp` when `distance` is the course
+    /// length), or `{seed, error}` for a per-seed failure. Frames never serialize:
     /// the tail grid is sampled here from the engine's numeric replay.
     /// Panic semantics match `run` (a panic kills the handle).
-    pub fn run_compact(&mut self, seed: i32, track_skill_id: &str, second_player_index: i32) -> Result<String, String> {
+    pub fn run_compact(&mut self, seed: i32, track_skill_id: &str, second_player_index: i32, distance: f64) -> Result<String, String> {
         let i64_seed = i64::from(seed);
         let race = self.race.as_mut().ok_or_else(|| "handle is dead; create a new one".to_string())?;
         let meta = &mut self.meta;
@@ -101,7 +102,7 @@ impl PreparedRace {
             packet.clear();
             let simulation = race.run(i64_seed)?;
             simulation.into_binary(meta, packet); // metadata = reply WITHOUT frames
-            compact_record(meta, packet, seed as f64, track_skill_id, second_player_index)
+            compact_record(meta, packet, seed as f64, track_skill_id, second_player_index, distance)
         }));
         match result {
             Ok(Ok(text)) => Ok(text),
@@ -187,6 +188,27 @@ fn sample_tail(packet: &[u8], frame_count: usize, horse_count: usize, meta_len: 
     out
 }
 
+/// Exact port of metrics.ts spurtPlanPoint. A runner's position and HP on the
+/// tick the engine plans its last spurt. A tick sets the final-leg phase from
+/// the position before that tick's move (race_solver_retail.rs), and the plan
+/// runs at the start of the next tick, so it reads the frame after the first
+/// one at or past the final-leg boundary: section × 16 in float32, as
+/// retail_physics::phase_boundaries computes it. None without a course
+/// length or past the last frame.
+fn spurt_plan_point(packet: &[u8], frame_count: usize, horse_count: usize, meta_len: usize, index: usize, distance: f64) -> Option<[f64; 2]> {
+    if !(distance > 0.) || index >= horse_count { return None; }
+    let boundary = ((distance as f32 / 24.) * 16.) as f64;
+    let mut crossed = false;
+    for i in 0..frame_count {
+        let (_, row) = packet_field(packet, frame_count, horse_count, meta_len, i)?;
+        let col = index * 6;
+        let pos = packet_f64(packet, row, col)?;
+        if crossed { return Some([pos, packet_f64(packet, row, col + 2)?]); }
+        if pos >= boundary { crossed = true; }
+    }
+    None
+}
+
 /// serde_json Number → the string JS `String(num)` would produce (skill-id
 /// matching only; ids are always positive integers in practice).
 fn num_to_js_string(n: &serde_json::Number) -> String {
@@ -225,7 +247,7 @@ fn record_error(seed: f64, second: bool) -> String {
     format!(r#"{{"seed":{},"error":"{}"}}"#, seed, msg)
 }
 
-fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, second_player_index: i32) -> Result<String, String> {
+fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, second_player_index: i32, distance: f64) -> Result<String, String> {
     if packet.get(..8).map_or(true, |m| m != PACKET_MAGIC) {
         return Ok(format!(r#"{{"seed":{},"error":"compact: unexpected packet magic"}}"#, seed));
     }
@@ -259,6 +281,10 @@ fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, se
     }
     let tail = sample_tail(packet, frame_count, horse_count, meta_len, pi, finish);
     out.insert("tail".into(), if tail.is_empty() { serde_json::Value::Null } else { serde_json::json!(tail) });
+    if let Some([pos, hp]) = spurt_plan_point(packet, frame_count, horse_count, meta_len, pi, distance) {
+        out.insert("spurtPlanPos".into(), serde_json::json!(pos));
+        out.insert("spurtPlanHp".into(), serde_json::json!(hp));
+    }
 
     // Lead-margin proxy field (metrics.leadMarginL; optimizer screening) —
     // rival = every field runner except the player. Key presence and value

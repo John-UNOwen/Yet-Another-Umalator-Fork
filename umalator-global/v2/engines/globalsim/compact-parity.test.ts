@@ -8,9 +8,10 @@
  * Same bridge trick as compare.acceptance.test.ts. For each setup we drive
  * the real workerCore twice: once with the real pkg (wasm run_compact path)
  * and once with a pkg whose PreparedRace instances have run_compact shadowed
- * out (forcing the JS extractCompact fallback). Every SeedCompactRecord —
- * finish metadata, the 41-sample tail grid, the h2h opp block and the
- * activation counts — must deepStrictEqual, bit for bit. If the two paths
+ * out (forcing the JS extractCompact fallback). Every SeedCompactRecord
+ * (finish metadata, the 41-sample tail grid, the h2h opp block, the
+ * activation counts and the spurt plan point) must deepStrictEqual, bit
+ * for bit. If the two paths
  * ever drift, sampling results would change silently when pkg is updated,
  * which is exactly what this test exists to catch.
  */
@@ -79,7 +80,7 @@ function runCore(request: any, seeds: number[], trackSkillId: string | undefined
 			fetchText: (url) => fs.promises.readFile(path.join(geomDir, path.basename(url)), 'utf8'),
 		});
 		core.onMessage({ type: 'skillData', skillData: mergedTable });
-		core.onMessage({ type: 'prepare', id: 'p1', setupKey: 'k1', request, trackSkillId, secondPlayerIndex });
+		core.onMessage({ type: 'prepare', id: 'p1', setupKey: 'k1', request, trackSkillId, secondPlayerIndex, distance: DISTANCE });
 	});
 }
 
@@ -124,6 +125,10 @@ test('mob layout: wasm run_compact records deepStrictEqual JS extractCompact', a
 	t.equal(viaWasm.length, seeds.length, 'one record per seed');
 	t.ok(viaWasm.every(r => typeof (r as any).finishTimeRaw === 'number'), 'records carry finish metadata');
 	t.ok(viaWasm.some(r => Array.isArray(r.tail) && r.tail.length === 41), 'tail grid (41 samples) sampled in both paths');
+	// The spurt plan point (the full spurt judge's input): past the final-leg
+	// boundary, which is 2/3 of the course.
+	t.ok(viaWasm.every(r => typeof r.spurtPlanPos === 'number' && r.spurtPlanPos >= DISTANCE * 2 / 3 && typeof r.spurtPlanHp === 'number'),
+		'spurtPlanPos/spurtPlanHp on every record, past the final-leg boundary');
 	// §E: the per-skill activation map (drives the optimizer's dead-skill
 	// rules and the recommendation's activation rates). deepStrictEqual above
 	// already pins wasm == JS; here: present on every record and non-empty
@@ -180,5 +185,6 @@ test('h2h layout: opp finish + both tails deepStrictEqual', async t => {
 	t.deepEqual(viaWasm, viaJs, 'h2h records bit-identical (own + opp metadata and tails)');
 	t.ok(viaWasm.every(r => typeof (r as any).opp?.finishTimeRaw === 'number'), 'opp finish metadata present');
 	t.ok(viaWasm.every(r => Array.isArray(r.opp?.tail) ? r.opp!.tail.length === 41 : r.opp?.tail === null), 'opp tail grid 41 samples or null in both');
+	t.ok(viaWasm.every(r => typeof r.spurtPlanPos === 'number' && r.opp?.spurtPlanPos === undefined), 'spurt plan point on the player only');
 	t.end();
 });

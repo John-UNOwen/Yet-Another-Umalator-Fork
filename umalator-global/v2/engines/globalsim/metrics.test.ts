@@ -248,6 +248,30 @@ test('addPair counts wins/ties/histograms/rates correctly', t => {
 	t.end();
 });
 
+test('full spurt: counted per uma, null verdicts and seed errors skipped', t => {
+	const agg = newAggregate();
+	const pair = (a: boolean | null | undefined, b: boolean | null | undefined): [SeedCompactRecord, SeedCompactRecord] =>
+		[rec(10, { fullSpurt: a }), rec(10.25, { fullSpurt: b })];
+	addPair(agg, ...pair(true, false), 2000);
+	addPair(agg, ...pair(true, true), 2000);
+	addPair(agg, ...pair(false, null), 2000);
+	addPair(agg, ...pair(undefined, true), 2000);
+	addPair(agg, rec(10, { error: 'engine error', fullSpurt: true }), rec(10, { fullSpurt: true }), 2000);
+	t.deepEqual([agg.fullSpurt1, agg.fullSpurtN1, agg.fullSpurt2, agg.fullSpurtN2], [2, 3, 2, 3], 'true count / verdict count per uma');
+	const s = summarizeAggregate(agg);
+	t.equal(s.fullSpurtRate1, 2 / 3);
+	t.equal(s.fullSpurtRate2, 2 / 3);
+	const half = newAggregate();
+	addPair(half, ...pair(true, false), 2000);
+	const rest = newAggregate();
+	addPair(rest, ...pair(true, true), 2000);
+	addPair(rest, ...pair(false, null), 2000);
+	addPair(rest, ...pair(undefined, true), 2000);
+	t.equal(summarizeAggregate(mergeAggregates(half, rest)).fullSpurtRate1, 2 / 3, 'merge sums the counts');
+	t.ok(Number.isNaN(summarizeAggregate(newAggregate()).fullSpurtRate1), 'no verdicts: NaN (a dash)');
+	t.end();
+});
+
 test('aggregate merge is commutative and order-independent', t => {
 	const one = newAggregate();
 	const a = newAggregate();

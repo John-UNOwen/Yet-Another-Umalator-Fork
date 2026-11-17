@@ -145,6 +145,14 @@ test('(1c) addPairH2H: averaged margin, 2n placings, per-race HP, seed-level rus
 	t.equal(agg.placing1[3], 2, 'uma1 ran both races → 2 placing samples');
 	t.equal(agg.placing2[3], 2, 'uma2 likewise');
 	t.equal(agg.hpEmptyN, 4, 'HP counted per race (2 races × 2 umas)');
+	t.deepEqual([agg.fullSpurtN1, agg.fullSpurtN2], [0, 0], 'no spurt verdicts on these records');
+	// Full spurt counts each uma's own player race: race A for uma1, race B for uma2.
+	const spurt = newAggregate();
+	addPairH2H(spurt,
+		[rec({ fullSpurt: true }), rec({ fullSpurt: true })],
+		[rec({ finishTimeRaw: 119.5, fullSpurt: false }), rec({ fullSpurt: false, finishTimeRaw: 119.5 })],
+		2000);
+	t.deepEqual([spurt.fullSpurt1, spurt.fullSpurtN1, spurt.fullSpurt2, spurt.fullSpurtN2], [1, 1, 0, 1], 'player races only');
 	// Rushing is seed-level: race A uma2 rushed, race B uma2 did not → one flag.
 	addPairH2H(agg,
 		[rec({}), rec({ rushingStartCount: 2 })],

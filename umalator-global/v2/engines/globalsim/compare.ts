@@ -37,21 +37,25 @@
  * it; positive = UMA 2 ahead — the umalator/compare.ts sign; runData = the
  * four representative frame-bearing snapshots) plus an additive `globalsim`
  * extension block the pane renders only for this engine (win rates, ties,
- * 95% CI, placing histograms, HP-empty/rushing rates, engine version line).
- * Panes with no GlobalSim source (stamina survival, pacer gap, posKeep/duel/
- * spot telemetry) stay in the existing per-engine unavailable state — the
- * same treatment engine v1 gets (em-dashes / frequency-gated hides).
+ * 95% CI, placing histograms, HP-empty/rushing rates, engine version line),
+ * and staminaStats for the per-uma HP survival and full spurt cards.
+ * Panes with no GlobalSim source (pacer gap, posKeep/duel/spot telemetry)
+ * stay in the existing per-engine unavailable state, the same treatment
+ * engine v1 gets (dashes or frequency-gated hides).
  */
 
 import type { HorseState } from '../../../../components/HorseDefTypes';
 import { GroundCondition, Weather, Season, Time, Grade } from '../../../../uma-skill-tools/RaceParameters';
-import { buildGlobalSimRequest, toGlobalSimRunner, AdapterConfig } from './adapter';
+import { buildGlobalSimRequest, toGlobalSimRunner, AdapterConfig, GROUND_TO_GLOBALSIM } from './adapter';
 import { buildMobField, buildH2hMobField, deriveGate, deriveGatePair, FIELD_SIZE, MobPreset, MobError } from './mobs';
 import { createGlobalsimPool, PoolJob, WorkerFactory, resolveThreadCount } from './pool';
 import {
 	SeedCompactRecord, FullRunData, CompareAggregate, newAggregate, addPair, addPairH2H,
 	summarizeAggregate, CompareSummary, representativeSeeds, buildSnapshotHalf,
 } from './metrics';
+import { fullSpurtJudge, FullSpurtJudge, SpurtCourse } from './spurt';
+import courseData from '../../../course_data.json';
+import profileV77 from './profile-v77.json';
 
 export const GLOBALSIM_ENGINE_VERSION = 'v77';
 /** GlobalSim's validated table size (vendor/GlobalSim/data/v70-skill-data.json). */
@@ -182,14 +186,28 @@ export interface StaminaCard {
 	/** Races where HP never ran out (the engine's hpEmptyOnRace flag), the old
 	 *  engine's "HP died" count turned around. */
 	staminaSurvivalRate: number;
-	/** The reply carries no last-spurt outcome to count, so this stays NaN. */
+	/** Races whose last spurt plan at the final leg was the maximum spurt
+	 *  speed from that point (spurt.ts fullSpurtJudge), of those it could judge. */
 	fullSpurtRate: number;
 }
 
-const staminaCard = (hpEmptyRate: number): StaminaCard => ({
+const staminaCard = (hpEmptyRate: number, fullSpurtRate: number): StaminaCard => ({
 	staminaSurvivalRate: Number.isFinite(hpEmptyRate) ? (1 - hpEmptyRate) * 100 : NaN,
-	fullSpurtRate: NaN,
+	fullSpurtRate: Number.isFinite(fullSpurtRate) ? fullSpurtRate * 100 : NaN,
 });
+
+/**
+ * The full-spurt judge for one uma of a compare, or null when it cannot be
+ * built (the uma fails the adapter, or the course is not in the table). The
+ * skill table is the one the races ran with.
+ */
+export function compareSpurtJudge(input: GlobalsimCompareInput, horse: HorseState): FullSpurtJudge | null {
+	const runner = toGlobalSimRunner(horse, 0, { courseIds: input.courseIds, knownSkillIds: input.knownSkillIds });
+	const course = (courseData as Record<string, SpurtCourse>)[String(input.courseId)];
+	if (runner.ok !== true || !course) return null;
+	const skillData = input.skillData ?? (profileV77 as { skillData: Record<string, unknown> }).skillData;
+	return fullSpurtJudge(runner.value, course, GROUND_TO_GLOBALSIM[input.ground] ?? '', skillData);
+}
 
 /** Classic CompareResults shape + the additive globalsim block (see file header). */
 export interface GlobalsimCompareResults {
@@ -318,6 +336,7 @@ export function buildCompareJobs(
 						seeds: groupSeeds.slice(c, c + chunkSize),
 						mode,
 						secondPlayerIndex: merged.secondPlayerIndex,
+						distance: input.distance,
 					});
 				}
 				continue;
@@ -359,6 +378,7 @@ export function buildCompareJobs(
 					request,
 					seeds: groupSeeds.slice(c, c + chunkSize),
 					mode,
+					distance: input.distance,
 				});
 			}
 		}
@@ -415,7 +435,7 @@ function buildResults(
 		runData: {
 			minrun: runData.min, maxrun: runData.max, meanrun: runData.mean, medianrun: runData.median,
 		},
-		staminaStats: { uma1: staminaCard(s.hpEmptyRate1), uma2: staminaCard(s.hpEmptyRate2) },
+		staminaStats: { uma1: staminaCard(s.hpEmptyRate1, s.fullSpurtRate1), uma2: staminaCard(s.hpEmptyRate2, s.fullSpurtRate2) },
 		firstUmaStats: undefined,
 		globalsim: {
 			engineLine: globalsimEngineLine(input.knownSkillIds ? input.knownSkillIds.size : undefined),
@@ -474,11 +494,17 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 		return partial;
 	};
 
+	// The full-spurt verdict per record (h2h: each uma's own player race).
+	const judge1 = compareSpurtJudge(input, input.uma1);
+	const judge2 = compareSpurtJudge(input, input.uma2);
+
 	const pairIfReady = (seed: number) => {
 		const slot = pending.get(seed);
 		if (!slot || !slot.a || !slot.b) return;
 		pending.delete(seed);
 		const a = slot.a, b = slot.b;
+		if (!a.error) a.fullSpurt = judge1 ? judge1(a) : null;
+		if (!b.error) b.fullSpurt = judge2 ? judge2(b) : null;
 		if (layout === 'h2h') {
 			// Race A: primary = UMA 1, opp = UMA 2. Race B (mirrored gates):
 			// primary = UMA 2, opp = UMA 1. addPairH2H reshapes per-race error

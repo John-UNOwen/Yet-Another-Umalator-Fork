@@ -61,7 +61,7 @@
  * get_course aborts on unknown ids — INTERFACE.md).
  */
 
-import { SeedCompactRecord, FullRunData, samplePlayerTail } from './metrics';
+import { SeedCompactRecord, FullRunData, samplePlayerTail, spurtPlanPoint } from './metrics';
 import { BASE_PATH } from '../../../../components/base-path';
 
 /** One live wasm preparation handle (globalsim-wasm/src/lib.rs PreparedRace). */
@@ -70,7 +70,7 @@ export interface PreparedRaceInstance {
 	/** Compact-mode run (newer pkg): returns the extractCompact record JSON
 	 *  directly — frames never serialize. Absent on older pkg builds; the
 	 *  worker then falls back to run() + JS extractCompact. */
-	run_compact?(seed: number, trackSkillId: string, secondPlayerIndex: number): string;
+	run_compact?(seed: number, trackSkillId: string, secondPlayerIndex: number, distance: number): string;
 	free(): void;
 }
 
@@ -124,6 +124,13 @@ export interface PrepareMsg {
 	 * data (and frames, in full mode) under `opp`.
 	 */
 	secondPlayerIndex?: number;
+	/**
+	 * Optional: the course length in metres. Compact records then carry the
+	 * player's position and HP on the tick the engine plans the last spurt
+	 * (spurtPlanPoint), which compare uses to judge the full spurt. The h2h
+	 * opp block has no skill activations to judge with, so it gets none.
+	 */
+	distance?: number;
 }
 /**
  * One-time engine skillData injection (sent by the pool right after worker
@@ -146,6 +153,7 @@ interface HeldPrep {
 	canCompact: boolean;
 	trackSkillId?: string;
 	secondPlayerIndex?: number;
+	distance?: number;
 }
 
 /** ms since (monotonic where the host gives it, else wall clock). */
@@ -177,7 +185,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 		geometryRegistered.add(courseId);
 	}
 
-	function extractCompact(reply: any, seed: number, trackSkillId?: string, secondPlayerIndex?: number): SeedCompactRecord {
+	function extractCompact(reply: any, seed: number, trackSkillId?: string, secondPlayerIndex?: number, distance?: number): SeedCompactRecord {
 		const pi = reply.playerHorseIndex as number;
 		const res = reply.results && reply.results[pi];
 		if (!res || typeof res.finishTimeRaw !== 'number') {
@@ -196,6 +204,8 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			startDelayTime: res.startDelayTime ?? 0,
 			tail: tail && tail.length ? tail : null,
 		};
+		const plan = frames ? spurtPlanPoint(frames, pi, distance) : null;
+		if (plan) { rec.spurtPlanPos = plan.pos; rec.spurtPlanHp = plan.hp; }
 		// Lead-margin proxy field (metrics.leadMarginL; optimizer screening):
 		// rival = every field runner except the player. Key presence must match
 		// wasm run_compact exactly (compact-parity pins the two paths).
@@ -334,7 +344,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			const t0 = nowMs();
 			const race = new w.PreparedRace(json);
 			const prepareMs = nowMs() - t0;
-			prepared.set(m.setupKey, { setupKey: m.setupKey, race, canCompact: typeof race.run_compact === 'function', trackSkillId: m.trackSkillId, secondPlayerIndex: m.secondPlayerIndex });
+			prepared.set(m.setupKey, { setupKey: m.setupKey, race, canCompact: typeof race.run_compact === 'function', trackSkillId: m.trackSkillId, secondPlayerIndex: m.secondPlayerIndex, distance: m.distance });
 			// Bound memory: evict the least-recently-used preparations.
 			while (prepared.size > PREPARED_LRU) {
 				const oldestKey = prepared.keys().next().value as string;
@@ -377,7 +387,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			if (useCompact && seed >= -2147483648 && seed <= 2147483647) {
 				let text: string;
 				try {
-					text = prep.race.run_compact!(seed, prep.trackSkillId ?? '', prep.secondPlayerIndex ?? -1);
+					text = prep.race.run_compact!(seed, prep.trackSkillId ?? '', prep.secondPlayerIndex ?? -1, prep.distance ?? 0);
 				} catch (e: any) {
 					const msg = String(e && e.message || e);
 					if (isDeadlyError(msg)) { deadly(msg, i); return; }
@@ -419,7 +429,7 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 				records.push({ seed, error: `reply parse failed: ${String(e && e.message || e)}` });
 				continue;
 			}
-			records.push(m.mode === 'full' ? extractFull(reply, seed, prep.secondPlayerIndex) : extractCompact(reply, seed, prep.trackSkillId, prep.secondPlayerIndex));
+			records.push(m.mode === 'full' ? extractFull(reply, seed, prep.secondPlayerIndex) : extractCompact(reply, seed, prep.trackSkillId, prep.secondPlayerIndex, prep.distance));
 		}
 		deps.postMessage({ type: 'chunk', jobId: m.jobId, mode: m.mode, ok: true, records, runMs: nowMs() - t0 });
 	}

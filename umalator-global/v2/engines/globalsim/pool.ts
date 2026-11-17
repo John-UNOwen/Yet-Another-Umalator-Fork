@@ -131,6 +131,8 @@ export interface PoolJob {
 	 * or keep one setupKey per distinct value).
 	 */
 	secondPlayerIndex?: number;
+	/** Optional: course length, forwarded to the prepare message (workerCore PrepareMsg.distance). */
+	distance?: number;
 }
 
 export interface PoolOptions {
@@ -582,7 +584,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				slot.worker!.postMessage({ type: 'run', jobId: next.job.id, setupKey: next.job.setupKey, seeds: next.job.seeds, mode: next.job.mode });
 			} else {
 				slot.expecting = 'prepared';
-				slot.worker!.postMessage({ type: 'prepare', id: next.job.id, setupKey: next.job.setupKey, request: next.job.request, trackSkillId: next.job.trackSkillId, secondPlayerIndex: next.job.secondPlayerIndex });
+				slot.worker!.postMessage({ type: 'prepare', id: next.job.id, setupKey: next.job.setupKey, request: next.job.request, trackSkillId: next.job.trackSkillId, secondPlayerIndex: next.job.secondPlayerIndex, distance: next.job.distance });
 			}
 		}
 		if (running && queue.length === 0 && slots.every(s => !s.inflight)) {
