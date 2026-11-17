@@ -263,20 +263,6 @@ export function partitionPool(
 }
 
 /**
- * Fact exclusions that a multi-scenario run must take back: a skill is out only
- * when it is out in every scenario the run scores (scenarios differ in ground).
- */
-export function factRescued(
-	out: readonly PoolExclusion[],
-	uma: UmaState,
-	course: CourseData,
-	scenarios: readonly RaceConditions[]
-): Set<string> {
-	const sets = scenarios.map(c => raceFacts(course as unknown as RaceCourse, c, uma.strategy));
-	return new Set(out.filter(e => e.kind === 'fact' && factOut(e.id, sets) === null).map(e => e.id));
-}
-
-/**
  * List of pink (unique) skills that are universally accessible
  * - Welfare/collaboration event alternate unique inherits
  * - Skills starting with '4' (scenario skills)
@@ -361,9 +347,8 @@ export function applyExclusions(
 	kept: readonly string[],
 	out: readonly PoolExclusion[],
 	focusOn: boolean,
-	included: ReadonlySet<string>,
-	rescued: ReadonlySet<string> = new Set()
+	included: ReadonlySet<string>
 ): string[] {
-	const back = out.filter(e => e.kind !== 'engine' && (!focusOn || included.has(e.id) || rescued.has(e.id)));
+	const back = out.filter(e => e.kind !== 'engine' && (!focusOn || included.has(e.id)));
 	return back.length ? [...kept, ...back.map(e => e.id)] : [...kept];
 }

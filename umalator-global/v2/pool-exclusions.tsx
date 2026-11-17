@@ -20,17 +20,15 @@ export interface PoolExclusionListProps {
 	/** The master switch: off puts every skill back except the ones the engine cannot run. */
 	focusOn: boolean;
 	onFocusChange: (on: boolean) => void;
-	/** Ids back in the pool because another scored scenario allows them. */
-	rescued?: ReadonlySet<string>;
 	disabled?: boolean;
 	/** Extra line under the switch, e.g. when changes apply. */
 	note?: string;
 }
 
 export function PoolExclusionList(props: PoolExclusionListProps) {
-	const { excluded, included, onToggle, focusOn, onFocusChange, rescued, disabled, note } = props;
+	const { excluded, included, onToggle, focusOn, onFocusChange, disabled, note } = props;
 	if (!excluded.length) return null;
-	const back = excluded.filter(e => e.kind !== 'engine' && (!focusOn || included.has(e.id) || rescued?.has(e.id))).length;
+	const back = excluded.filter(e => e.kind !== 'engine' && (!focusOn || included.has(e.id))).length;
 	const leftOut = excluded.length - back;
 	return (
 		<details class="v2-pool-exclusions" style={{ fontSize: 12 }}>
@@ -47,14 +45,13 @@ export function PoolExclusionList(props: PoolExclusionListProps) {
 			<div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid rgba(128,128,128,0.3)', borderRadius: 6, padding: 4 }}>
 				{excluded.map(e => {
 					const engine = e.kind === 'engine';
-					const isRescued = !!rescued?.has(e.id);
 					return (
 						<label key={e.id} class="v2-pool-exclusion" style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '2px 4px', cursor: engine ? 'default' : 'pointer', opacity: engine ? 0.6 : 1 }}
 							title={engine ? 'The engine has no definition for this skill, so it cannot be simulated' : 'Include anyway'}>
-							<input type="checkbox" checked={!engine && (!focusOn || included.has(e.id) || isRescued)}
-								disabled={disabled || engine || !focusOn || isRescued} onChange={() => onToggle(e.id)} />
+							<input type="checkbox" checked={!engine && (!focusOn || included.has(e.id))}
+								disabled={disabled || engine || !focusOn} onChange={() => onToggle(e.id)} />
 							<span style={{ flex: '0 1 auto' }}>{skillName(e.id)}</span>
-							<span style={{ flex: 1, opacity: 0.7 }}>{e.reason}{isRescued ? ' (back in: another scenario allows it)' : ''}</span>
+							<span style={{ flex: 1, opacity: 0.7 }}>{e.reason}</span>
 							<span style={{ opacity: 0.5 }}>{e.id}</span>
 						</label>
 					);
