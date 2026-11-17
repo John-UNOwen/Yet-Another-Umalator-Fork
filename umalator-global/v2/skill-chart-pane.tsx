@@ -432,6 +432,13 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 	return (
 		<div class={`v2-skill-chart-wrapper${props.dirty ? ' dirty' : ''}`} ref={root}>
 			<table class="v2-skill-chart-table">
+				{gsActive && (
+					<caption class="v2-skill-chart-note" style={{ captionSide: 'top', textAlign: 'left', fontSize: 12, opacity: 0.75, padding: '4px 8px' }}>
+						Each number is what this one skill adds when swapped into the current build
+						(replacing an owned skill from its group), at level 3, against the current field on this setup.
+						It is not a general rating of the skill. SP Cost is what it costs this build with your hints.
+					</caption>
+				)}
 				<thead>
 					{table.getHeaderGroups().map(headerGroup => (
 						<tr key={headerGroup.id}>
