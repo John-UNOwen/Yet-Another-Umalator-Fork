@@ -18,8 +18,7 @@
  *     to absorb junk input.
  *   - Skills are emitted as {"skillId","level","isUnique"}; the unique skill
  *     comes from uniqueSkillForUma(outfitId, starCount) with the horse's
- *     uniqueLv, everything else level 1 (same resolution the classic engine
- *     does in umalator/compare.ts:91-99).
+ *     uniqueLv, every trainable skill at MEASURED_SKILL_LEVEL.
  *   - forcedSkillPositions has no GlobalSim equivalent; positions are ignored
  *     and the caller is told through a warning so the UI can hide the control.
  *   - Determinism (§6.1): horses are emitted in canonical field order
@@ -247,11 +246,19 @@ export function canonicalSkillOrder(ids: readonly string[]): string[] {
 }
 
 /**
+ * Trainable skills are modelled at the level they would be bought at. HorseState
+ * stores a level only for the unique skill, and the engine scales an effect by
+ * level with a different table per category, so measuring at level 1 understates
+ * every skill and shifts rankings between effect categories.
+ */
+export const MEASURED_SKILL_LEVEL = 3;
+
+/**
  * Map one HorseState to a GlobalSim runner (stats RAW — no overcap/mood/ground
  * pre-adjustment; GlobalSim applies those itself). The unique skill from
  * uniqueSkillForUma(outfitId, starCount) carries the horse's uniqueLv and
- * isUnique: true; every other skill is level 1. forcedSkillPositions are
- * dropped (no GlobalSim equivalent) with a warning.
+ * isUnique: true; every other skill is at MEASURED_SKILL_LEVEL. forcedSkillPositions
+ * are dropped (no GlobalSim equivalent) with a warning.
  */
 export function toGlobalSimRunner(
 	horse: HorseState,
@@ -311,7 +318,7 @@ export function toGlobalSimRunner(
 		const isUnique = id === uniqueId;
 		// Debuff copies repeat an id in the SkillSet (groupId-0, groupId-1, ...);
 		// emit one entry per copy, like the classic engine adds one per copy.
-		skillEntries.push({ skillId: id, level: isUnique ? uniqueLv : 1, isUnique });
+		skillEntries.push({ skillId: id, level: isUnique ? uniqueLv : MEASURED_SKILL_LEVEL, isUnique });
 	}
 
 	const forced = horse.get('forcedSkillPositions');

@@ -129,7 +129,7 @@ test('stats pass through raw (no overcap/mood/ground pre-adjustment)', t => {
 	t.end();
 });
 
-test('unique skill resolved with uniqueLv + isUnique; others level 1', t => {
+test('unique skill resolved with uniqueLv + isUnique; trainable skills at MEASURED_SKILL_LEVEL', t => {
 	const outfitId = '102201';
 	const uid = uniqueSkillForUma(outfitId, 3);
 	t.equal(uid, '100221', 'uniqueSkillForUma(102201, 3-star) = 100221 (exists in the skill table)');
@@ -142,17 +142,17 @@ test('unique skill resolved with uniqueLv + isUnique; others level 1', t => {
 	t.ok(res.ok, 'valid');
 	if (res.ok === false) return t.end();
 	const expected = [
-		{ skillId: '100221', level: 2, isUnique: true },   // unique group 10022 sorts first
-		{ skillId: '201251', level: 1, isUnique: false },  // group 20125
-		{ skillId: '202171', level: 1, isUnique: false },  // group 20217
+		{ skillId: '100221', level: 2, isUnique: true },   // unique group 10022 sorts first, uniqueLv wins
+		{ skillId: '201251', level: 3, isUnique: false },  // group 20125, MEASURED_SKILL_LEVEL
+		{ skillId: '202171', level: 3, isUnique: false },  // group 20217, MEASURED_SKILL_LEVEL
 	];
 	t.deepEqual(res.value.skills, expected, 'unique level + canonical groupId order');
 
-	// Same outfit at 2 stars: no unique skill, every entry level 1 / not unique.
+	// Same outfit at 2 stars: no unique skill, so every entry is trainable.
 	const h2 = h.set('starCount', 2 as const);
 	const res2 = toGlobalSimRunner(h2, 0);
 	t.ok(res2.ok);
-	if (res2.ok === true) t.deepEqual(res2.value.skills.map(s => s.level), [1, 1, 1], 'no unique → all level 1');
+	if (res2.ok === true) t.deepEqual(res2.value.skills.map(s => s.level), [3, 3, 3], 'no unique → all trainable');
 	t.end();
 });
 
