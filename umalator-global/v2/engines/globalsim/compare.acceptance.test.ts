@@ -182,6 +182,13 @@ test('(c) same seed list twice ⇒ byte-identical aggregates', async t => {
 	t.deepEqual(b.placing1, a.placing1, 'placing histogram identical');
 	t.deepEqual(b.placing2, a.placing2);
 	t.deepEqual(b.ci95, a.ci95, 'CI identical');
+	// The per-uma cards: HP survival is the races where HP never ran out, in
+	// percent, and full spurt has nothing in the reply to count.
+	for (const [card, rate] of [[first.staminaStats?.uma1, a.hpEmptyRate1], [first.staminaStats?.uma2, a.hpEmptyRate2]] as const) {
+		t.ok(Number.isFinite(rate), `the engine reported HP-empty flags (${rate})`);
+		t.equal(card?.staminaSurvivalRate, (1 - rate) * 100, 'HP survival = 100% minus the HP-empty rate');
+		t.ok(Number.isNaN(card?.fullSpurtRate), 'full spurt shown as a dash');
+	}
 	t.end();
 });
 

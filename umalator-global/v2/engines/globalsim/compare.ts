@@ -176,6 +176,21 @@ export interface GlobalsimStatsBlock {
 	doneSeeds: number;     // paired so far
 }
 
+/** One uma's stamina figures for the results-pane cards, in percent. NaN shows
+ *  as a dash. */
+export interface StaminaCard {
+	/** Races where HP never ran out (the engine's hpEmptyOnRace flag), the old
+	 *  engine's "HP died" count turned around. */
+	staminaSurvivalRate: number;
+	/** The reply carries no last-spurt outcome to count, so this stays NaN. */
+	fullSpurtRate: number;
+}
+
+const staminaCard = (hpEmptyRate: number): StaminaCard => ({
+	staminaSurvivalRate: Number.isFinite(hpEmptyRate) ? (1 - hpEmptyRate) * 100 : NaN,
+	fullSpurtRate: NaN,
+});
+
 /** Classic CompareResults shape + the additive globalsim block (see file header). */
 export interface GlobalsimCompareResults {
 	results: number[];                       // margins in chunk-arrival order (unsorted), lengths, positive = UMA 2 ahead
@@ -183,7 +198,7 @@ export interface GlobalsimCompareResults {
 		minrun: unknown | null; maxrun: unknown | null; meanrun: unknown | null; medianrun: unknown | null;
 		allruns?: unknown;
 	};
-	staminaStats?: unknown;                  // undefined → em-dashes (v1 precedent)
+	staminaStats?: { uma1: StaminaCard; uma2: StaminaCard };
 	firstUmaStats?: unknown;
 	globalsim: GlobalsimStatsBlock;
 }
@@ -400,7 +415,7 @@ function buildResults(
 		runData: {
 			minrun: runData.min, maxrun: runData.max, meanrun: runData.mean, medianrun: runData.median,
 		},
-		staminaStats: undefined,
+		staminaStats: { uma1: staminaCard(s.hpEmptyRate1), uma2: staminaCard(s.hpEmptyRate2) },
 		firstUmaStats: undefined,
 		globalsim: {
 			engineLine: globalsimEngineLine(input.knownSkillIds ? input.knownSkillIds.size : undefined),
