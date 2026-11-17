@@ -2,67 +2,67 @@
 
 SP-budgeted skill-build search for one uma against a strong 9-runner field
 (SKILL-OPTIMIZER-PLAN, approved 2026-11-15). Decisions come from simulation
-(P1); screening only decides *what to simulate next*. Search and verification
-seeds are disjoint (P3); ties are reported honestly (P4); the run is anytime
+(P1). Screening only decides *what to simulate next*. Search and verification
+seeds are disjoint (P3), ties are reported honestly (P4), and the run is anytime
 (P5) and deterministic for fixed inputs (P6).
 
 ## Layout
 
-- `config.ts` — every tunable, one object per effort preset (§11)
-- `types.ts` — shared vocabulary (SeedValue/SeedSlot, objectives, results)
-- `space.ts` — purchasable options: skillGroups chains, tier-walk costs
-  (`calculateSkillCost`), locks, purple exclusion, simulation identity
-- `knapsack.ts` — multiple-choice DP + top-K restart points
-- `cache.ts` — transposition table, position-indexed seed slots, LRU + pins
-- `evaluator.ts` — the only engine path: seed lists (search ∩ verify = ∅),
-  missing-seed scheduling through `pool.ts`, SeedValue folding, paired stats
-- `bandit.ts` — LUCB seed allocation vs the incumbent (§9): exponential
-  chunk growth (×1.5) with a top-UCB rival and an alive-count cap; a candidate
+- `config.ts`: every tunable, one object per effort preset (§11)
+- `types.ts`: shared vocabulary (SeedValue/SeedSlot, objectives, results)
+- `space.ts`: purchasable options, with skillGroups chains, tier-walk costs
+  (`calculateSkillCost`), locks, purple exclusion and simulation identity
+- `knapsack.ts`: multiple-choice DP + top-K restart points
+- `cache.ts`: transposition table, position-indexed seed slots, LRU + pins
+- `evaluator.ts`: the only engine path, with seed lists (search ∩ verify = ∅),
+  missing-seed scheduling through `pool.ts`, SeedValue folding and paired stats
+- `bandit.ts`: LUCB seed allocation vs the incumbent (§9), with exponential
+  chunk growth (×1.5), a top-UCB rival and an alive-count cap. A candidate
   is retired once its best lower bound still trails every rival's worst upper
   bound. Every measured Δ (survivors *and* eliminations) is returned for the
   Stage D/F knapsack re-solve
-- `surrogate.ts` — Bayesian ridge on cached build ℓ: per-option indicators +
+- `surrogate.ts`: Bayesian ridge on cached build ℓ, with per-option indicators +
   pair-interaction terms (co-occurring ≥ m builds, capped by |coef|), closed-form
-  posterior, weighted 5-fold holdout R², synergy flags (§8 E). Drives Stage D/F
-  move ordering (acquisition gain + κ·SE); below the R²=0.3 gate it falls back to
-  in-context values; it only ever decides what to simulate (P1) and what order to
-  screen it in — §C removed its bound-pruning from the Stage-F move space (a move
+  posterior, weighted 5-fold holdout R², synergy flags (§8 E). It drives Stage D/F
+  move ordering (acquisition gain + κ·SE), and below the R²=0.3 gate it falls back to
+  in-context values. It only ever decides what to simulate (P1) and what order to
+  screen it in. §C removed its bound-pruning from the Stage-F move space (a move
   may only die to the indifference zone or §I.5's certified Δ-SE prior)
-- `search.ts` — Stages A–F + G orchestration (anytime): opening-book starts,
+- `search.ts`: Stages A–F + G orchestration (anytime). Opening-book starts,
   chart-parity screening, MCKP restarts, in-context drop/add/replace/pair moves
   with bandit allocation and knapsack re-solve (the search currency, §6.1 + §F:
   ℓ, clipped to ±2.5 measured σ(ℓ) for the win-rate objectives because past
   that a bigger lead moves P(1st) by under a point),
   Stage F = §C certified local search: every round enumerates the full feasible
-  N1 (drop, add, swap/tier-move, 2-for-1 incl. upgrade-and-sell, 1-for-2 — no
-  caps, no estimate pruning) and screens the waves with the bandit's
+  N1 (drop, add, swap/tier-move, 2-for-1 incl. upgrade-and-sell, 1-for-2, with no
+  caps and no estimate pruning) and screens the waves with the bandit's
   indifference zone (rival cut off, alive cap raised to the wave, the ladder
-  capped at the measured σΔ's δ-resolve count); a round adopts one significant
-  improver or certifies the peak (every UCB < δ_min) or reports the zone
-  stopped resolving; after a certified peak, ILS kicks (Quick 0, Standard 4,
-  Thorough 10, untilStopped unbounded; k = 2–4 random feasible swaps biased to
-  low in-build value) re-climb and are accepted only on a significantly better
-  paired Δ; the final peak is screened against N2 (2-for-2, 8 lowest-value
-  owned × 8 best free). No round cap — the preset time budget and the
+  capped at the measured σΔ's δ-resolve count). A round adopts one significant
+  improver, certifies the peak (every UCB < δ_min) or reports the zone
+  stopped resolving. After a certified peak, ILS kicks in (Quick 0, Standard 4,
+  Thorough 10, untilStopped unbounded, k = 2–4 random feasible swaps biased to
+  low in-build value), the re-climbs are accepted only on a significantly better
+  paired Δ, and the final peak is screened against N2 (2-for-2, 8 lowest-value
+  owned × 8 best free). There is no round cap, the preset time budget and the
   per-restart climbRaces race budget bound it, and the result carries
   `certified1MovePeak` / `certified2MovePeak`. Then fresh-seed Stage G
   verification with honest ties. Across a scenario set (§6.3) a mean aggregation
   searches each scenario independently and re-verifies the merged shortlist
-  across all of them; a maximin or blend run does ONE search on the aggregated
+  across all of them. A maximin or blend run does ONE search on the aggregated
   objective instead (`aggregatedEvaluator`: every candidate is simulated in every
   scenario and adopted on the combined value, so a compromise that is top-5 in no
-  single scenario can still win; §E telemetry pools over the set, and that
+  single scenario can still win. §E telemetry pools over the set, and that
   search's own per-scenario champions join Stage G's pool at no race cost).
   Either way the ranking is mean / maximin / blend (aggregateValues, §6.4) with
   conservative (all-scenarios-must-agree) ties
-- `book.ts` — opening book in localStorage (`umalator_v2_optimizer_book`):
+- `book.ts`: opening book in localStorage (`umalator_v2_optimizer_book`),
   prior strong builds keyed by a coarse (course · distance band · strategy ·
   mob preset · ground) fingerprint, best-effort (never fatal), and only ever
   used as restart seeds when still affordable and one-per-group (§8 A)
 
 Outside this directory only three things changed: `workerCore.ts` compact
 records carry `bestRivalFinishTimeRaw` (both the JS and the wasm
-`run_compact` paths, bit-identical — `compact-parity.test.ts`),
+`run_compact` paths, bit-identical, see `compact-parity.test.ts`),
 `metrics.ts` gained `leadMarginL` (ℓ in lengths,
 `(bestRivalT − ownT) × finish speed / 2.5`), and the app shell gained the
 Optimize tab (its pane carries the scenario/robustness + aggregation controls,
@@ -82,19 +82,19 @@ base horse (40 seeds × 3 builds, node + real wasm via the worker pool):
 | base P(1st) | 0 (deliberately under-statted horse) |
 
 Seed-budget implication: a paired comparison needs
-`n ≈ (2·1.96·σΔ/δ)²` ≈ 6.6k seeds to resolve δ = 0.03 L — the §11 Stage G
+`n ≈ (2·1.96·σΔ/δ)²` ≈ 6.6k seeds to resolve δ = 0.03 L. The §11 Stage G
 seed counts were sized for this band (the 2026-11-16 paired block below
 replaces that sizing), and screening therefore ranks by
 ℓ differences with bandit allocation instead of raw win/lose (§6.1).
 
-Throughput (globalsim-wasm/README.md): 6.3–9.4 ms per 9-runner race in Chrome
-→ ~1,000 races/s at 8 threads; a Standard run is ~110–180k races ≈ 2–3 min
+Throughput (globalsim-wasm/README.md): 6.3–9.4 ms per 9-runner race in Chrome,
+about ~1,000 races/s at 8 threads, and a Standard run is ~110–180k races ≈ 2–3 min
 (§10). The calibration smoke test in `npm run test:optimizer` prints 40-seed
 numbers on a skill-less base: it proves the plumbing, not this record (the
 paired block below was re-measured on the native engine, as described there).
-Note (§C, measured 2026-11-16 on the realistic instances): a
-full certified climb re-screens the whole feasible N1 — 1,000–3,700 candidates
-at those sizes, ~100–250k races per certification round — so a Standard-scale
+In §C, measured 2026-11-16 on the realistic instances, a
+full certified climb re-screens the whole feasible N1, 1,000–3,700 candidates
+at those sizes with ~100–250k races per certification round, so a Standard-scale
 run with ILS lands near 1–2M races, well over the §10 band (which predates the
 full N1). The preset budgets are the control: `climbRaces` per restart bounds
 the climb, `timeBudgetMs` bounds the run, and the anytime rule keeps the best
@@ -104,11 +104,11 @@ Paired-mode re-measurement (2026-11-16, §J.3: the realistic build the record
 should read). Setup: native `race_engine_rs_v2.exe`, one JSON request per
 stdin line, the v77 example request (course 10504, its 9-runner field and
 fixed gates). The base is 17 one-per-group options, 7 of them gold (mixed
-tiers, the shape the optimizer space actually offers); the adds are 12
+tiers, the shape the optimizer space actually offers). The adds are 12
 single-skill options from groups the base does not own. 1000 seeds per arm,
 the same seed list in both stream modes. The lead is in lengths at the mean
 race speed (`distance / ownT`), because the native replies were read without
-the tail grid. That is NOT the app's unit: compact records always carry a tail
+the tail grid. That is not the app's unit: compact records always carry a tail
 and `leadMarginL` uses the finish speed `tail[0]`, which measured 1.166× the
 mean speed on course 10504 (24.14 vs 20.70 m/s, 120 paired seeds). Multiply
 every ℓ figure in this table by ~1.17 for the currency the search decides on
@@ -126,14 +126,14 @@ every ℓ figure in this table by ~1.17 for the currency the search decides on
 
 Split-half σΔ is stable (paired halves 0.171 / 0.182, retail halves
 1.137 / 1.024). Paired keys replay the field for a shared seed (ρ 0.979), so
-the 0.76 L race part cancels and only the 0.12 L per-arm build draws survive;
-in retail mode the field does not replay across builds of one seed (ρ 0.111),
+the 0.76 L race part cancels and only the 0.12 L per-arm build draws survive.
+In retail mode the field does not replay across builds of one seed (ρ 0.111),
 so seed-pairing there cancels almost nothing and σΔ stays near √2·σ(ℓ). Seed
 budget: `n ≈ (2·1.96·σΔ/δ)²`. δ = 0.03 L costs ~470 paired seeds where
 retail needs ~19.9k. At the 20 m/s factor the paired median reads 0.161 L,
 which is the 0.16 L the `config.ts` sizing comments quote (and 500 gSeeds
 still covers the app-unit 472). The `config.ts` presets are sized from the
-paired column, since Stage A-G and the Skill Chart run paired; the retail
+paired column, since Stage A-G and the Skill Chart run paired. The retail
 column is what Compare traffic still runs on until the user switches on
 "Paired seeds (lower noise)".
 
@@ -161,11 +161,12 @@ already true at the gate, and here that is Pace Chaser Savvy ○ (201532,
 a random-gold draw. Two certain feeds against a requirement of three.
 
 Unfixed. The options weighed: flag `activate_count_*` options whose prerequisite
-the current build cannot meet (a static check over six condition names); break
+the current build cannot meet (a static check over six condition names), break
 CI-overlapping ties toward less SP and fewer skills, which drops dead filler
-without touching the search; or report per-skill activation rates, which needs
+without touching the search, or report per-skill activation rates, which needs
 engine work, since GlobalSim keeps per-phase aggregates only
-(`race_solver_retail.rs:226-231`); the submodule now carries this fork's paired-draws work.
+(`race_solver_retail.rs:226-231`) and the submodule now carries this fork's
+paired-draws work.
 
 ## Paired-draws mode (engine fork)
 
@@ -183,53 +184,55 @@ pinned commit.
 10810, where an earlier 24-candidate slice at 300 seeds gave 0.971 L at 10810. Units are not the
 explanation: the field's average finish speed is 20.72 m/s at 2000 m and 19.75 m/s at 3000 m, so
 the fixed 20 m/s conversion is a few percent off either way (0.316 L against 0.320 L at 10810).
-The 0.25 L target is a mile number; on the long course, adding skills that actually bite, expect
-a few times it.
+The 0.25 L target is a mile number. On the long course, adding skills that actually bite, expect
+a few times that.
 
 Paired mode does not move the outcome distribution: on 20 000 races per arm (course 10504,
 15-skill base, seeds disjoint from retail) every runner's finish-rank marginal, finish-time
 marginal and the field margin match retail at 1 % (Holm, χ² and tie-corrected KS, with a
-retail-vs-retail control arm); finish times tie in 6 of 40 000 retail races and 14 of 40 000
+retail-vs-retail control arm). Finish times tie in 6 of 40 000 retail races and 14 of 40 000
 paired, so index tie-breaking is not a channel between the modes.
 
-Stage A-G runs paired, and so does the Skill Chart; Compare stays retail until the "Paired
+Stage A-G runs paired, and so does the Skill Chart. Compare stays retail until the "Paired
 seeds (lower noise)" switch is on. `cache.ts` namespaces search and verify per mode
 (`nsWithMode`), so a value measured one way is never folded into a stat from the other, and
 setupKeys carry the mode so a prepared worker is not reused across modes. Seed lists stay
 mode-independent, so search and verify seeds remain disjoint (P3). Config
-sizing comes from the paired record above; the arithmetic is in the
+sizing comes from the paired record above. The arithmetic is in the
 `config.ts` preset comments.
 
 ## Tests
 
-- `npm run test:optimizer` — pure units (space/knapsack/cache/stats) + the
-  live-engine evaluator integration (40 seeds; seconds) + the surrogate units
-  (`surrogate.test.ts`: additive recovery, planted-synergy lift, noise fails the
-  R² gate, inverse-variance weighting, graceful degradation) + the opening-book
-  units (`book.test.ts`: key fingerprinting, best-effort storage, the
-  affordable/one-per-group seed filter) + the synthetic oracle
-  (`search.oracle.test.ts`: 100 small instances fully enumerated, recommendation
-  must be the optimum, within δ_min, or a statistical tie — gate ≥95%; 5 medium
-  30–40-option instances vs a random-restart + exhaustive hill-climb baseline;
-  the surrogate on/off race comparison; and the §6.4 scenario
-  set — `aggregateValues` formulas plus a two-scenario maximin-vs-mean run whose
-  optimum moves between scenarios; the §F currency's shape plus a 24-instance
-  hard-P(1st) A/B of the clipped lead against the ℓ search, printed per instance,
-  where a gap inside what the run's own verification seeds resolve counts as a
-  tie; the §G one-aggregated-search vs searched-apart comparison for maximin and
-  blend). Gaussian noise is calibrated to the σ table
-  above — a shared field term that cancels in pairing + a per-build term that
+- `npm run test:optimizer` runs the pure units (space/knapsack/cache/stats), the
+  live-engine evaluator integration (40 seeds, seconds), the surrogate units, the
+  opening-book units and the synthetic oracle:
+  - `surrogate.test.ts`: additive recovery, planted-synergy lift, noise fails the
+    R² gate, inverse-variance weighting, graceful degradation
+  - `book.test.ts`: key fingerprinting, best-effort storage, the
+    affordable/one-per-group seed filter
+  - `search.oracle.test.ts`: 100 small instances fully enumerated, the
+    recommendation must be the optimum, within δ_min, or a statistical tie (gate
+    ≥95%). 5 medium 30–40-option instances vs a random-restart + exhaustive
+    hill-climb baseline. The surrogate on/off race comparison. The §6.4 scenario
+    set (`aggregateValues` formulas plus a two-scenario maximin-vs-mean run whose
+    optimum moves between scenarios). The §F currency's shape plus a 24-instance
+    hard-P(1st) A/B of the clipped lead against the ℓ search, printed per instance,
+    where a gap inside what the run's own verification seeds resolve counts as a
+    tie. The §G one-aggregated-search vs searched-apart comparison for maximin and
+    blend.
+  Gaussian noise is calibrated to the σ table
+  above: a shared field term that cancels in pairing + a per-build term that
   survives it, CRN per position. The oracle's second-scenario weight is derived
   from the pair ids, not the RNG, so scenario 0 stays byte-identical to the
   single-scenario run (its 95% gate is unaffected by the scenario work).
-- `search.realistic.test.ts` — the §C acceptance gate on 12 realistic instances
+- `search.realistic.test.ts`: the §C acceptance gate on 12 realistic instances
   (~30 families, budget ≈ 20 skills, exact reference optimum from annealing +
-  full 1+2-move ascent): at post-fix (paired) noise — mean gap ≤ 0.02 L, ≥90%
+  full 1+2-move ascent). At post-fix (paired) noise: mean gap ≤ 0.02 L, ≥90%
   within δ_min, no certified peak with an improvement ≥ δ_min left, and every
   run inside the preset-derived race budget. Peak status asserts at δ_min
   resolution (an improving move counts only if its gain > δ_min): the strict
-  "no improving move at all" reading is not achievable at any finite budget —
-  at σΔ ≈ 0.21 L the indifference zone drops a gain Δ at n ≈ 1.96·σΔ·√300/
+  "no improving move at all" reading is not achievable at any finite budget.
+  At σΔ ≈ 0.21 L the indifference zone drops a gain Δ at n ≈ 1.96·σΔ·√300/
   (δ_min−Δ) seeds, before its significance test at n = (1.96·σΔ/Δ)² could
   resolve it, so every strict miss measured so far is a sub-δ_min gain (the
   table prints both readings and the largest miss). The today-noise setting
@@ -240,21 +243,21 @@ sizing comes from the paired record above; the arithmetic is in the
 Surrogate race findings (measured, in-suite): the cut is confidence-gated. At
 the engine's real noise band the §I prior + value provider shave little off
 the search bill (search-only on/off ratio 0.88 on the noisy medium pool,
-fewer on 7 of 8) while the acquisition reshuffles the path-dependent search;
-the plan's ≤70%-of-Phase-3 target does not hold there. Where the model is
+fewer on 7 of 8) while the acquisition reshuffles the path-dependent search.
+The plan's ≤70%-of-Phase-3 target does not hold there. Where the model is
 identifiable (exact-lead, additive-only instances) the same machinery is a
 race saver: search-only ratio 0.23 with μ never worse, and with stage
 attribution Stage D, the bulk of the bill, −23 %, all races −37 % (§I test
 gates ≤0.85 / ≤0.70). §C removed the additive-estimate bound-prune from the
-Stage-F move space; the bound-based retire that stays is §I.5's certified
+Stage-F move space. The bound-based retire that stays is §I.5's certified
 Δ-SE prior (a wave candidate the model certifies hopeless never races).
 
-- `npm run test:optimizer:slow` — real-engine exhaustive check: 3 setups ×
-  ~12 purchasable options, every affordable build enumerated on the SAME
-  held-out verify seeds; the recommendation must BE the exhaustive best or tie
+- `npm run test:optimizer:slow`: real-engine exhaustive check, 3 setups ×
+  ~12 purchasable options, every affordable build enumerated on the same
+  held-out verify seeds. The recommendation must be the exhaustive best or tie
   it (paired ℓ CI straddles 0). Objective is meanLead (P(1st) is degenerate
   for a skill-less base vs the strong default field). Cold-start bound: default
-  1 setup / 9 options / 400 seeds (~4 min, worker_threads); `SLOW_FULL=1` runs
+  1 setup / 9 options / 400 seeds (~4 min, worker_threads). `SLOW_FULL=1` runs
   the full §13.2 sizing.
-- `npm run test:globalsim-compact` — the record the optimizer reads is
+- `npm run test:globalsim-compact`: the record the optimizer reads is
   bit-identical between the wasm and JS extraction paths.
