@@ -751,7 +751,8 @@ The caveats below are inherited from the removed single-uma solver. They have **
 
 **See [.claude/JP-GLOBAL-TERMINOLOGY.md](.claude/JP-GLOBAL-TERMINOLOGY.md)** for comprehensive mappings between Japanese and Global English terminology. This reference includes:
 
-- Running styles (逃げ/Nige → Front, 先行/Senkou → Stalker, etc.)
+- Running styles (逃げ/Nige → Front Runner, 先行/Senkou → Pace Chaser, 差し/Sasi → Late Surger,
+  追込/Oikomi → End Closer, 大逃げ/Oonige → Runaway)
 - Stats, mood conditions, ground conditions, weather, seasons
 - Code enum values and their locations
 - Critical naming warnings (e.g., `GroundCondition.Good` = 良/Firm, not "Good")

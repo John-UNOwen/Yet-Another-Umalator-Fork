@@ -1,6 +1,8 @@
 # Stamina & Survival Rate Guide
 
-Understanding how stamina works is crucial for building competitive horses in Uma Musume.
+Understanding how stamina works matters for building competitive horses in Uma Musume. The
+multipliers below are the classic solver's (`uma-skill-tools/HpPolicy.ts`), which this app no
+longer runs. The shipped engine is GlobalSim.
 
 ## What is Survival Rate?
 
@@ -21,13 +23,13 @@ Your horse's maximum stamina pool depends on three things:
 
 | Running Style | Stamina Efficiency |
 |--------------|-------------------|
-| Betweener (Sasi) | 100% (Best) |
-| Chaser (Oikomi) | 99.5% |
+| Late Surger (Sasi) | 100% (Best) |
+| End Closer (Oikomi) | 99.5% |
 | Front Runner (Nige) | 95% |
-| Stalker (Senkou) | 89% |
-| Super Escape (Oonige) | 86% (Worst) |
+| Pace Chaser (Senkou) | 89% |
+| Runaway (Oonige) | 86% (Worst) |
 
-This means a Betweener with 1000 Stamina has more effective HP than a Stalker with the same stat!
+A Late Surger with 1000 Stamina has more effective HP than a Pace Chaser with the same stat.
 
 ## What Drains Stamina?
 
@@ -41,15 +43,15 @@ Stamina drains based on how fast you're running above the "base speed" for the r
 | Lead Competition | 1.4x |
 | Lead Competition + Rushed | 3.6x |
 | Oonige Lead Competition | 3.5x |
-| Oonige Lead + Rushed | 7.7x (!!!) |
+| Oonige Lead + Rushed | 7.7x |
 | Heavy Ground | 1.02x |
-| Soft Ground | 1.01-1.02x |
+| Soft Ground | 1.01 to 1.02x |
 
 ### Factors That Reduce Stamina Drain
 
 | Condition | Drain Multiplier |
 |-----------|-----------------|
-| Downhill | 0.4x (60% reduction!) |
+| Downhill | 0.4x (a 60% reduction) |
 | Pace Down | 0.6x |
 | Higher Guts | Reduces drain in final phase |
 
@@ -62,9 +64,9 @@ The formula creates diminishing returns - going from 300 to 600 Guts helps more 
 ## Tips for Better Survival
 
 1. **Match your stamina to the distance** - Longer races need more stamina
-2. **Consider running style** - Betweeners are most stamina-efficient
+2. **Consider running style** - Late Surgers are the most stamina-efficient
 3. **Avoid getting rushed** - Kakari state drains stamina fast
-4. **Use stamina recovery skills** - Green skills that restore stamina can save a race
+4. **Use stamina recovery skills** - They can save a race
 5. **Don't neglect Guts** - It helps conserve stamina in the crucial final stretch
 6. **Check ground conditions** - Heavy/Soft ground increases drain slightly
 
@@ -76,4 +78,4 @@ When your horse's stamina hits zero:
 - Recovery is very difficult
 - The race is usually lost
 
-This is why maintaining a good survival rate is essential for consistent performance!
+This is why a good survival rate matters: without stamina left at the line, the race is lost.

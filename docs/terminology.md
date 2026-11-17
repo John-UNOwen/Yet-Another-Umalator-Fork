@@ -7,10 +7,10 @@ A glossary of terms used in Uma Musume and this simulator.
 | Style | Japanese | Description |
 |-------|----------|-------------|
 | **Front Runner** | Nige (逃げ) | Leads from the start, tries to stay ahead |
-| **Stalker** | Senkou (先行) | Stays near the front, pushes in final stretch |
-| **Betweener** | Sasi (差し) | Runs in the middle, makes late moves |
-| **Chaser** | Oikomi (追込) | Starts at back, relies on final sprint |
-| **Super Escape** | Oonige (大逃げ) | Extreme front-running, high risk/reward |
+| **Pace Chaser** | Senkou (先行) | Stays near the front, pushes in final stretch |
+| **Late Surger** | Sasi (差し) | Runs in the middle, makes late moves |
+| **End Closer** | Oikomi (追込) | Starts at back, relies on final sprint |
+| **Runaway** | Oonige (大逃げ) | Extreme front-running, high risk/reward |
 
 ---
 
@@ -44,10 +44,14 @@ Spring, Summer, Autumn, Winter - affects some skill activations.
 
 | Phase | When | What Happens |
 |-------|------|--------------|
-| **Start** | Gate opens | Initial acceleration |
-| **Early** | ~First 1/6 of race | Position establishing |
-| **Middle** | Main portion | Holding position, tactics |
-| **Final** | Last ~1/3 of race | Last spurt begins |
+| **Start** | 0 to 1/6 | Initial acceleration |
+| **Early** | 1/6 to 2/3 | Position establishing, most of the race |
+| **Middle** | 2/3 to 5/6 | Holding position, tactics |
+| **Final** | last 1/6 | Last spurt |
+
+The four phases are the solver's own (`CourseData.ts`, `Phase = 0 | 1 | 2 | 3`), and
+`phase>=2` is what "middle and final" means in skill conditions. The overlay labels them
+Opening, Mid 1, Mid 2 and Final.
 
 ---
 
@@ -59,7 +63,7 @@ Spring, Summer, Autumn, Winter - affects some skill activations.
 | **Good** | Kocho (好調) | +2% all stats |
 | **Normal** | Futsuu (普通) | No change |
 | **Bad** | Fuchou (不調) | -2% all stats |
-| **Terrible** | Zekkufuchou (絶不調) | -4% all stats |
+| **Awful** | Zekkufuchou (絶不調) | -4% all stats |
 
 ---
 

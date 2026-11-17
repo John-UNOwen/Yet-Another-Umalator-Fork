@@ -27,11 +27,11 @@ maxHp = 0.8 × HpStrategyCoefficient[strategy] × stamina + distance
 | Strategy | Coefficient |
 |----------|-------------|
 | None     | 0           |
-| Nige (Front) | 0.95    |
-| Senkou (Stalker) | 0.89 |
-| Sasi (Betweener) | 1.0  |
-| Oikomi (Chaser) | 0.995 |
-| Oonige   | 0.86        |
+| Nige (Front Runner) | 0.95    |
+| Senkou (Pace Chaser) | 0.89 |
+| Sasi (Late Surger) | 1.0  |
+| Oikomi (End Closer) | 0.995 |
+| Oonige (Runaway)   | 0.86        |
 
 ### HP Consumption Per Second
 
