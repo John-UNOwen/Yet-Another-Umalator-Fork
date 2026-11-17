@@ -34,7 +34,7 @@ import type { MobPreset } from './engines/globalsim/mobs';
 import { ci95 } from './engines/globalsim/metrics';
 import type { WorkerFactory } from './engines/globalsim/pool';
 import { loadGlobalsimCourseIds } from './engines/globalsim/courses';
-import { applyExclusions, calculateSkillCost, type PoolExclusion } from './skill-chart-utils';
+import { applyExclusions, calculateSkillCost, hintDiscountPercent, MAX_HINT_LEVEL, type PoolExclusion } from './skill-chart-utils';
 import { PoolExclusionList } from './pool-exclusions';
 import { STRATEGY_LABELS } from './uma-panel';
 import { pickCareerDump, type CareerImport } from './career-import';
@@ -86,6 +86,11 @@ export interface OptimizerPaneProps {
 	/** A Hachimi career dump was imported: the app owns the uma and hint state, so
 	 *  it applies those (stats, aptitudes, outfit, learned skills, hint levels). */
 	onImportCareer?: (imp: CareerImport) => void;
+	/** Set one skill's hint level (0 to 5) in the app's shared hint state, the
+	 *  same state the Skill tab's hint buttons write. */
+	onHintChange?: (id: string, level: number) => void;
+	/** Clear every hint level (the Skill tab's Reset Hints). */
+	onResetHints?: () => void;
 	/** Filled with this pane's run and stop, so the app's RUN button drives the
 	 *  optimizer (the pane has no run button of its own). */
 	controlRef?: { current: OptimizerControl | null };
@@ -138,6 +143,36 @@ function SkillChip(props: { id: string; tone?: 'added' | 'missing' | 'must' }) {
 		<span class={`v2-opt-chip${tone ? ` ${tone}` : ''}`} title={`${skillName(id)} (${id})`}>
 			<img src={skillIcon(id)} alt="" loading="lazy" />
 			<span>{skillName(id)}</span>
+		</span>
+	);
+}
+
+/** A pool row's cost with the Skill tab's hint buttons around it. A hint lowers
+ *  the SP cost (10, 20, 30, 35, 40% at levels 1 to 5). Without a setter it is
+ *  the plain cost. */
+function HintCost(props: { id: string; cost: number; hint: number; disabled: boolean; onChange?: (level: number) => void }) {
+	const { id, cost, hint, disabled, onChange } = props;
+	if (!onChange) return <span class="v2-opt-skill-cost">{cost} SP</span>;
+	const name = skillName(id);
+	const step = (d: 1 | -1) => onChange(Math.max(0, Math.min(MAX_HINT_LEVEL, hint + d)));
+	const downOff = disabled || hint <= 0;
+	const upOff = disabled || hint >= MAX_HINT_LEVEL;
+	return (
+		<span class="v2-opt-hint" title={hint > 0 ? `Hint level ${hint}: ${hintDiscountPercent(hint)}% off` : 'No hint: full price'}>
+			<button type="button" class={`v2-hint-btn v2-hint-down${downOff ? ' disabled' : ''}`} disabled={downOff}
+				aria-label={`Lower the hint level of ${name}`} onClick={() => step(-1)}>
+				<div class="v2-hint-btn-bg"></div>
+				<span class="v2-hint-btn-text">−</span>
+			</button>
+			<span class="v2-opt-skill-cost">{cost} SP</span>
+			<button type="button" class={`v2-hint-btn v2-hint-up${upOff ? ' disabled' : ''}`} disabled={upOff}
+				aria-label={`Raise the hint level of ${name}`} onClick={() => step(1)}>
+				<div class="v2-hint-btn-bg"></div>
+				<span class="v2-hint-btn-text">+</span>
+			</button>
+			<span class={`v2-opt-hint-level${hint > 0 ? '' : ' none'}`}>
+				{hint > 0 ? `Lv${hint} −${hintDiscountPercent(hint)}%` : 'no hint'}
+			</span>
 		</span>
 	);
 }
@@ -291,6 +326,9 @@ interface RunSnapshot {
 	reserve: number;
 	/** Must-have skills of that run (in every build, outside `selection`). */
 	mustHave: string[];
+	/** Hint levels the run priced skills with, so later hint changes cannot
+	 *  re-price the finished results. */
+	hints: Map<string, number>;
 }
 
 /** Advanced settings: null keeps the preset's value. */
@@ -453,6 +491,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		return c;
 	};
 	const allowedCost = useMemo(() => costOfIds(chosen), [chosen, hints, ownedByGroup]);
+	/** Pool skills with a hint level set. */
+	const hintedInPool = useMemo(() => candidates.filter((id) => (hints.get(id) ?? 0) > 0).length, [candidates, hints]);
 	const mustCost = useMemo(() => costOfIds(mustHave), [mustHave, hints, ownedByGroup]);
 	const spendable = Math.max(0, (Number(budget) || 0) - (Number(reserve) || 0));
 
@@ -517,6 +557,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		const budgetUse = Math.max(0, Math.floor(Number(budget) || 0) - reserveUse);
 		const runLeftOut = leftOut;
 		const runMust = [...mustHave];
+		const runHints = new Map(hints);
 		const seedUse = Math.floor(Number(seed) || 0);
 		// Must-have skills are locks: always in, their cost reserved once
 		// (space.ts include), so they never appear in a build's `selection`.
@@ -623,7 +664,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			);
 			if (!mountedRef.current) return;
 			console.log('[optimizer]', res);
-			setRunResult({ result: res, objective, leftOut: runLeftOut, reserve: reserveUse, mustHave: runMust });
+			setRunResult({ result: res, objective, leftOut: runLeftOut, reserve: reserveUse, mustHave: runMust, hints: runHints });
 			setProgress(null);
 			if (useBook) {
 				saveBook(key, res.shortlist.slice(0, 5).map(r => ({
@@ -802,7 +843,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				<header class="v2-opt-card-header">
 					<h3>Skill pool</h3>
 					<span class="v2-opt-subtitle">
-						{chosen.size} allowed · {mustHave.size} must have · {allowedCost.toLocaleString()} SP to buy every allowed skill
+						{chosen.size} allowed · {mustHave.size} must have{hintedInPool ? ` · ${hintedInPool} hinted` : ''} · {allowedCost.toLocaleString()} SP to buy every allowed skill
 						{mustHave.size ? ` · must-haves cost ${mustCost.toLocaleString()} SP` : ''} · {spendable.toLocaleString()} SP to spend
 					</span>
 				</header>
@@ -824,6 +865,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 							setChosen((prev) => new Set([...prev].filter((id) => !shown.has(id))));
 							setMustHave((prev) => new Set([...prev].filter((id) => !shown.has(id))));
 						}}>None</Button>
+					{props.onResetHints && hintedInPool > 0 && (
+						<Button size="sm" variant="ghost" disabled={running} title="Set every hint level back to none (also clears the Skill tab's hints)"
+							onClick={props.onResetHints}>Clear hints</Button>
+					)}
 				</div>
 				{career && (
 					<div class="v2-opt-career">
@@ -850,7 +895,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 										<div class={`v2-opt-skill ${st}`} key={id}>
 											<img src={skillIcon(id)} alt="" loading="lazy" />
 											<span class="v2-opt-skill-name" title={id}>{skillName(id)}</span>
-											<span class="v2-opt-skill-cost">{cost} SP</span>
+											<HintCost id={id} cost={cost} hint={hints.get(id) ?? 0} disabled={running}
+												onChange={props.onHintChange && ((lv) => props.onHintChange!(id, lv))} />
 											<SegmentedControl<PoolState> value={st} size="sm" ariaLabel={`${skillName(id)}: off, allow or must have`}
 												options={POOL_OPTIONS(running)} onChange={(s) => setState(id, s)} />
 										</div>
@@ -882,7 +928,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 
 			{/* ── Results (from the frozen snapshot, never live state) ── */}
 			{runResult ? (
-				<OptimizerResults snapshot={runResult} hints={hints} ownedByGroup={ownedByGroup} onOpenInCompare={props.onOpenInCompare} />
+				<OptimizerResults snapshot={runResult} hints={runResult.hints} ownedByGroup={ownedByGroup} onOpenInCompare={props.onOpenInCompare} />
 			) : !running && (
 				<section class="v2-opt-card v2-opt-empty">
 					<div class="v2-results-placeholder">

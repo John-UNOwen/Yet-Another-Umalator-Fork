@@ -2087,6 +2087,14 @@ function App() {
                     seed={seed}
                     onOpenInCompare={handleOpenInCompare}
                     onImportCareer={handleImportCareer}
+                    onHintChange={(id, hint) => {
+                      setSkillHints((prev) => {
+                        const next = new Map(prev);
+                        next.set(id, hint);
+                        return next;
+                      });
+                    }}
+                    onResetHints={() => setSkillHints(new Map())}
                     controlRef={optimizerControl}
                     onRunningChange={setOptimizerRunning}
                   />

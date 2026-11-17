@@ -60,6 +60,13 @@ export const skillGroups = Object.keys(skilldata).sort((a, b) =>
  * low at hint 3 for base costs 90/170/180/360.
  */
 const HINT_PERCENT = [100, 90, 80, 70, 65, 60];
+/** Highest hint level the game gives. */
+export const MAX_HINT_LEVEL = 5;
+/** SP discount of a hint level in percent: 0, 10, 20, 30, 35, 40. */
+export function hintDiscountPercent(hint: number): number {
+	const h = Math.max(0, Math.min(MAX_HINT_LEVEL, Math.round(hint) || 0));
+	return 100 - HINT_PERCENT[h];
+}
 function scaleBaseCost(baseCost: number, hint: number): number {
 	const h = Math.max(0, Math.min(5, Math.round(hint) || 0));
 	return Math.floor(baseCost * HINT_PERCENT[h] / 100);

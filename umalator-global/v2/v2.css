@@ -8476,6 +8476,31 @@ tr:hover .v2-skill-hide-btn {
   white-space: nowrap;
 }
 
+/* Hint stepper in a pool row: the Skill tab's hint buttons around the cost */
+.v2-opt-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.v2-opt-hint .v2-opt-skill-cost {
+  min-width: 52px;
+  text-align: center;
+}
+
+.v2-opt-hint-level {
+  min-width: 68px;
+  color: var(--color-primary);
+  font-size: var(--font-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.v2-opt-hint-level.none {
+  color: var(--color-text-faint);
+  font-weight: 400;
+}
+
 /* Progress */
 .v2-opt-progress-head {
   display: flex;
