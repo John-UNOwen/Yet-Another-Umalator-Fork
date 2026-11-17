@@ -7,7 +7,10 @@
 > images belong to the original author — please visit and support the original article.
 > Translation by the Moomoolator project for the English-speaking community; not affiliated with the author or Cygames.
 
-> ⚠️ **Translator's note:** This card is upcoming on Global; event names and the unique bonus name below are unofficial translations (flagged with †) and may differ from the eventual official localization. Skill names are the confirmed Global names. Dates in the article refer to the JP server (July 2022).
+> **Translator's note (July 2022):** This card was upcoming on Global at the time, so event names
+> and the unique bonus name below are unofficial translations (flagged with †) and may differ from
+> the eventual official localization. Skill names are the confirmed Global names. Dates in the
+> article refer to the JP server (July 2022).
 
 ---
 

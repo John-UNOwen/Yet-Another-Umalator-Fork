@@ -187,7 +187,7 @@ The Throne's Assemblage unlocks its Recreations via an event that triggers after
 
 The Throne's Assemblage can't be equipped when training any character listed in its group info — including all alternate outfits of those characters. Keep this in mind when training Symboli Rudolf or Tokai Teio.
 
-And although she isn't implemented yet, the same will presumably apply to Tsurumaru Tsuyoshi if she's ever added as a trainable uma.
+And although she was not implemented when the article was written, the same will presumably apply to Tsurumaru Tsuyoshi if she's ever added as a trainable uma.
 
 ### Can't Be Deck-Mates with Those Characters' Support Cards
 

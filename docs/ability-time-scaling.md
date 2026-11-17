@@ -70,4 +70,4 @@ Same logic as the ability value counterpart — see [Ability Value Scaling](abil
 
 ## MultiplyBlockedSideMaxContinueTimePhaseMiddleRun — Type 2 (6)
 
-Not implemented yet.
+No case for it in `getDurationScalingMultiplier` ([`RaceSolver.ts:1421-1423`](../uma-skill-tools/RaceSolver.ts#L1421-L1423)), so the multiplier stays 1.0.

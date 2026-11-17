@@ -1,6 +1,6 @@
 # Welfare SSR Team \<Sirius\> Usage Guide
 
-*Translated from [umamusumelabo.com](https://umamusumelabo.com/beginner/team-sirius-guide) by Rene ([@renekuroi](https://twitter.com/renekuroi))*
+*Translated from [umamusumelabo.com](https://umamusumelabo.com/beginner/team-sirius-guide) by Rene ([@renekuroi](https://twitter.com/renekuroi)). The article's sense of recency is its own.*
 
 ---
 
