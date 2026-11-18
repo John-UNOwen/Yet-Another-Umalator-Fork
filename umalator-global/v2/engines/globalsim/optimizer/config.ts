@@ -245,9 +245,10 @@ export function applyTuning(cfg: EffortConfig, t: SearchTuning = {}): EffortConf
 	if (given(t.deltaMinL)) out.deltaMinL = clampTo(t.deltaMinL, L.deltaMinL);
 	if (given(t.verifySeeds)) {
 		const n = Math.round(clampTo(t.verifySeeds, L.verifySeeds));
-		// The verify seed list holds 3 × SEED_LIST_SIZE (60,000) positions.
+		// Tie growth can never pass the verify list, which holds SEED_LIST_SIZE
+		// positions (it is drawn from 3 × that many seeds, then cut back).
 		out.gSeedsMin = n;
-		out.gSeedsCap = Math.min(60_000, 4 * n);
+		out.gSeedsCap = Math.min(SEED_LIST_SIZE, 4 * n);
 	}
 	if (given(t.contribSeeds)) out.contribSeeds = Math.round(clampTo(t.contribSeeds, L.contribSeeds));
 	if (given(t.buildsShown)) out.shortlistSize = Math.round(clampTo(t.buildsShown, L.buildsShown));
@@ -334,6 +335,9 @@ export const SURROGATE_PAIR_PRIOR = 10;
 export const SURROGATE_MIN_R2 = 0.3;
 /** Verification-seed disjointness margin check (P3) — overlap assert helper. */
 export const VERIFY_SALT = 0x51ed27e1;
+/** Seeds per (namespace, scenario) list, the most positions any ladder or
+ *  verification can ask for (evaluator.ts builds every list at this length). */
+export const SEED_LIST_SIZE = 20000;
 /**
  * §E: telemetry seeds needed before "this skill never activated" is read as
  * never (handoff §E: a 0/200 activation counts as never; a skill that fires

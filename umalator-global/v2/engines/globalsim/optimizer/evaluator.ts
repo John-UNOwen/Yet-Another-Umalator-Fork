@@ -29,7 +29,7 @@ import { buildGlobalsimChartJobs } from '../chart';
 import { globalsimSeedList } from '../compare';
 import { ci95, leadMarginL, SeedCompactRecord } from '../metrics';
 import { createGlobalsimPool, GlobalsimPool, PoolJob, PoolTiming, resolveThreadCount, WorkerFactory } from '../pool';
-import { CACHE_CAP_BYTES, CACHE_PIN_TOP, EffortConfig, VERIFY_SALT } from './config';
+import { CACHE_CAP_BYTES, CACHE_PIN_TOP, EffortConfig, SEED_LIST_SIZE, VERIFY_SALT } from './config';
 import { EvalCache, NS_SEARCH, NS_VERIFY, nsWithMode } from './cache';
 import { BuildSpace, forcedOptions } from './space';
 import {
@@ -200,9 +200,8 @@ export function statsOf(values: SeedSlot[]): BuildStats {
 	return st;
 }
 
-/** Seed slot position cap (verify lists slice below this). */
-/** Seeds per (namespace, scenario) list — the most positions any ladder can ask for. */
-export const SEED_LIST_SIZE = 20000;
+/** Seeds per (namespace, scenario) list (config.ts, so applyTuning can cap by it). */
+export { SEED_LIST_SIZE };
 /** Failed jobs a seed survives as a retryable hole before it becomes 'err'. */
 const JOB_FAIL_ATTEMPTS = 3;
 

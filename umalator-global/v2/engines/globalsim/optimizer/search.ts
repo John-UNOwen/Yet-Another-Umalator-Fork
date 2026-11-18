@@ -481,7 +481,11 @@ async function runSingleScenario(
 	const searchPick = searchPickOf(objective, input.searchCurrency, leadClipL(noise.sigmaLead));
 
 	// ── Stage G machinery (also the Stop path): verify a shortlist fresh ──────
-	const verify = async (short: BuildRefLite[], nMin: number, nCap: number, stoppedEarly: boolean): Promise<OptimizerResult> => {
+	const verify = async (short: BuildRefLite[], nMinIn: number, nCapIn: number, stoppedEarly: boolean): Promise<OptimizerResult> => {
+		// Growth past the verify list would throw after the whole search budget
+		// was spent, so both bounds stay inside it whatever the config says.
+		const nCap = Math.min(SEED_LIST_SIZE, nCapIn);
+		const nMin = Math.min(nCap, nMinIn);
 		const pool = [...short];
 		if (vs && !pool.some(b => b.id === vs.id)) pool.push(vs); // gainVsCurrent needs the reference row verified too
 		// §K: pin the verification pool (every growth round re-ensures the same
@@ -1563,7 +1567,8 @@ async function verifyAcross(
 	// Stop path: mirror runSingleScenario's truncated Stage G — verify on one
 	// short round (min(1000, gSeedsCap)) instead of burning a full gSeedsMin
 	// across every scenario after the user pressed Stop (anytime, P5).
-	let n = ctrl.stopped() ? Math.min(1000, cfg.gSeedsCap) : gSeeds;
+	const gCap = Math.min(SEED_LIST_SIZE, cfg.gSeedsCap); // never past the verify list
+	let n = Math.min(gCap, ctrl.stopped() ? 1000 : gSeeds);
 	let rows: ScoredBuild[];
 	let best: ScoredBuild;
 	for (;;) {
@@ -1590,8 +1595,8 @@ async function verifyAcross(
 		// Resolve the top two on the aggregation before stopping (§G).
 		const two = ranked.filter(x => x.b.id !== best.build.id)[0];
 		if (two && !allTieVs(best.build, two.b)) break; // a real winner somewhere, others agree
-		if (ctrl.stopped() || n >= cfg.gSeedsCap) break;
-		n = Math.min(cfg.gSeedsCap, n + Math.max(500, Math.floor(gSeeds / 4)));
+		if (ctrl.stopped() || n >= gCap) break;
+		n = Math.min(gCap, n + Math.max(500, Math.floor(gSeeds / 4)));
 	}
 	assertFeasible(space, best.build.selection);
 	assertOnePerGroup(space, best.build.selection);

@@ -6,7 +6,7 @@
 
 import test from 'tape';
 import {
-	applyTuning, effortConfig, KICK_GROW_AFTER, kickLevelOf, STANDARD, THOROUGH, TUNING_LIMITS, UNTIL_STOPPED,
+	applyTuning, effortConfig, KICK_GROW_AFTER, kickLevelOf, SEED_LIST_SIZE, STANDARD, THOROUGH, TUNING_LIMITS, UNTIL_STOPPED,
 } from './config';
 
 test('applyTuning without settings returns the preset unchanged', t => {
@@ -56,7 +56,12 @@ test('applyTuning clamps to TUNING_LIMITS and rounds counts', t => {
 	t.equal(lo.spreadNoise, L.spreadNoise.min, 'noise floor');
 	const hi = applyTuning(THOROUGH, { verifySeeds: 1e9, buildsShown: 7.6 });
 	t.equal(hi.gSeedsMin, L.verifySeeds.max, 'verification ceiling');
-	t.ok(hi.gSeedsCap <= 60_000, 'the cap stays inside the verify seed list');
+	t.ok(hi.gSeedsCap <= SEED_LIST_SIZE, 'the cap stays inside the verify seed list');
+	// Finding 1: every allowed setting, not just the ceiling.
+	for (const v of [5_001, 8_000, L.verifySeeds.max]) {
+		const c = applyTuning(THOROUGH, { verifySeeds: v });
+		t.ok(c.gSeedsCap <= SEED_LIST_SIZE && c.gSeedsMin <= c.gSeedsCap, `verifySeeds ${v}: cap ${c.gSeedsCap} fits the list`);
+	}
 	t.equal(hi.shortlistSize, 8, 'counts round');
 	t.end();
 });
