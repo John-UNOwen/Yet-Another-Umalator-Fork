@@ -275,6 +275,11 @@ function App() {
   const [mode, setMode] = useState<"compare" | "skill" | "optimizer">(
     savedSession.current?.mode ?? "compare",
   );
+  // Set on the first render in Optimizer mode and never cleared: from then on
+  // the pane stays mounted (hidden in the other modes), so a mode switch keeps
+  // its results, pool choices and settings.
+  const optimizerVisited = useRef(false);
+  if (mode === "optimizer") optimizerVisited.current = true;
   const [seed, setSeed] = useState(() =>
     Math.floor(Math.random() * 0xffffffff),
   );
@@ -2062,8 +2067,24 @@ function App() {
                       </div>
                     )}
                   </div>
-                ) : mode === "optimizer" ? (
-                  /* RESULTS - Skill Optimizer mode (GlobalSim engine) */
+                ) : mode !== "optimizer" ? (
+                  /* RESULTS - Compare mode */
+                  <V2ResultsPane
+                    results={results}
+                    isRunning={isRunning}
+                    courseId={courseId}
+                    onRunSimulation={handleRunSimulation}
+                    displayRun={displayRun}
+                    onDisplayRunChange={setDisplayRun}
+                  />
+                ) : null}
+
+                {/* RESULTS - Skill Optimizer mode (GlobalSim engine). Mounted
+                    from the first visit on and only hidden in the other modes:
+                    its results and pool settings live in its own state, so
+                    "Open in Compare" (a mode switch) must not unmount it. */}
+                {optimizerVisited.current && (
+                  <div style={{ display: mode === "optimizer" ? "contents" : "none" }}>
                   <OptimizerPane
                     workerFactory={globalsimWorkerFactory}
                     uma={uma1}
@@ -2091,16 +2112,7 @@ function App() {
                     controlRef={optimizerControl}
                     onRunningChange={setOptimizerRunning}
                   />
-                ) : (
-                  /* RESULTS - Compare mode */
-                  <V2ResultsPane
-                    results={results}
-                    isRunning={isRunning}
-                    courseId={courseId}
-                    onRunSimulation={handleRunSimulation}
-                    displayRun={displayRun}
-                    onDisplayRunChange={setDisplayRun}
-                  />
+                  </div>
                 )}
               </main>
 
