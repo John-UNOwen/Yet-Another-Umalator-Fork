@@ -7,7 +7,7 @@
 	},
 	"assets": [
 		{
-			"dest": "ort/ort.wasm.min.mjs",
+			"dest": "ort/ort.wasm.min.js",
 			"pkg": "onnxruntime-web@1.31.1",
 			"from": "dist/ort.wasm.min.mjs",
 			"license": "MIT (onnxruntime-web)",

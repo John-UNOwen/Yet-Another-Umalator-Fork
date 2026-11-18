@@ -76,7 +76,7 @@ async function prepare(onNames: readonly NameEntry[]): Promise<void> {
 		const fetched = await ensureAssets(manifest, cache, { download: (a) => fetchAsset(a.dest), sha256: defaultSha256, onProgress: report('assets') });
 		post({ type: 'progress', stage: 'models', done: 0, total: 2 });
 
-		const mod: any = await importRuntime(`${OCR}/ort/ort.wasm.min.mjs`);
+		const mod: any = await importRuntime(`${OCR}/ort/ort.wasm.min.js`);
 		const ort = mod.env ? mod : mod.default;
 		// The engine sets wasmPaths, numThreads and proxy itself. Handing it the binary is what keeps the
 		// 14.8 MB wasm out of the network path, since Pages serves it with a short max-age.

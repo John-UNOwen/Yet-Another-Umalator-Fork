@@ -21,7 +21,9 @@ const hfFile = (repo, rev, name) => `${HF}/${repo}/resolve/${rev}/${name}`;
 // `extract` names a transform applied to the fetched bytes instead of storing them as-is.
 // `from` picks a member out of the onnxruntime-web npm tarball, so ort comes from the registry itself.
 const ASSETS = [
-	{ dest: 'ort/ort.wasm.min.mjs', pkg: `onnxruntime-web@${ORT_VERSION}`, from: 'dist/ort.wasm.min.mjs', license: 'MIT (onnxruntime-web)' },
+	// Served as .js: Pages answers a .mjs request with application/octet-stream, and the browser
+	// refuses to import() a module under that type. The bytes are the npm dist file unchanged.
+	{ dest: 'ort/ort.wasm.min.js', pkg: `onnxruntime-web@${ORT_VERSION}`, from: 'dist/ort.wasm.min.mjs', license: 'MIT (onnxruntime-web)' },
 	{ dest: 'ort/ort-wasm-simd-threaded.mjs', pkg: `onnxruntime-web@${ORT_VERSION}`, from: 'dist/ort-wasm-simd-threaded.mjs', license: 'MIT (onnxruntime-web)' },
 	{ dest: 'ort/ort-wasm-simd-threaded.wasm', pkg: `onnxruntime-web@${ORT_VERSION}`, from: 'dist/ort-wasm-simd-threaded.wasm', license: 'MIT (onnxruntime-web)' },
 	{ dest: 'licenses/MIT-onnxruntime-web.txt', url: 'https://cdn.jsdelivr.net/gh/microsoft/onnxruntime@v1.31.1/LICENSE', license: 'MIT (onnxruntime-web)' },

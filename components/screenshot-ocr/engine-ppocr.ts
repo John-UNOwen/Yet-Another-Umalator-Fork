@@ -24,9 +24,9 @@ const CROP_PAD = 0.15;
 const REC_BATCH = 8;
 
 export interface PpOcrUrls {
-	/** Loads ort itself. The browser caller does a runtime import of `${BASE_PATH}ocr/ort/ort.wasm.min.mjs`, which no bundler may resolve. */
+	/** Loads ort itself. The browser caller does a runtime import of `${BASE_PATH}ocr/ort/ort.wasm.min.js`, which no bundler may resolve. */
 	loadOrt: () => Promise<Ort>;
-	/** Directory holding ort.wasm.min.mjs, the ort-wasm-simd-threaded pair and nothing else ort guesses at. */
+	/** Directory holding ort.wasm.min.js, the ort-wasm-simd-threaded pair and nothing else ort guesses at. */
 	ortDir: string;
 	detectModel: string;
 	recognizeModel: string;
