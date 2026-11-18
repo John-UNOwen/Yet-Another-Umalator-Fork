@@ -310,9 +310,12 @@ export const CLIMB_WAVE = 128;
  *    again while it has room, down to δ_min, so small gains that add up are
  *    still taken. The cache keeps every seed already raced.
  *  - CLIMB_NMAX_FACTOR: a move is set aside at 8 × (SEQ_ADOPT_Z·σ/g)² seeds,
- *    twice the count that shows a gain of g (3,200 seeds at the first g).
- *  - CLIMB_POLISH_SHARE: with kicks to run, they stop when a quarter of the
- *    restart's room is left, and that quarter refines the final peak.
+ *    8 times the count at which a gain of g clears the sequential bound on
+ *    average (3,200 seeds at the first g).
+ *  - CLIMB_POLISH_SHARE: with a time limit, the restarts share the first
+ *    three quarters of it and the last quarter (plus what they leave)
+ *    refines the best restart end. Without one, a restart's kicks stop when
+ *    a quarter of its race room is left, and that quarter refines its peak.
  *  - CLIMB_STAGE_D_SHARE: with a time limit, a restart's Stage D (the
  *    in-context rounds) may use half of the restart's slice, so its climb
  *    always gets the other half. Unbounded, three Stage Ds took 266 s of a

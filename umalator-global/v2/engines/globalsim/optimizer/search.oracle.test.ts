@@ -649,8 +649,8 @@ test('time budget: past it the checking stage races only its floor', async t => 
 // certify climb lets its first restart's waves run into the limit (the career
 // dump: one wave took 86% of a Standard run and restarts 2 and 3 ran no
 // races), so the later restarts are starved. The race climb gives each restart
-// its share of the time left, its settled peaks kick, and the room the kicks
-// leave polishes the final peak.
+// its share of the first 75% of the limit, its settled peaks kick, and the
+// rest polishes the best restart end.
 class TimedEval extends OracleEval {
 	async ensure(reqs: Parameters<SearchEvaluator['ensure']>[0]) {
 		const pre = this.racesRun();
@@ -687,7 +687,7 @@ test('race climb: every restart gets its share of the time limit, settled peaks 
 			const m = /restart (\d+)\/(\d+)/.exec(x.note ?? '');
 			if (m) { starts = Number(m[2]); if (!firstAt.has(Number(m[1]))) firstAt.set(Number(m[1]), x.racesRun); }
 			if (/ILS kick/.test(x.note ?? '')) kicked = true;
-			if (/polish/.test(x.note ?? '')) polished = true;
+			if (/final polish/.test(x.note ?? '')) polished = true;
 		});
 		const ms = Date.now() - t0;
 		ev.dispose();
@@ -695,12 +695,14 @@ test('race climb: every restart gets its share of the time limit, settled peaks 
 	};
 	const race = await run('race');
 	const cert = await run('certify');
+	// Wall clock: a much slower machine moves these numbers (the race climb
+	// slices its time), so the quality check below has a margin.
 	t.comment(`race: ${race.firstAt.size}/${race.starts} restarts ran · kicked ${race.kicked} · polished ${race.polished} · ${race.ms} ms · best true μ ${inst.mu(race.res.best.build.id).toFixed(3)} · climb ${JSON.stringify(race.res.climbStats)}`);
 	t.comment(`certify: ${cert.firstAt.size}/${cert.starts} restarts ran · kicked ${cert.kicked} · ${cert.ms} ms · best true μ ${inst.mu(cert.res.best.build.id).toFixed(3)} · climb ${JSON.stringify(cert.res.climbStats)}`);
 	t.ok(race.starts >= 2, `the instance has several starting builds (${race.starts})`);
 	t.equal(race.firstAt.size, race.starts, 'race climb: every restart ran');
 	t.ok(race.kicked, 'race climb: a settled peak kicks');
-	t.ok(race.polished, 'race climb: the end of a restart polishes its peak');
+	t.ok(race.polished, 'race climb: the best restart end gets the final polish');
 	t.equal(race.res.climbStats?.mode, 'race', 'the result names the climb');
 	t.ok((race.res.climbStats?.targetL ?? 0) > TEST_CFG.deltaMinL, `the first target gain sits above δ_min at this noise (${race.res.climbStats?.targetL.toFixed(3)} L)`);
 	t.ok(race.res.shortlist.every(r => affordable(inst.space, r.build.selection)), 'every reported build is affordable');

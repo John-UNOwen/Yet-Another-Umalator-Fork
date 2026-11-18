@@ -31,7 +31,7 @@
 
 import {
 	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_CONFIRM_PARALLEL, CLIMB_CONFIRM_START,
-	EffortConfig, PRUNE_KAPPA, SEQ_ADOPT_Z,
+	EffortConfig, PRUNE_KAPPA, SEED_LIST_SIZE, SEQ_ADOPT_Z,
 } from './config';
 import { BuildRefLite, PairedDiff, pairedOf, SearchEvaluator } from './evaluator';
 import { SeedValue } from './types';
@@ -234,7 +234,8 @@ export interface RaceWaveOpts {
 	pick: (v: SeedValue) => number | null;
 	cfg: EffortConfig;
 	/** The wave's target gain g and per-move seed cap from the paired spread σ
-	 *  the start rung measured at this incumbent (median over the wave). */
+	 *  the start rung measured at this incumbent (median over the wave's moves
+	 *  with a spread above 0, NaN when none has one). */
 	targetOf: (sigma: number) => { g: number; nMax: number };
 	startSeeds?: number;
 	rungMin?: number;
@@ -288,10 +289,10 @@ const range = (lo: number, hi: number) => Array.from({ length: Math.max(0, hi - 
  *    wave ends. Testing every move at every rung picks up noise, and the
  *    fresh positions cannot have been chosen for it.
  *  - A candidate is set aside once its optimistic Δ (mean + max(SEQ_ADOPT_Z,
- *    β(n))·SE) falls under the target gain g, or at nMax seeds. g is never
- *    below δ_min, and it is the smallest gain the run's final check can
- *    confirm at this noise, so the wave stops paying for gains it could not
- *    report anyway.
+ *    β(n))·SE) falls under the target gain g, or at nMax seeds. targetOf
+ *    sets g from the noise the start rung measured, never below δ_min, so a
+ *    coarse wave stops paying for gains finer than it looks for. A finer
+ *    refinement level asks for a smaller g.
  *  - With several improvers alive the wave still ends at the first confirmed
  *    one. The §C wave could only end when its leader's lower bound cleared
  *    every rival's upper bound, so a wave full of close improvers ran every
@@ -328,13 +329,18 @@ export async function raceWave(ev: SearchEvaluator, o: RaceWaveOpts): Promise<Ra
 		const d = diffOf(c);
 		if (!d) continue;
 		last.set(c.id, d);
-		if (d.n >= 2 && Number.isFinite(d.sem)) sds.push(d.sem * Math.sqrt(d.n));
+		// A move with a spread of 0 (a skill that never fires, so every Δ is
+		// equal) says nothing about the noise. Counted, a wave of mostly such
+		// moves had σ = 0, so nMax fell to the start rung and every real move
+		// was set aside unresolved after 50 seeds.
+		const sd = d.sem * Math.sqrt(d.n);
+		if (d.n >= 2 && Number.isFinite(sd) && sd > 0) sds.push(sd);
 	}
 	sds.sort((a, b) => a - b);
 	const sigma = sds.length ? sds[Math.floor(sds.length / 2)] : NaN;
 	const { g: g0, nMax: n0 } = o.targetOf(sigma);
 	const g = Math.max(deltaMin, Number.isFinite(g0) ? g0 : deltaMin);
-	const nMax = Math.max(start, Math.floor(n0));
+	const nMax = Math.min(SEED_LIST_SIZE, Math.max(start, Math.floor(n0)));
 	const semOf = (d: PairedDiff) => (d.n >= 2 && Number.isFinite(d.sem) ? d.sem : Infinity);
 	const lcb = (d: PairedDiff) => d.mean - SEQ_ADOPT_Z * semOf(d);
 	const ucb = (d: PairedDiff) => d.mean + Math.max(SEQ_ADOPT_Z, betaOf(d.n)) * semOf(d);
@@ -349,30 +355,44 @@ export async function raceWave(ev: SearchEvaluator, o: RaceWaveOpts): Promise<Ra
 	});
 	let alive = cands.filter(c => last.has(c.id));
 	unresolved += cands.length - alive.length; // never measured: nothing rules them out
+	// How far a move's ladder got: its paired count, or the prefix it was last
+	// raced to when engine errors ('err' seeds) leave that count behind. Growth
+	// steps from this, so a move with failing seeds still reaches nMax.
+	const reached = new Map<string, number>();
+	const reachOf = (c: BuildRefLite) => Math.max(last.get(c.id)!.n, reached.get(c.id) ?? 0);
 
 	for (;;) {
 		// 1. Hits: confirm them on positions they have not raced.
 		const hits = alive.map(c => ({ c, d: last.get(c.id)! })).filter(x => lcb(x.d) > 0)
 			.sort((a, b) => b.d.mean - a.d.mean || (a.c.id < b.c.id ? -1 : 1)).slice(0, CLIMB_CONFIRM_PARALLEL);
 		if (hits.length) {
+			const tried = new Set(hits.map(h => h.c.id));
 			const base = new Map(hits.map(h => [h.c.id, measuredEnd(ev, o.ns, o.scenarioIdx, h.c)]));
-			let open = hits.map(h => h.c);
+			// The window never runs past the seed list. A hit raced to its end
+			// (an old incumbent keeps every position it was raced on) has no
+			// unseen positions left, so it is set aside, not confirmed.
+			const endOf = (c: BuildRefLite, m: number) => Math.min(SEED_LIST_SIZE, base.get(c.id)! + m);
+			let open: BuildRefLite[] = [];
+			for (const h of hits) {
+				if (SEED_LIST_SIZE - base.get(h.c.id)! < 2) setAside(h.d);
+				else open.push(h.c);
+			}
 			let m = Math.min(nMax, CLIMB_CONFIRM_START);
-			for (;;) {
-				const hi = Math.max(...open.map(c => base.get(c.id)! + m));
+			while (open.length) {
+				const hi = Math.max(...open.map(c => endOf(c, m)));
 				await ev.ensure([
-					...open.map(c => ({ ns: o.ns, scenarioIdx: o.scenarioIdx, build: c, positions: range(base.get(c.id)!, base.get(c.id)! + m) })),
+					...open.map(c => ({ ns: o.ns, scenarioIdx: o.scenarioIdx, build: c, positions: range(base.get(c.id)!, endOf(c, m)) })),
 					{ ns: o.ns, scenarioIdx: o.scenarioIdx, build: inc, positions: prefix(hi) },
 				]);
 				const passed: BuildRefLite[] = [];
 				const stay: BuildRefLite[] = [];
 				for (const c of open) {
-					const b = base.get(c.id)!;
-					const w = pairedWindow(ev, o.ns, o.scenarioIdx, c, inc, b, b + m, o.pick);
+					const b = base.get(c.id)!, e = endOf(c, m);
+					const w = pairedWindow(ev, o.ns, o.scenarioIdx, c, inc, b, e, o.pick);
 					const full = diffOf(c);
 					if (full) last.set(c.id, full);
 					if (w && lcb(w) > 0) passed.push(c);
-					else if ((w && w.mean + SEQ_ADOPT_Z * semOf(w) < 0) || m >= nMax) setAside(last.get(c.id));
+					else if ((w && w.mean + SEQ_ADOPT_Z * semOf(w) < 0) || m >= nMax || e >= SEED_LIST_SIZE) setAside(last.get(c.id));
 					else stay.push(c);
 				}
 				if (passed.length) {
@@ -383,10 +403,11 @@ export async function raceWave(ev: SearchEvaluator, o: RaceWaveOpts): Promise<Ra
 				}
 				open = stay;
 				if (!open.length) break;
-				if (o.stopped?.()) { unresolved += open.length; return out(null, true); }
+				// Stopped mid-confirm: the open hits and every move not yet
+				// confirmed are still alive, so none of them is ruled out.
+				if (o.stopped?.()) { unresolved += open.length + alive.filter(c => !tried.has(c.id)).length; return out(null, true); }
 				m = Math.min(nMax, Math.ceil(m * 1.5));
 			}
-			const tried = new Set(hits.map(h => h.c.id));
 			alive = alive.filter(c => !tried.has(c.id));
 			continue; // the next hits, if any, before the ladder grows
 		}
@@ -394,7 +415,7 @@ export async function raceWave(ev: SearchEvaluator, o: RaceWaveOpts): Promise<Ra
 		const kept: BuildRefLite[] = [];
 		for (const c of alive) {
 			const d = last.get(c.id)!;
-			if (ucb(d) < g || d.n >= nMax) setAside(d);
+			if (ucb(d) < g || reachOf(c) >= nMax) setAside(d);
 			else kept.push(c);
 		}
 		alive = kept;
@@ -403,8 +424,9 @@ export async function raceWave(ev: SearchEvaluator, o: RaceWaveOpts): Promise<Ra
 		// 3. Grow the rest one rung.
 		let incTo = 0;
 		const reqs = alive.map(c => {
-			const n = last.get(c.id)!.n;
+			const n = reachOf(c);
 			const to = Math.min(nMax, Math.max(n + rungMin, Math.ceil(n * 1.5)));
+			reached.set(c.id, to);
 			incTo = Math.max(incTo, to);
 			return { ns: o.ns, scenarioIdx: o.scenarioIdx, build: c, positions: prefix(to) };
 		});

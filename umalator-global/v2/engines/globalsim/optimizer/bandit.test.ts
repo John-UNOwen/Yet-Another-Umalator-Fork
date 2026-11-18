@@ -12,7 +12,7 @@
 import test from 'tape';
 import { banditVsIncumbent, raceWave } from './bandit';
 import { BuildRefLite, EnsureReq, pairedOf, SearchEvaluator, statsOf } from './evaluator';
-import { CLIMB_CONFIRM_START, EffortConfig, STANDARD } from './config';
+import { CLIMB_CONFIRM_START, CLIMB_NMAX_FACTOR, CLIMB_TARGET_SEEDS, EffortConfig, SEED_LIST_SIZE, SEQ_ADOPT_Z, STANDARD } from './config';
 import { SeedSlot, SeedValue } from './types';
 
 // ── deterministic PRNG + normal (CRN: identical per (position, build)) ──────
@@ -32,19 +32,28 @@ function hash(s: string): number {
 	return h >>> 0;
 }
 
-/** Every build's per-seed lead is mu[build] + sigma · n(position, build). */
+/** Every build's per-seed lead is mu[build] + sigma · n(position, build).
+ *  `twin` gives a build another build's noise (a move that changes nothing:
+ *  every paired Δ is the same). `errFrom` makes a build's seeds from that
+ *  position on engine errors. Like the real evaluator, a position past the
+ *  seed list throws. */
 class FakeEval implements SearchEvaluator {
 	private table = new Map<string, SeedSlot[]>();
 	races = 0;
-	constructor(private mu: Map<string, number>, private sigma: number) { }
+	constructor(private mu: Map<string, number>, private sigma: number,
+		private opt: { twin?: Map<string, string>; errFrom?: Map<string, number> } = {}) { }
 	seeds(_ns: string, _si: number, n: number): number[] { return Array.from({ length: n }, (_, i) => i); }
 	async ensure(reqs: EnsureReq[]) {
 		for (const r of reqs) {
 			const k = `${r.ns}|${r.build.id}`;
 			let arr = this.table.get(k);
 			if (!arr) { arr = []; this.table.set(k, arr); }
+			const noiseId = this.opt.twin?.get(r.build.id) ?? r.build.id;
+			const errFrom = this.opt.errFrom?.get(r.build.id) ?? Infinity;
 			for (const p of r.positions) if (arr[p] === undefined) {
-				arr[p] = { lead: this.mu.get(r.build.id)! + this.sigma * gauss(p * 7 + (hash(r.build.id) % 997)), win: 0, top3: 0, placing: 5, hpEmpty: 0, rushed: 0 };
+				if (p >= SEED_LIST_SIZE) throw new Error(`position ${p} beyond the seed list`);
+				arr[p] = p >= errFrom ? 'err'
+					: { lead: this.mu.get(r.build.id)! + this.sigma * gauss(p * 7 + (hash(noiseId) % 997)), win: 0, top3: 0, placing: 5, hpEmpty: 0, rushed: 0 };
 				this.races++;
 			}
 		}
@@ -202,6 +211,54 @@ test('race wave: moves ruled out under δ_min are resolved, the rest block a cer
 	t.equal(r2.g, 0.5, 'the wave reports its target gain');
 	const low = await raceWave(new FakeEval(near.mu, 0.5), { ns: 's', scenarioIdx: 0, incumbent: near.inc, candidates: near.cands, pick: pickLead, cfg, targetOf: target(0.001, 3000) });
 	t.equal(low.g, cfg.deltaMinL, 'g is never below δ_min');
+	t.end();
+});
+
+test('race wave: moves with a spread of 0 do not set the noise', async t => {
+	// Ten moves that change nothing (every paired Δ exactly 0) and one real
+	// improver that needs more than the start rung. Counted in the median,
+	// the ten made σ = 0, nMax fell to 50 and the improver was set aside.
+	const { mu, cands, inc } = waveOf('z', [...Array.from({ length: 10 }, () => 0), 0.3]);
+	const twin = new Map(cands.slice(0, 10).map(c => [c.id, inc.id]));
+	// The search's own targetOf (search.ts) at level 0, without the room cap.
+	const targetOf = (sigma: number) => {
+		if (!Number.isFinite(sigma)) return { g: cfg.deltaMinL, nMax: cfg.batchCap };
+		const g = Math.max(cfg.deltaMinL, (SEQ_ADOPT_Z * sigma) / Math.sqrt(CLIMB_TARGET_SEEDS));
+		return { g, nMax: Math.ceil(CLIMB_NMAX_FACTOR * Math.pow((SEQ_ADOPT_Z * sigma) / g, 2)) };
+	};
+	const r = await raceWave(new FakeEval(mu, 1, { twin }), { ns: 's', scenarioIdx: 0, incumbent: inc, candidates: cands, pick: pickLead, cfg, targetOf });
+	t.ok(r.sigma > 1, `σ comes from the move that has a spread (${r.sigma.toFixed(3)})`);
+	t.ok(r.nMax > 1000, `so the seed cap is the noise's (${r.nMax})`);
+	t.equal(r.adopted?.build.id, cands[10].id, 'the real improver is adopted');
+	t.end();
+});
+
+test('race wave: a confirm window never runs past the seed list', async t => {
+	// A clear improver already raced near the end of the list (an old
+	// incumbent keeps every position it was raced on).
+	for (const [tag, lastPos, adopts] of [['l1', SEED_LIST_SIZE - 50, true], ['l2', SEED_LIST_SIZE - 1, false]] as const) {
+		const { mu, cands, inc } = waveOf(tag, [0.8]);
+		const ev = new FakeEval(mu, 1);
+		await ev.ensure([{ ns: 's', scenarioIdx: 0, build: cands[0], positions: [...Array.from({ length: 50 }, (_, i) => i), lastPos] }]);
+		const r = await raceWave(ev, { ns: 's', scenarioIdx: 0, incumbent: inc, candidates: cands, pick: pickLead, cfg, targetOf: target(0.2, 3000) });
+		if (adopts) t.ok(r.adopted, `room for ${SEED_LIST_SIZE - lastPos - 1} unseen positions: confirmed there and adopted`);
+		else {
+			t.equal(r.adopted, null, 'no unseen position left: not adopted');
+			t.equal(r.unresolved, 1, 'and set aside unresolved');
+		}
+	}
+	t.end();
+});
+
+test('race wave: a move whose seeds fail still reaches its seed cap', async t => {
+	// Every seed from position 60 on is an engine error, so the paired count
+	// stops at 60. Growing from that count asked for the same prefix forever.
+	const { mu, cands, inc } = waveOf('x', [0.1]);
+	const ev = new FakeEval(mu, 1, { errFrom: new Map([[cands[0].id, 60]]) });
+	const r = await raceWave(ev, { ns: 's', scenarioIdx: 0, incumbent: inc, candidates: cands, pick: pickLead, cfg, targetOf: target(0.03, 400) });
+	t.equal(r.adopted, null, 'nothing adopted');
+	t.equal(r.unresolved, 1, 'set aside unresolved at the cap');
+	t.ok(ev.slots('s', 0, cands[0].id).length >= 400, 'its ladder got to nMax');
 	t.end();
 });
 

@@ -1424,7 +1424,8 @@ async function runSingleScenario(
 					? await raceWaves(Xc, moves, level ? `${tag} · finer ×${2 ** level}` : tag, level, reserve)
 					: await screenWaves(Xc, moves, tag);
 				if (r.best) { adopt(r.best); level = levelMin; continue; }
-				if (r.unresolved > 0) {
+				// A cut round certifies nothing, whatever its count says.
+				if (r.unresolved > 0 || r.cut) {
 					// A race climb settled at a target above δ_min refines while
 					// it has room: the same neighbourhood at half the target.
 					if (race && !r.cut && level < levelMax && (r.g ?? 0) > cfg.deltaMinL && !climbOut()) { level++; continue; }
