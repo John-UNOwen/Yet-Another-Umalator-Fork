@@ -60,6 +60,8 @@ function ocrDataToUmaState(data: OCRHorseData): UmaState {
 
 	return {
 		outfitId: outfitId || '',
+		starCount: 3,
+		uniqueLv: 1,
 		speed: data.speed || 1200,
 		stamina: data.stamina || 1200,
 		power: data.power || 800,
