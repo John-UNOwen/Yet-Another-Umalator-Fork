@@ -1,7 +1,7 @@
 /**
- * Import a uma from screenshots, recognised on this device: a worker runs PP-OCR over each image, the
- * parser modules turn the lines into a uma, and nothing leaves the machine unless the cloud fallback is
- * opened. Several screenshots of one uma are combined, so a list too long for one screen still imports.
+ * Import a uma from screenshots, recognised on this device: a worker runs PP-OCR over each image and the
+ * parser modules turn the lines into a uma. Several screenshots of one uma are combined, so a list too long
+ * for one screen still imports.
  *
  * Copyright (c) 2026 TheCing (https://github.com/TheCing/uma-tools)
  * Licensed under GPL-3.0-or-later
@@ -10,7 +10,7 @@
 import { h, Fragment } from 'preact';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'preact/hooks';
 import { Modal, Button, CustomSelect } from './components';
-import { Upload, Loader2, Plus, Cloud, Check, AlertTriangle } from 'lucide-react';
+import { Upload, Loader2, Plus, Check, AlertTriangle } from 'lucide-react';
 
 import { BASE_PATH } from '../../components/base-path';
 import { mapCharacterNameToOutfitId, mapOutfitNameToId } from '../../components/GeminiOCR';
@@ -31,7 +31,6 @@ import skillnames from '../skillnames.json';
 import notInGame from '../not-in-game.json';
 import { validateAndParseUmaJson } from './storage';
 import type { UmaState } from './uma-panel';
-import { GeminiOcrModal } from './gemini-ocr-step';
 
 interface OCRModalProps {
 	isOpen: boolean;
@@ -47,18 +46,14 @@ const OFFERED: NameEntry[] = Object.entries(skillnames as Record<string, string 
 const NAME_OF = new Map(OFFERED.map((e) => [e.id, e.name]));
 
 const APTITUDE_OPTIONS = GRADES.map((g) => ({ value: g, label: g }));
+/** What each stage of the worker's progress means to the person waiting on it. */
+const STAGE_LABEL: Record<string, string> = { check: 'Checking for models', assets: 'Fetching models', models: 'Loading models', read: 'Reading screenshots' };
 const STRATEGY_OPTIONS = [
 	{ value: 'Nige', label: 'Front Runner' },
 	{ value: 'Senkou', label: 'Pace Chaser' },
 	{ value: 'Sasi', label: 'Late Surger' },
 	{ value: 'Oikomi', label: 'End Closer' },
 ];
-
-export function OCRModal(props: OCRModalProps) {
-	const [cloud, setCloud] = useState(false);
-	if (cloud) return <GeminiOcrModal {...props} />;
-	return <DeviceModal {...props} onCloud={() => setCloud(true)} />;
-}
 
 interface Shot {
 	url: string;
@@ -86,7 +81,6 @@ const EMPTY_EDITS: UiEdits = {
 	epithet: '',
 	outfitId: '',
 	starCount: 3,
-	uniqueLv: 1,
 	skills: {},
 };
 
@@ -99,7 +93,7 @@ function shotOf(pairs: readonly { url: string; read: Read }[], skill: SkillRead)
 	return (found ?? pairs[0])?.url ?? '';
 }
 
-function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { onCloud: () => void }) {
+export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 	const [shots, setShots] = useState<Shot[]>([]);
 	const [results, setResults] = useState<ScanResult[]>([]);
 	const [phase, setPhase] = useState<Phase>('pick');
@@ -151,6 +145,7 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 	}, []);
 
 	const scanAll = useCallback(async (list: readonly Shot[]) => {
+		setPhase('work');
 		const w = worker();
 		w.postMessage({ type: 'prepare', names: OFFERED });
 		const found: ScanResult[] = [];
@@ -174,7 +169,8 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 
 	const start = useCallback(async (list: readonly Shot[]) => {
 		setError(null);
-		setProgress(null);
+		setPhase('work');
+		setProgress({ stage: 'check', done: 0, total: 0 });
 		try {
 			const r = await fetch(`${BASE_PATH}/ocr/MANIFEST.json`, { cache: 'no-store' });
 			if (!r.ok) throw new Error(`The model list did not load (HTTP ${r.status}).`);
@@ -184,15 +180,18 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 			if (stored) await scanAll(list);
 			else {
 				setDownloadBytes(total);
+				setProgress(null);
 				setPhase('ask');
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
+			setProgress(null);
 			setPhase('pick');
 		}
 	}, [scanAll]);
 
 	const addFiles = useCallback((files: File[]) => {
+		if (phase === 'work') return;
 		const images = [...files].filter((f) => f.type.startsWith('image/'));
 		if (!images.length) return;
 		setError(null);
@@ -202,7 +201,7 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 				setShots((held) => [...held, { url: URL.createObjectURL(file), bytes, size: file.size }]);
 			});
 		}
-	}, []);
+	}, [phase]);
 
 	const onDrop = useCallback((e: DragEvent) => {
 		e.preventDefault();
@@ -287,19 +286,20 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 						PP-OCR models are fetched once, checked against their published checksums, and kept for next time. Reading happens on this
 						device either way.
 					</p>
-					<div class="v2-ocr-review-item">
-						<Button variant="ghost" onClick={onCloud} icon={<Cloud size={14} />}>Use cloud OCR instead (needs API key)</Button>
-					</div>
 				</div>
 			) : phase === 'work' ? (
 				<div class="v2-ocr-section">
-					<label class="v2-ocr-label">{progress?.stage === 'assets' ? 'Fetching models' : progress?.stage === 'models' ? 'Loading models' : 'Reading screenshots'}</label>
+					<label class="v2-ocr-label">{STAGE_LABEL[progress?.stage ?? 'read'] ?? 'Reading screenshots'}</label>
 					<div class="v2-ocr-dropzone" style={{ cursor: 'default' }}>
 						<Loader2 size={28} class="v2-ocr-spinner" />
-						<span>
-							{progress?.stage === 'assets' ? `${(progress.done / 1048576).toFixed(1)} of ${(progress.total / 1048576).toFixed(1)} MB` : `${progress?.done ?? 0} of ${progress?.total ?? 0}`}
-							{' '}({percent}%)
-						</span>
+						{progress && progress.total > 0 && (
+							<span>
+								{progress.stage === 'assets'
+									? `${(progress.done / 1048576).toFixed(1)} of ${(progress.total / 1048576).toFixed(1)} MB`
+									: `${progress.done} of ${progress.total}`}
+								{' '}({percent}%)
+							</span>
+						)}
 					</div>
 				</div>
 			) : phase === 'review' ? (
@@ -328,11 +328,6 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 							)}
 						</div>
 						<input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => addFiles(Array.from((e.target as HTMLInputElement).files ?? []))} />
-					</div>
-					<div class="v2-ocr-section">
-						<div class="v2-ocr-review-item">
-							<Button variant="ghost" onClick={onCloud} icon={<Cloud size={14} />}>Use cloud OCR (needs API key)</Button>
-						</div>
 					</div>
 					{error && <div class="v2-ocr-error">{error}</div>}
 				</div>
