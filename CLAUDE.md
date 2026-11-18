@@ -353,7 +353,7 @@ Hachimi writes from the running game (menu "Dump career data", which lands in
 `npm run test:career-import`.
 
 What it applies: outfit (`character.cardId`), star level (`limitBreakCount + 1`), unique level
-(the owned `11xxxx` row's `Level`), the five stats (`wiz` becomes wisdom), aptitudes (distance =
+(the `Level` of the owned row for the outfit's own unique, as `uniqueSkillForUma()` names it), the five stats (`wiz` becomes wisdom), aptitudes (distance =
 best of the four, surface = turf, strategy aptitude = the *actual* running style's own grade),
 strategy (`runningStyle` 1-4), mood (`motivation - 3`, game 0-5 to app -2..2), learned skills
 (rows with `IsGet=1`), hint levels, the SP budget (`skillPoint`), and the candidate pool (rows

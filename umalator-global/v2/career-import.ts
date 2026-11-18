@@ -40,6 +40,7 @@
 import umas from '../../umas.json';
 import skilldata from '../skill_data.json';
 import type { UmaState } from './uma-panel';
+import { uniqueSkillForUma } from '../../components/HorseDefTypes';
 
 /** The dump's tag. `version` is a literal 1 with no versioning logic behind it. */
 export const CAREER_DUMP_KIND = 'hachimi-career-dump';
@@ -270,14 +271,20 @@ export function convertCareerDump(obj: any, file = 'career dump'): CareerImport 
 	const offered: string[] = [];
 	let dropped = 0;
 	let uniqueLv = 0;
+	// The outfit's own unique skill, at either star tier (★1-2 and ★3+ use
+	// different ids). The id pattern depends on the outfit: 100xxx for outfit
+	// 01, 110xxx for 02, 120xxx for 03, so only the outfit can name it.
+	const uniqueIds = new Set(isNum(c.cardId)
+		? [uniqueSkillForUma(String(c.cardId), 1), uniqueSkillForUma(String(c.cardId), 3)].filter(Boolean)
+		: []);
 	for (const r of rows) {
 		if (!isNum(r.SkillId)) continue;
 		const id = String(r.SkillId);
 		if (!known(id)) { dropped++; continue; }
 		if (r.IsGet === 1) {
 			owned.push(id);
-			// 11xxxx is the character's unique skill; its level is the app's uniqueLv.
-			if (/^11\d{4}$/.test(id) && isNum(r.Level)) uniqueLv = Math.max(uniqueLv, clamp(Math.round(r.Level), 1, 6));
+			// The outfit's unique skill row: its level is the app's uniqueLv.
+			if (uniqueIds.has(id) && isNum(r.Level)) uniqueLv = Math.max(uniqueLv, clamp(Math.round(r.Level), 1, 6));
 		} else {
 			offered.push(id);
 		}

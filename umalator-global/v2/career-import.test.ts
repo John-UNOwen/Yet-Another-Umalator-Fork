@@ -92,6 +92,22 @@ test('splits owned from offered and reads the unique level', (t) => {
 	t.end();
 });
 
+test('the unique level is read for every outfit, not only 11xxxx ids', (t) => {
+	// Outfit 01's unique is 100xxx (HorseDefTypes uniqueSkillForUma), so an
+	// 11xxxx-only rule lost its level.
+	const first = convertCareerDump(dump({
+		character: { charaId: 1010, cardId: 101001, motivation: 5, limitBreakCount: 4 },
+		skillRowsObserved: { count: 1, rows: [row('100101', { IsGet: 1, Level: 4 })] },
+	}))!;
+	t.equal(first.uma.uniqueLv, 4, 'outfit 101001: row 100101 sets uniqueLv');
+	// Another outfit's unique is just an owned skill: it must not set the level.
+	const other = convertCareerDump(dump({
+		skillRowsObserved: { count: 1, rows: [row('100101', { IsGet: 1, Level: 4 })] },
+	}))!;
+	t.equal(other.uma.uniqueLv, undefined, 'outfit 101002 ignores outfit 101001\'s unique');
+	t.end();
+});
+
 test('hint levels are read per skill, never spread over a group', (t) => {
 	const imp = convertCareerDump(dump())!;
 	t.equal(imp.hints.get(SILVER), 2, 'row HintLv used for a row skill');
