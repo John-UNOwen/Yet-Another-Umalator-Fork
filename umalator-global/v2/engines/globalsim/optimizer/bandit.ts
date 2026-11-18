@@ -161,6 +161,7 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 	let alive = cands;
 	let lastN = start;
 	let capCut = 0;
+	const reached = new Map<string, number>(); // id → the prefix it was last grown to
 	for (;;) {
 		const rows: Row[] = [];
 		for (const c of alive) {
@@ -206,12 +207,21 @@ export async function banditVsIncumbent(ev: SearchEvaluator, o: BanditOpts): Pro
 		// threshold, so every one grows one rung (not just the top two). The
 		// rung floor of 8 threads × chunk keeps one batch big enough to
 		// saturate the pool. The ×1.5 keeps it at O(log cap) rounds.
-		const grow = (r: Row) => Math.min(cap, Math.max(r.n + rungMin, Math.ceil(r.n * 1.5)));
-		const chosen = kept.filter(r => r.n < cap);
+		// Seeds that fail ('err') leave the paired count behind the prefix
+		// already raced, and growing from that count asked for the same prefix
+		// forever. A stalled count steps from that prefix instead (the same
+		// rungs whenever the count keeps up with the prefix).
+		const step = (n: number) => Math.min(cap, Math.max(n + rungMin, Math.ceil(n * 1.5)));
+		const grow = (r: Row) => {
+			const to = step(r.n), had = reached.get(r.build.id) ?? 0;
+			return to > had ? to : step(had);
+		};
+		const chosen = kept.filter(r => r.n < cap && (reached.get(r.build.id) ?? 0) < cap);
 		if (!chosen.length) { alive = kept.map(r => r.build); break; } // everyone capped
 		const reqs = [];
 		for (const r of chosen) {
 			const newN = grow(r);
+			reached.set(r.build.id, newN);
 			lastN = Math.max(lastN, newN);
 			reqs.push({ ns: o.ns, scenarioIdx: o.scenarioIdx, build: r.build, positions: Array.from({ length: newN }, (_, i) => i) });
 		}

@@ -143,6 +143,18 @@ test('STOP: the ladder ends before its next rung and reports what it measured', 
 	t.end();
 });
 
+test('a candidate whose seeds fail still reaches the cap', async t => {
+	// Inside the indifference zone, so it keeps growing. From position 60 on
+	// every seed fails, so the paired count stops at 60. Growing from that
+	// count asked for the same prefix forever.
+	const mu = new Map<string, number>([['inc', 0], ['a', 0.04]]);
+	const ev = new FakeEval(mu, 0.5, { errFrom: new Map([['a', 60]]) });
+	const res = await banditVsIncumbent(ev, { ns: 's', scenarioIdx: 0, incumbent: build('inc'), candidates: [build('a')], pick: pickLead, cfg, rungCeil: 400 });
+	t.equal(res.measured.length, 1, 'it comes back measured');
+	t.ok(ev.slots('s', 0, 'a').length >= 400, 'its ladder got to the cap');
+	t.end();
+});
+
 // ── the race climb's wave ────────────────────────────────────────────────────
 
 const waveOf = (tag: string, mus: number[]) => {
