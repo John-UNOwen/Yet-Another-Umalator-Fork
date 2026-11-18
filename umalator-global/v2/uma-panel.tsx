@@ -20,6 +20,7 @@ import {
 	importHorseJsonMulti,
 	copyHorseToClipboard,
 	pasteHorseFromClipboard,
+	validateAndParseUmaJson,
 } from './storage';
 import type { ImportCandidate } from './storage';
 import { ImportPickerModal } from './import-picker';
@@ -710,10 +711,15 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 		}
 	}, [onLoad]);
 
+	// The OCR review goes through the same check as a JSON import, so a value
+	// the engine would reject never reaches the uma.
 	const handleOCRConfirm = useCallback((umaState: UmaState) => {
-		if (onLoad) {
-			onLoad(umaState);
+		const parsed = validateAndParseUmaJson(umaState);
+		if (!parsed) {
+			alert('The screenshot read has a value the simulator cannot use (check the stats, mood and aptitudes), so it was not loaded.');
+			return;
 		}
+		onLoad?.(parsed);
 	}, [onLoad]);
 
 	// Build save menu items

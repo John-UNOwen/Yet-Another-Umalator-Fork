@@ -51,8 +51,9 @@ export function validateAndParseUmaJson(json: any): UmaState | null {
 	if (!VALID_APTITUDES.includes(json.surfaceAptitude)) return null;
 	if (!VALID_APTITUDES.includes(json.strategyAptitude)) return null;
 
-	// Validate mood (-2 to 2)
-	if (json.mood < -2 || json.mood > 2) return null;
+	// Validate mood: an integer from -2 to 2, as the engine requires (a
+	// fractional mood passed here and then failed every run).
+	if (!Number.isInteger(json.mood) || json.mood < -2 || json.mood > 2) return null;
 
 	// Validate skills is an array
 	if (!Array.isArray(json.skills)) return null;
@@ -76,8 +77,10 @@ export function validateAndParseUmaJson(json: any): UmaState | null {
 
 	return {
 		outfitId: typeof json.outfitId === 'string' ? json.outfitId : '',
-		starCount: typeof json.starCount === 'number' ? Math.max(1, Math.min(5, json.starCount)) : 3,
-		uniqueLv: typeof json.uniqueLv === 'number' ? Math.max(1, Math.min(6, json.uniqueLv)) : 1,
+		// Whole numbers, as the engine requires: a fractional value passed here
+		// and then failed every run.
+		starCount: Number.isFinite(json.starCount) ? Math.max(1, Math.min(5, Math.round(json.starCount))) : 3,
+		uniqueLv: Number.isFinite(json.uniqueLv) ? Math.max(1, Math.min(6, Math.round(json.uniqueLv))) : 1, // 6 = adapter MAX_UNIQUE_LV
 		speed: Math.max(1, Math.min(2000, json.speed)),
 		stamina: Math.max(1, Math.min(2000, json.stamina)),
 		power: Math.max(1, Math.min(2000, json.power)),
@@ -531,7 +534,8 @@ export function loadSession(): SessionState | null {
 			season: typeof json.season === 'number' ? json.season : 4,
 			time: typeof json.time === 'number' ? json.time : 2,
 			samples: typeof json.samples === 'number' ? json.samples : 500,
-			mode: json.mode === 'skill' ? 'skill' : 'compare',
+			// All three modes come back as saved (Optimizer used to load as Compare).
+			mode: json.mode === 'skill' || json.mode === 'optimizer' ? json.mode : 'compare',
 			uma1: validateAndParseUmaJson(json.uma1) || defaultUmaState,
 			uma2: validateAndParseUmaJson(json.uma2) || defaultUmaState,
 		};
