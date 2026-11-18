@@ -237,6 +237,31 @@ function activationChecker(
 }
 
 /**
+ * Condition terms whose value is fixed before the race starts (the course, the
+ * going, the date, the runner's own style and stats). The app check reads them
+ * the way the engine does. Every other term is decided during the race: the
+ * retail engine reads phase, corner and final-corner flags from the runner on
+ * each tick (they lag the static course regions at a boundary), and field terms
+ * such as running_style_count_* or order_rate depend on the other eight
+ * runners, which the app check does not have.
+ */
+const STATIC_TERMS = new Set([
+	'rotation', 'track_id', 'ground_type', 'ground_condition', 'weather', 'season', 'time',
+	'distance_type', 'course_distance', 'is_dirtgrade', 'is_basis_distance', 'is_tight_track',
+	'running_style', 'grade', 'corner_count', 'motivation',
+	'base_speed', 'base_stamina', 'base_power', 'base_guts', 'base_wiz',
+]);
+
+/** True when every term of every alternative is a STATIC_TERMS term. */
+function staticOnly(id: string): boolean {
+	const alts = (skilldata as Record<string, { alternatives?: { precondition?: string; condition?: string }[] }>)[id]?.alternatives ?? [];
+	return alts.every((a) => `${a.precondition ?? ''}&${a.condition ?? ''}`.split(/[&@]/).every((t) => {
+		const name = t.trim().split(/[=!<>]/)[0];
+		return !name || STATIC_TERMS.has(name);
+	}));
+}
+
+/**
  * Filter skills to only those that can activate on the given course
  * Uses condition parser to check if skill has valid activation regions
  */
@@ -295,7 +320,11 @@ export function partitionPool(
 		const term = factOut(id, facts);
 		if (term !== null) { out.push({ id, kind: 'fact', term, reason: describeOut(term) }); continue; }
 		const verdict = check(id);
-		if (verdict === 'no-window') { out.push({ id, kind: 'window', reason: 'no activation window on this course in the app check' }); continue; }
+		// The app check's "no window" holds only for a skill whose condition is all
+		// race constants. Anything decided in the race stays for the engine to
+		// judge: the app check dropped skills that fire (900591 on Hanshin dirt,
+		// the running_style_count_* family in 87 of 100 races on every course).
+		if (verdict === 'no-window' && staticOnly(id)) { out.push({ id, kind: 'window', reason: 'no activation window on this course in the app check' }); continue; }
 		if (verdict === 'parse-error') { out.push({ id, kind: 'parse', reason: 'the app check could not read this condition' }); continue; }
 		if (knownIds && !knownIds.has(id)) { out.push({ id, kind: 'engine', reason: 'not in the engine skill table' }); continue; }
 		kept.push(id);

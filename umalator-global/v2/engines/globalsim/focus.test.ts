@@ -202,6 +202,32 @@ test('the pool split accounts for every skill, and the position band no longer c
 	t.end();
 });
 
+// Checkup finding 4: the app check's "no window" dropped skills the engine
+// fires. 900591 (phase, corner and final-corner flags the retail engine reads
+// per tick) on Hanshin dirt 1800, and the running_style_count_* family (the
+// other runners' styles) on every course: 87 of 100 engine races fired them.
+test('the window rule drops only skills whose condition is all race constants', async t => {
+	(globalThis as any).CC_GLOBAL = true;
+	const { partitionPool, getBaseSkillsToTest } = await import('../../skill-chart-utils');
+	const uma: any = {
+		speed: 1200, stamina: 1000, power: 1000, guts: 600, wisdom: 1000, strategy: 'Sasi',
+		distanceAptitude: 'A', surfaceAptitude: 'A', strategyAptitude: 'A', mood: 2,
+	};
+	const base = getBaseSkillsToTest(uma, false);
+	const known = new Set(Object.keys(merged as object));
+	const split = partitionPool(base, uma, (courseFile as any)['10912'], FIRM, known);
+	const windowIds = new Set(split.out.filter(e => e.kind === 'window').map(e => e.id));
+	for (const id of ['900591', '200831', '200861', '200891', '200921']) {
+		t.notOk(windowIds.has(id), `${id} is not dropped by the window rule`);
+	}
+	t.ok(windowIds.has('200021'), 'a rotation-only skill on the wrong-handed course is still dropped');
+	const STATIC = /^(rotation|track_id|ground_type|ground_condition|weather|season|time|distance_type|course_distance|is_dirtgrade|is_basis_distance|is_tight_track|running_style|grade|corner_count|motivation|base_\w+)$/;
+	const terms = (id: string) => ((skilldata as any)[id].alternatives ?? []).flatMap((a: any) => `${a.precondition ?? ''}&${a.condition ?? ''}`.split(/[&@]/))
+		.map((x: string) => x.trim().split(/[=!<>]/)[0]).filter(Boolean);
+	t.ok([...windowIds].every(id => terms(id).every((n: string) => STATIC.test(n))), 'every window drop is decided by race constants alone');
+	t.end();
+});
+
 test('the pool follows the focus running style', async t => {
 	(globalThis as any).CC_GLOBAL = true;
 	const { partitionPool, getBaseSkillsToTest } = await import('../../skill-chart-utils');
