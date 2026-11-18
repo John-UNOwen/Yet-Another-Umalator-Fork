@@ -292,6 +292,43 @@ export const BANDIT_MAX_ALIVE = 40;
  *  the alive set, capCut stays 0, and a wave ending with all survivors
  *  zone-dropped really certifies its candidates. */
 export const CLIMB_WAVE = 128;
+/**
+ * The race climb (search.ts `climb: 'race'`, bandit.ts raceWave). Measured on a
+ * career dump (Tokyo dirt 1600, full field, paired σΔ ≈ 2.5 L at the climb's
+ * build) and replayed on 2,000 shared seeds per move:
+ *  - CLIMB_PATIENCE: empty waves in a row before a climb that cannot afford
+ *    the rest of its neighbourhood stops and hands over to the kicks. The
+ *    climb's own order put 69% improvers in its first 32 moves and 12% among
+ *    random ones, so the moves past two empty waves are the least promising.
+ *  - CLIMB_CONFIRM_START / _PARALLEL: a move that passes the sequential test
+ *    is re-tested on positions it has not raced, from 100 seeds up, at most
+ *    4 at a time. Without that, testing 128 moves at every rung adopted a
+ *    no-gain move in 25–37% of waves that held none (2% with it).
+ *  - CLIMB_TARGET_SEEDS: the first target gain g is the gain a no-gain move
+ *    is set aside under after about 400 seeds, SEQ_ADOPT_Z·σ/√400 (0.3 L at
+ *    that noise, never below δ_min). A settled climb halves g and screens
+ *    again while it has room, down to δ_min, so small gains that add up are
+ *    still taken. The cache keeps every seed already raced.
+ *  - CLIMB_NMAX_FACTOR: a move is set aside at 8 × (SEQ_ADOPT_Z·σ/g)² seeds,
+ *    twice the count that shows a gain of g (3,200 seeds at the first g).
+ *  - CLIMB_POLISH_SHARE: with kicks to run, they stop when a quarter of the
+ *    restart's room is left, and that quarter refines the final peak.
+ *  - CLIMB_STAGE_D_SHARE: with a time limit, a restart's Stage D (the
+ *    in-context rounds) may use half of the restart's slice, so its climb
+ *    always gets the other half. Unbounded, three Stage Ds took 266 s of a
+ *    300 s Standard run on the career dump and left the climbs nothing.
+ *  - CLIMB_POLISH_LEVELS: with no time or race limit at all (Until stopped),
+ *    a visit refines at most this many halvings per pass it has had, so one
+ *    start cannot keep the others waiting.
+ */
+export const CLIMB_PATIENCE = 2;
+export const CLIMB_CONFIRM_START = 100;
+export const CLIMB_CONFIRM_PARALLEL = 4;
+export const CLIMB_TARGET_SEEDS = 400;
+export const CLIMB_NMAX_FACTOR = 8;
+export const CLIMB_POLISH_SHARE = 0.25;
+export const CLIMB_STAGE_D_SHARE = 0.5;
+export const CLIMB_POLISH_LEVELS = 2;
 /** Floor on one candidate's growth per bandit round (§D.2): 8 threads (the
  *  8-core sizing machine of the presets) × the pool chunk (CHUNK_SIZE = 25),
  *  so a growth batch hands every worker at least one full chunk even with a
