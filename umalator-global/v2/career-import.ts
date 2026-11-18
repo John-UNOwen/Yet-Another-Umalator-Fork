@@ -37,7 +37,7 @@
  *     cannot buy at all.
  *
  * The snapshot is the game's own state object rather than a probe of it, so it
- * answers the same questions through different keys (see `convertUmadumpTurn`):
+ * answers the same questions through different keys (see `convertUmadumpCareer`):
  *   - `card_id` is the outfit. `rarity` is the limit-break count, which is what
  *     `starCount` counts, and stats are the career's live stats with wisdom under
  *     `wiz`, aptitudes as the same `ProperGrade` numbers and `race_running_style`
@@ -275,12 +275,12 @@ function applyAptitudes(uma: Partial<UmaState>, apt: Record<string, any>, warnin
 	if (isNum(apt.groundTurf)) uma.surfaceAptitude = APT_LETTER[clamp(Math.round(apt.groundTurf), 1, 8)];
 
 	// The strategy is the one the trainee actually runs; its own grade is the
-	// aptitude the sim multiplies with. If runningStyle is missing, fall back to
-	// the best style grade so the two fields stay consistent with each other.
+	// aptitude the sim multiplies with. Only a code with no name at all falls back
+	// to the best style grade, so the two fields stay consistent with each other.
 	const styleCode = isNum(apt.runningStyle) ? Math.round(apt.runningStyle) : 0;
 	let gradeKey = STYLE_GRADE_KEY[styleCode];
 	let strategy = STYLE_NAME[styleCode];
-	if (!gradeKey) {
+	if (!strategy) {
 		let best = -1;
 		for (const [code, key] of STYLE_ORDER) {
 			const g = isNum(apt[key]) ? Math.round(apt[key]) : 0;
@@ -289,7 +289,12 @@ function applyAptitudes(uma: Partial<UmaState>, apt: Record<string, any>, warnin
 		if (strategy) warnings.push(`Running style code ${styleCode || 'missing'} is unknown; used the best style grade instead.`);
 	}
 	if (strategy) uma.strategy = strategy;
-	if (gradeKey && isNum(apt[gradeKey])) uma.strategyAptitude = APT_LETTER[clamp(Math.round(apt[gradeKey]), 1, 8)];
+	if (gradeKey && isNum(apt[gradeKey])) {
+		uma.strategyAptitude = APT_LETTER[clamp(Math.round(apt[gradeKey]), 1, 8)];
+	} else if (strategy && !gradeKey) {
+		// Oonige is a race-only style: the career data has no grade column for it.
+		warnings.push(`${strategy} has no aptitude in the career data, so the strategy aptitude was left as it was.`);
+	}
 }
 
 /** Game motivation 0..5 (None…Max) → app mood -2..2. */
@@ -303,6 +308,13 @@ function applyMood(uma: Partial<UmaState>, motivation: unknown): void {
 function uniqueIdsFor(cardId: unknown): Set<string> {
 	if (!isNum(cardId)) return new Set();
 	return new Set([uniqueSkillForUma(String(cardId), 1), uniqueSkillForUma(String(cardId), 3)].filter(Boolean));
+}
+
+/** Summary part for the hint levels actually set. A tier written at 0 clears a
+ *  previous import instead of adding a level, so it is not counted. */
+function hintNote(hints: Map<string, number>): string {
+	const n = [...hints.values()].filter((level) => level > 0).length;
+	return n ? `${n} hint level${n === 1 ? '' : 's'}` : '';
 }
 
 /**
@@ -405,7 +417,8 @@ function convertHachimiDump(dump: any, file: string): CareerImport {
 	if (owned.length) parts.push(`${owned.length} skill${owned.length > 1 ? 's' : ''}`);
 	if (offered.length) parts.push(`${offered.length} offered`);
 	if (budget != null) parts.push(`${budget} SP`);
-	if (hints.size) parts.push(`${hints.size} hint levels`);
+	const hinted = hintNote(hints);
+	if (hinted) parts.push(hinted);
 
 	return {
 		file, uma, hints, budget, owned, offered, blocked: [],
@@ -478,7 +491,8 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 	if (statsIn) parts.push(`${uma.speed}/${uma.stamina}/${uma.power}/${uma.guts}/${uma.wisdom}`);
 	if (owned.length) parts.push(`${owned.length} skill${owned.length > 1 ? 's' : ''}`);
 	if (budget != null) parts.push(`${budget} SP`);
-	if (hints.size) parts.push(`${hints.size} hint levels`);
+	const hinted = hintNote(hints);
+	if (hinted) parts.push(hinted);
 
 	return {
 		file, uma, hints, budget, owned, offered: [], blocked,
@@ -531,15 +545,24 @@ function snapshotHints(tips: unknown, warnings: string[]): Map<string, number> {
 		return hints;
 	}
 	let unknownTiers = 0;
+	let unreadable = 0;
+	let clamped = 0;
 	for (const t of tips) {
-		if (!isNum(t?.group_id) || !isNum(t?.rarity) || !isNum(t?.level)) continue;
+		if (!isNum(t?.group_id) || !isNum(t?.rarity) || !isNum(t?.level)) { unreadable++; continue; }
 		const ids = tierSkills(Math.round(t.group_id), Math.round(t.rarity));
 		if (!ids.length) { unknownTiers++; continue; }
 		const level = clamp(Math.round(t.level), 0, HINT_DISCOUNT.length - 1);
+		if (level !== Math.round(t.level)) clamped++;
 		for (const id of ids) hints.set(id, level);
+	}
+	if (unreadable) {
+		warnings.push(`${unreadable} hint tier(s) in the snapshot have no readable group, rarity or level and were skipped.`);
 	}
 	if (unknownTiers) {
 		warnings.push(`${unknownTiers} hint tier(s) in the snapshot match no skill in the local skill table.`);
+	}
+	if (clamped) {
+		warnings.push(`${clamped} hint tier(s) report a level past the top of the ladder and were taken as level 5.`);
 	}
 	return hints;
 }

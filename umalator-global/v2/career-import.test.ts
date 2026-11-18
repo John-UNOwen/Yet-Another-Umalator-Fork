@@ -368,5 +368,42 @@ test('reports what a snapshot cannot give', (t) => {
 	}))!;
 	t.same(unknownSkill.owned, [], 'unknown skill ids dropped');
 	t.ok(unknownSkill.warnings.some((w) => /not in the local skill table/.test(w)), 'and reported');
+
+	const badTips = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: 20033, rarity: 2, level: '3' }, { group_id: '20013', rarity: 1, level: 5 }],
+	}))!;
+	t.equal(badTips.hints.size, 0, 'a tier with a field that is not a number sets no level');
+	t.ok(badTips.warnings.some((w) => /no readable group, rarity or level/.test(w)), 'and says how many were unreadable');
+
+	const tooHigh = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: 20033, rarity: 2, level: 9 }],
+	}))!;
+	t.ok(tooHigh.warnings.some((w) => /past the top of the ladder/.test(w)), 'a clamped hint level is reported too');
+	t.end();
+});
+
+test('the summary counts hint levels that carry one', (t) => {
+	const all = convertCareerDump(snapshot())!;
+	t.equal(all.hints.size, 6, 'the three fixture tiers cover six local ids');
+	t.ok(all.summary.includes('6 hint levels'), `the summary counts them: ${all.summary}`);
+
+	const one = convertCareerDump(snapshot({ skill_tips_array: [{ group_id: 20033, rarity: 2, level: 4 }] }))!;
+	t.equal(one.hints.size, 1, 'the gold tier of group 20033 holds one local id');
+	t.ok(one.summary.includes('1 hint level') && !one.summary.includes('1 hint levels'), `singular: ${one.summary}`);
+
+	const none = convertCareerDump(snapshot({ skill_tips_array: [{ group_id: 20033, rarity: 2, level: 0 }] }))!;
+	t.equal(none.hints.size, 1, 'the unhinted tier is still written, to clear a stale level');
+	t.notOk(/hint level/.test(none.summary), `but it is not counted: ${none.summary}`);
+	t.end();
+});
+
+test('a career running a style the grade columns lack keeps that style', (t) => {
+	// master.mdb has proper_running_style_nige, _senko, _sashi and _oikomi, so an
+	// Oonige career has no aptitude to read and the app keeps its own.
+	const oonige = convertCareerDump(snapshot({ race_running_style: 5 }))!;
+	t.equal(oonige.uma.strategy, 'Oonige', 'style 5 stays Oonige instead of the best other grade');
+	t.notOk('strategyAptitude' in oonige.uma, 'no aptitude comes from a column that does not exist');
+	t.ok(oonige.warnings.some((w) => /Oonige has no aptitude/.test(w)), 'and the reason is stated');
+	t.notOk(oonige.warnings.some((w) => /is unknown/.test(w)), 'the style is not called unknown');
 	t.end();
 });
