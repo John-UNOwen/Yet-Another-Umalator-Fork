@@ -5,6 +5,8 @@
  * through the evaluator (P7); every comparison is paired over identical seed
  * positions (P2); final numbers come only from the verification namespace (P3);
  * progress events make the run anytime (P5); all inputs are deterministic (P6).
+ * With a time limit the race climb shares it out by the clock (restartDeadline),
+ * so only a run without one repeats exactly.
  */
 
 import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf, raceWave } from './bandit';
@@ -1203,7 +1205,7 @@ async function runSingleScenario(
 		const makeKick = (Xc: BuildRefLite, kickIdx: number, level = 0): BuildRefLite => {
 			// k = 2–4 random feasible swaps (§C), drop side skewed toward low
 			// in-build value. The PRNG is keyed by identity+restart+kick index,
-			// so the whole run stays deterministic (P6). A wide search raises
+			// so a kick depends only on those (P6). A wide search raises
 			// `level` after failed kicks: more swaps, and the sold skill is
 			// picked uniformly, so a strong skill can go too.
 			const rng = mulberry32(fnv1a(`${Xc.id}\u0000${s}\u0000${kickIdx}`));

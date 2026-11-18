@@ -858,7 +858,11 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 							disabled={running || !wideSearch} helperText="Wider search only: noise on shuffled starts"
 							onChange={setAdv('spreadNoise')} />
 						<NumberInput label="Seed" value={seed} step={1} disabled={running} className="v2-opt-seed"
-							helperText="The same seed and settings repeat a run"
+							helperText={Number.isFinite(cfgNow.timeBudgetMs)
+								// The search shares its time limit out by the clock, so a
+								// timed run moves with machine speed and load.
+								? 'Repeats a run only without a time limit'
+								: 'The same seed and settings repeat a run'}
 							suffix={
 								<button type="button" class="v2-opt-seed-dice" disabled={running} title="New random seed" aria-label="New random seed"
 									onClick={() => setSeed(Math.floor(Math.random() * 0xffffffff))}>

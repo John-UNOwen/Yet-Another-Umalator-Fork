@@ -4,7 +4,11 @@ SP-budgeted skill-build search for one uma against a strong 9-runner field
 (SKILL-OPTIMIZER-PLAN, approved 2026-11-15). Decisions come from simulation
 (P1). Screening only decides *what to simulate next*. Search and verification
 seeds are disjoint (P3), ties are reported honestly (P4), and the run is anytime
-(P5) and deterministic for fixed inputs (P6).
+(P5). Every random choice is seeded, so with no time limit (Custom at 0
+minutes, or Until stopped up to the moment it is stopped) the same inputs repeat
+a run exactly (P6). The race climb
+shares a time limit out by the clock, so a Quick, Standard or Thorough run also
+moves with machine speed and load.
 
 ## Layout
 
