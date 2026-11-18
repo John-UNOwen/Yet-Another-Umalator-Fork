@@ -586,12 +586,40 @@ test('§K time left: the time limit caps the estimate, Until stopped has none', 
 		return seen;
 	};
 	const searching = (x: OptimizerProgress) => x.stage !== 'verify' && x.stage !== 'done' && x.stage !== 'noise';
-	const limited = (await run({ ...TEST_CFG, restarts: 3, timeBudgetMs: 1 })).filter(x => searching(x) && x.elapsedMs >= 2);
-	t.ok(limited.length > 0, `search events after the limit (${limited.length})`);
-	t.ok(limited.every(x => x.etaMs !== undefined && x.etaCapped === true), 'every one is an estimate flagged as the time limit');
+	// Past the limit the search now ends at its next ladder rung, so events
+	// after it are not guaranteed: check that every estimate fits the limit.
+	const LIMIT = 40;
+	const limited = (await run({ ...TEST_CFG, restarts: 3, timeBudgetMs: LIMIT })).filter(searching);
+	t.ok(limited.length > 0, `search events under a limit (${limited.length})`);
+	t.ok(limited.every(x => x.etaMs !== undefined), 'every one carries an estimate');
+	t.ok(limited.filter(x => x.elapsedMs > LIMIT).every(x => x.etaCapped === true), 'past the limit every estimate is flagged as the time limit');
 	const endless = await run({ ...TEST_CFG, restarts: 2, deltaMinL: 1, kicks: Infinity, climbRaces: Infinity, timeBudgetMs: Infinity }, 60_000);
 	t.ok(endless.filter(searching).every(x => x.etaMs === undefined), 'Until stopped: no time left while it searches');
 	t.ok(endless.some(x => x.stage === 'verify' && x.etaMs !== undefined), 'the checking stage after Stop has one');
+	t.end();
+});
+
+// Checkup finding 16: the time budget used to stop only new work. The checking
+// stage then grew on ties and topped up every skill worth with no check at all.
+test('time budget: past it the checking stage races only its floor', async t => {
+	const inst = genInstance(4242);
+	const run = async (cfg: EffortConfig) => {
+		const ev = new OracleEval(inst);
+		const ctrl = createController();
+		let atVerify = -1;
+		const res = await runOptimizer(ev, { space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: cfg },
+			ctrl, (x: OptimizerProgress) => { if (x.stage === 'verify' && atVerify < 0) atVerify = x.racesRun; });
+		const tail = ev.racesRun() - atVerify;
+		ev.dispose();
+		return { res, tail };
+	};
+	const cfg: EffortConfig = { ...TEST_CFG, restarts: 2, dMaxIters: 2, gSeedsMin: 400, gSeedsCap: 1600, contribSeeds: 3000 };
+	const late = await run({ ...cfg, timeBudgetMs: 1 });
+	const free = await run({ ...cfg, timeBudgetMs: Infinity });
+	t.ok(late.res.shortlist.length > 0 && late.res.shortlist.every(r => affordable(inst.space, r.build.selection)), 'an over-time run still reports affordable builds');
+	const floor = (late.res.shortlist.length + 1) * cfg.gSeedsMin;
+	t.ok(late.tail <= floor, `over time: no tie growth and no worth top-ups (${late.tail} races, floor ${floor})`);
+	t.ok(free.tail > late.tail, `without a limit the tail still tops up (${free.tail} > ${late.tail})`);
 	t.end();
 });
 

@@ -297,6 +297,10 @@ async function runSingleScenario(
 ): Promise<OptimizerResult> {
 	const { space, scenarioIdx: si, objective, effort: cfg } = input;
 	const t0 = Date.now();
+	/** Past the preset time budget (never for Until stopped). Every ladder and
+	 *  the verify and worth tail check it, not only the loop boundaries, so a
+	 *  long wave cannot run the clock several times over. */
+	const overTime = (): boolean => Date.now() - t0 > cfg.timeBudgetMs;
 	const pick = objPick(objective);
 	// Builds to verify and report: the setting when given, else 5 (3 after Stop).
 	const shortK = cfg.shortlistSize ?? 5;
@@ -415,9 +419,10 @@ async function runSingleScenario(
 	};
 	/** Stage G's races before it starts: every shortlisted build at the seed
 	 *  floor and a drop per skill at the worth setting (drops the climb already
-	 *  raced cost less, so this leans long). */
-	const verifyRacesGuess = (): number =>
-		(shortK + (vs ? 1 : 0)) * cfg.gSeedsMin + shortK * skillsGuess * contribSeeds;
+	 *  raced cost less, so this leans long). A run that reaches Stage G past
+	 *  its time budget skips the worth races (`late`). */
+	const verifyRacesGuess = (late = false): number =>
+		(shortK + (vs ? 1 : 0)) * cfg.gSeedsMin + (late ? 0 : shortK * skillsGuess * contribSeeds);
 	const emit = (stage: OptimizerProgress['stage'], note?: string, best?: ScoredBuild): void => {
 		const races = ev.racesRun();
 		const planned = planOf(races);
@@ -430,7 +435,9 @@ async function runSingleScenario(
 			const msPerRace = (now - t0) / races;
 			const search = searchMsLeft(now, msPerRace);
 			if (search) {
-				etaMs = Math.round(search.ms + (verifyRacesLeft ?? verifyRacesGuess)() * msPerRace);
+				// A search the time budget caps reaches Stage G past it.
+				const stageG = verifyRacesLeft ? verifyRacesLeft() : verifyRacesGuess(search.capped);
+				etaMs = Math.round(search.ms + stageG * msPerRace);
 				if (search.capped) etaCapped = true;
 			}
 		}
@@ -504,11 +511,11 @@ async function runSingleScenario(
 		let n = nMin;
 		// §K time left: the races this stage still has to run. Growth past the
 		// current seed count only happens on a tie, so it is not counted ahead,
-		// and a stopped run skips the worth races.
+		// and a stopped or over-time run skips the worth races.
 		const reportRows = Math.min(pool.length, cfg.shortlistSize ?? pool.length);
 		let worthLeft = (): number => reportRows * skillsGuess * contribSeeds;
 		verifyRacesLeft = () => pool.reduce((a, b) => a + Math.max(0, n - filled(ev, NS_VERIFY, si, b)), 0)
-			+ (ctrl.stopped() ? 0 : worthLeft());
+			+ (ctrl.stopped() || overTime() ? 0 : worthLeft());
 		for (;;) {
 			emit('verify', `verifying ${n}/${nCap} seeds`);
 			const positions = Array.from({ length: n }, (_, i) => i);
@@ -519,7 +526,7 @@ async function runSingleScenario(
 				if (top && !isTie(top.ci95)) break; // #1 vs #2 resolved (§G)
 			}
 			// Stop mid-verify: truncate on the spot like verifyAcross (anytime, P5).
-			if (ctrl.stopped() || n >= nCap) break;
+			if (ctrl.stopped() || overTime() || n >= nCap) break;
 			n = Math.min(nCap, n + Math.max(500, Math.floor(cfg.gSeedsMin / 4)));
 		}
 		const ranked = rankedOf();
@@ -580,7 +587,9 @@ async function runSingleScenario(
 			const r = worthRows[i];
 			worthAt = i;
 			const dropOf = (id: string) => refOf(r.build.selection.filter((x) => x !== id));
-			if (!ctrl.stopped()) {
+			// Past the time budget the worth step reports what the cache holds,
+			// like a stopped run: most drops were raced by the climb already.
+			if (!ctrl.stopped() && !overTime()) {
 				const thin = r.build.selection.filter((id) => sharedSeeds(r, id) < contribSeeds);
 				if (thin.length) {
 					emit('verify', `measuring skill worth · build ${i + 1} of ${worthRows.length}`);
@@ -926,7 +935,7 @@ async function runSingleScenario(
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
 				candidates: cands.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
 				prior: diffPrior(surrogate, X), // the raw fit, not the r2-gated one (see diffPrior)
-				stopped: () => ctrl.stopped(),
+				stopped: () => ctrl.stopped() || overTime(),
 			});
 			if (bres.priorCut) dbg('  prior-cut', bres.priorCut, 'of', cands.length, 'candidates (Δ-SE bound under δ_min)');
 			const outcomes = bres.measured; // eliminated candidates' numbers feed the re-solve too (§8D)
@@ -1059,7 +1068,7 @@ async function runSingleScenario(
 		// every round was cut mid-screen and the peak could never certify. The
 		// preset time budget still bounds the run.
 		let climbBudget = cfg.climbRaces;
-		const climbOut = (): boolean => ctrl.stopped() || Date.now() - t0 > cfg.timeBudgetMs
+		const climbOut = (): boolean => ctrl.stopped() || overTime()
 			|| ev.racesRun() - climbRaces0 >= climbBudget;
 		// Ladder ceiling (§D.4 sizing): past ~4× the measured-σΔ δ-resolve
 		// count ((2·1.96·σΔ/δ_min)²) growth cannot flip a δ-zone verdict, so a
@@ -1162,9 +1171,11 @@ async function runSingleScenario(
 					rungMin: BANDIT_CHUNK_SIZE, rungCeil,
 					maxAlive: wave.length, lucbCut: false,
 					prior: diffPrior(surrogate, inc), // §I.5 (see Stage D): a bound-certified wave candidate never races
-					stopped: () => ctrl.stopped(),
+					// STOP, the time budget or the climb's race budget ends the
+					// ladder before its next rung. Only a ladder that really ended
+					// early marks the round cut: it certifies nothing.
+					stopped: () => (climbOut() ? (cut = true) : false),
 				});
-				if (ctrl.stopped()) cut = true; // a ladder STOP ended early certifies nothing
 				applyMeasured(bres.measured, dropOf, addedOf);
 				for (const out of bres.measured) surrHarvest(out.build);
 				for (const out of bres.measured) {
