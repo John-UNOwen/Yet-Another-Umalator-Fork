@@ -53,9 +53,10 @@
  *   - `skill_point` is the SP left, `disable_skill_id_array` what that career
  *     cannot learn. A snapshot carries no offer list, so its pool is the families its
  *     hint tiers name, less what the career has and what the game never sells
- *     (`career-unbuyable.json`). Within a hinted family only the hinted tier's own
- *     rarity is certain, so a skill of another tier is a guess and goes into
- *     `softOffered`, which the pane lists switched off.
+ *     (`career-unbuyable.json`). A hinted tier also puts every tier under it in that
+ *     family on sale, since the upgrade takes the lower ones with it, so only a tier
+ *     *above* the hinted one is a guess: those go into `softOffered`, which the pane
+ *     lists switched off.
  *
  * Deliberately NOT imported: `raceEvaluations` (bond entries, `ObscuredBool` fields
  * serialized as "<obscured …>"), `acquiredSkills` (contentless), `skillMasterNames`
@@ -126,9 +127,9 @@ export interface CareerImport {
 	 *  offer list, so these are its hint tiers' families, less what that career has and
 	 *  what the game never sells. */
 	offered: string[];
-	/** The ids of `offered` whose own (family, rarity) tier is absent from the hint
-	 *  table, so they are in only because a sibling tier of the family is. Empty for a
-	 *  Hachimi dump. */
+	/** The ids of `offered` that sit above every hint tier of their family, so the file
+	 *  only says the family is on sale, not that tier. The pane lists them switched off.
+	 *  Empty for a Hachimi dump. */
 	softOffered: string[];
 	/** Skill ids that career cannot learn (`disable_skill_id_array`), kept out of the pool. */
 	blocked: string[];
@@ -616,21 +617,26 @@ function snapshotHints(tiers: HintTier[], warnings: string[]): Map<string, numbe
 /**
  * The pool a snapshot implies, in local skill-table order: every skill of a family the
  * hint tiers name, less what the career has and what the game never sells. A tier names
- * one (family, rarity), so a skill of another tier in a hinted family is a guess: it is
- * listed as soft as well, and the pane switches those off instead of hiding them.
+ * one (family, rarity). The upgrade of a family takes its lower tiers with it, so a hinted
+ * tier also puts every tier under it on sale, while a tier above the hinted one stays a
+ * guess: those go into `soft`, and the pane lists them switched off.
  */
 function snapshotPool(tiers: HintTier[], owned: string[]): { offered: string[]; soft: string[] } {
-	const families = new Set(tiers.map((t) => String(t.group)));
-	const certain = new Set(tiers.map((t) => `${t.group}|${t.rarity}`));
+	const hintedTop = new Map<string, number>();
+	for (const t of tiers) {
+		const family = String(t.group);
+		if ((hintedTop.get(family) ?? -1) < t.rarity) hintedTop.set(family, t.rarity);
+	}
 	const have = new Set(owned);
 	const offered: string[] = [];
 	const soft: string[] = [];
 	for (const id of Object.keys(skilldata)) {
 		if (have.has(id) || neverSold.has(id)) continue;
-		const group = String((skillmeta as Record<string, any>)[id]?.groupId ?? '');
-		if (!families.has(group)) continue;
+		const family = String((skillmeta as Record<string, any>)[id]?.groupId ?? '');
+		const top = hintedTop.get(family);
+		if (top === undefined) continue;
 		offered.push(id);
-		if (!certain.has(`${group}|${(skilldata as Record<string, any>)[id]?.rarity}`)) soft.push(id);
+		if (Number((skilldata as Record<string, any>)[id]?.rarity) > top) soft.push(id);
 	}
 	return { offered, soft };
 }

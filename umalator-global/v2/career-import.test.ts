@@ -366,7 +366,7 @@ test('a snapshot pool is the hinted families, and only the hinted tier is certai
 	t.ok(imp.offered.includes(TIER_PAIR_A), 'same for the family hinted at one rarity only');
 	t.notOk(imp.softOffered.includes(TIER_PAIR_A), 'which is exact for that rarity too');
 	t.ok(imp.offered.includes(OTHER_TIER), 'a skill of another tier of a hinted family is in the pool too');
-	t.ok(imp.softOffered.includes(OTHER_TIER), 'and is listed as a soft offer, because only a sibling tier was hinted');
+	t.ok(imp.softOffered.includes(OTHER_TIER), 'and is a soft offer, because it sits above every hinted tier of that family');
 	t.ok(imp.softOffered.every((id) => imp.offered.includes(id)), 'every soft offer is part of the pool');
 	t.notOk(imp.offered.includes(NEVER_SOLD) || imp.softOffered.includes(NEVER_SOLD),
 		'a skill the game never sells is out of both');
@@ -375,7 +375,7 @@ test('a snapshot pool is the hinted families, and only the hinted tier is certai
 	t.end();
 });
 
-test('a hint tier at one rarity makes the family’s other tiers soft offers only', (t) => {
+test('a hint tier makes the tiers under it certain and the ones above it soft', (t) => {
 	const one = convertCareerDump(snapshot({
 		skill_tips_array: [{ group_id: Number('20043'), rarity: 1, level: 3 }],
 	}))!;
@@ -383,11 +383,25 @@ test('a hint tier at one rarity makes the family’s other tiers soft offers onl
 	t.ok(one.offered.includes(FAM2_SILVER) && !one.softOffered.includes(FAM2_SILVER),
 		'the hinted tier’s own id is certain');
 	t.ok(one.offered.includes(FAM2_GOLD) && one.softOffered.includes(FAM2_GOLD),
-		'the family’s other tier is in on the hint of its sibling');
+		'the tier above it is in on the hint of its sibling');
 	t.same(one.softOffered, soldIn('20043').filter((id) => (skilldata as Record<string, any>)[id].rarity !== 1),
-		'and the soft list is exactly those other tiers');
+		'and the soft list is exactly those higher tiers');
 	t.notOk(one.offered.includes(FAM2_NEVER) || one.softOffered.includes(FAM2_NEVER),
 		'Gatekept shares that tier but the game never sells it, so it is in neither list');
+	t.end();
+});
+
+test('a hint tier on an upgrade also sells the tiers below it', (t) => {
+	const up = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: Number('20043'), rarity: 2, level: 3 }],
+	}))!;
+	t.same(up.offered, soldIn('20043'), 'the family the upgrade belongs to is in the pool');
+	t.ok(up.offered.includes(FAM2_GOLD) && !up.softOffered.includes(FAM2_GOLD),
+		'the hinted upgrade is certain');
+	t.ok(up.offered.includes(FAM2_SILVER) && !up.softOffered.includes(FAM2_SILVER),
+		'and so is the tier under it, which the upgrade takes with it');
+	t.same(up.softOffered, soldIn('20043').filter((id) => (skilldata as Record<string, any>)[id].rarity > 2),
+		'only what sits above that upgrade is a guess, here the family’s rarity 6 entries');
 	t.end();
 });
 
