@@ -13,6 +13,7 @@
 import test from 'tape';
 import skilldata from '../skill_data.json';
 import skillmeta from '../../skill_meta.json';
+import careerUnbuyable from '../career-unbuyable.json';
 import {
 	isCareerDump, isUmadumpCareer, isUmadumpManifest, convertCareerDump,
 	CAREER_DUMP_KIND, UMADUMP_ARCHIVE_TYPE,
@@ -127,6 +128,7 @@ test('splits owned from offered and reads the unique level', (t) => {
 	t.same(imp.uma.skills, [UNIQUE], 'owned skills go onto the uma');
 	t.equal(imp.uma.uniqueLv, 3, 'the unique skill row level becomes uniqueLv');
 	t.same(imp.offered, [SILVER, GOLD, OTHER_GROUP], 'the rest is the offer pool');
+	t.same(imp.softOffered, [], 'a dump offers every id it reports, so nothing is a guess');
 	t.equal(imp.budget, 2948, 'SP budget from skillPoint');
 	t.end();
 });
@@ -247,15 +249,40 @@ const TIER_SILVER = '200332';   // group 20033, rarity 1
 const TIER_SILVER_2 = '200333'; // group 20033, rarity 1
 const TIER_PAIR_A = '200131';   // group 20013, rarity 1
 const TIER_PAIR_B = '200132';   // group 20013, rarity 1
+const NEVER_SOLD = '200133';    // Standard Distance ×, same family, never sold
+const OTHER_TIER = '409061';    // Archline Top Scholar, family 20033 rarity 6
+const FAM2_GOLD = '200431';     // Concentration, family 20043 rarity 2
+const FAM2_SILVER = '200432';   // Focus, family 20043 rarity 1
+const FAM2_NEVER = '200433';    // Gatekept, family 20043 rarity 1, never sold
+const UNIQUE_GROUP = '11010';   // the family of the fixture uma’s own unique
 for (const [id, group, rarity] of [
 	[TIER_GOLD, '20033', 2], [TIER_SILVER, '20033', 1], [TIER_SILVER_2, '20033', 1],
 	[TIER_PAIR_A, '20013', 1], [TIER_PAIR_B, '20013', 1],
+	[NEVER_SOLD, '20013', 1], [OTHER_TIER, '20033', 6],
+	[FAM2_GOLD, '20043', 2], [FAM2_SILVER, '20043', 1], [FAM2_NEVER, '20043', 1],
+	[UNIQUE, UNIQUE_GROUP, 5],
 ] as [string, string, number][]) {
 	const d = (skilldata as Record<string, any>)[id];
 	if (!d || d.rarity !== rarity || String((skillmeta as Record<string, any>)[id]?.groupId) !== group) {
 		throw new Error(`test fixture bug: ${id} is not group ${group} rarity ${rarity} in the local skill table`);
 	}
 }
+for (const id of [NEVER_SOLD, FAM2_NEVER]) {
+	if (!careerUnbuyable.skills.includes(id)) {
+		throw new Error(`test fixture bug: ${id} is not in career-unbuyable.json`);
+	}
+}
+for (const id of [TIER_GOLD, TIER_SILVER, TIER_PAIR_A, FAM2_SILVER]) {
+	if (careerUnbuyable.skills.includes(id)) {
+		throw new Error(`test fixture bug: ${id} is listed in career-unbuyable.json as never sold`);
+	}
+}
+
+/** The local ids of one family the game sells, in the order the skill table has them. */
+const soldIn = (group: string) => Object.keys(skilldata)
+	.filter((id) => String((skillmeta as Record<string, any>)[id]?.groupId) === group)
+	.filter((id) => !careerUnbuyable.skills.includes(id))
+	.sort((a, b) => Number(a) - Number(b));
 
 /**
  * One turn of a career as umadump records it. The keys and the values around them
@@ -321,11 +348,58 @@ test('maps a snapshot: outfit, stars, stats, aptitudes, style, mood, unique leve
 	t.same(imp.uma.skills, [UNIQUE], 'and becomes the uma’s skill list');
 	t.equal(imp.uma.uniqueLv, 4, 'the unique skill’s level is uniqueLv');
 	t.equal(imp.budget, 2941, 'skill_point is the SP budget');
-	t.same(imp.offered, [], 'a snapshot carries no offer list');
+	t.ok(imp.offered.length > 0, 'a snapshot builds a pool from its hint tiers');
 	t.same(imp.blocked, [], 'and blocks nothing here');
 	t.ok(imp.summary.includes('turn 78') && imp.summary.includes('2941 SP'), 'the summary names the turn and the SP');
-	t.notOk(imp.warnings.filter((w) => !/offer list/.test(w)).length,
-		`the one note is the offer list one: ${imp.warnings.join(' | ')}`);
+	t.notOk(imp.warnings.filter((w) => !/pool comes from the hint tiers/.test(w)).length,
+		`the one note is the pool one: ${imp.warnings.join(' | ')}`);
+	t.end();
+});
+
+test('a snapshot pool is the hinted families, and only the hinted tier is certain', (t) => {
+	const imp = convertCareerDump(snapshot())!;
+	// The fixture hints family 20013 at rarity 1 and family 20033 at rarities 1 and 2.
+	t.same(imp.offered, [...soldIn('20013'), ...soldIn('20033')].sort((a, b) => Number(a) - Number(b)),
+		'the pool is every skill the game sells in a hinted family');
+	t.ok(imp.offered.includes(TIER_GOLD), 'an id of its own hinted tier is in the pool');
+	t.notOk(imp.softOffered.includes(TIER_GOLD), 'and is not a soft offer');
+	t.ok(imp.offered.includes(TIER_PAIR_A), 'same for the family hinted at one rarity only');
+	t.notOk(imp.softOffered.includes(TIER_PAIR_A), 'which is exact for that rarity too');
+	t.ok(imp.offered.includes(OTHER_TIER), 'a skill of another tier of a hinted family is in the pool too');
+	t.ok(imp.softOffered.includes(OTHER_TIER), 'and is listed as a soft offer, because only a sibling tier was hinted');
+	t.ok(imp.softOffered.every((id) => imp.offered.includes(id)), 'every soft offer is part of the pool');
+	t.notOk(imp.offered.includes(NEVER_SOLD) || imp.softOffered.includes(NEVER_SOLD),
+		'a skill the game never sells is out of both');
+	t.notOk(imp.offered.includes(SILVER) || imp.softOffered.includes(SILVER),
+		'a family with no hint tier at all stays out of both');
+	t.end();
+});
+
+test('a hint tier at one rarity makes the family’s other tiers soft offers only', (t) => {
+	const one = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: Number('20043'), rarity: 1, level: 3 }],
+	}))!;
+	t.same(one.offered, soldIn('20043'), 'the whole hinted family that the game sells is in the pool');
+	t.ok(one.offered.includes(FAM2_SILVER) && !one.softOffered.includes(FAM2_SILVER),
+		'the hinted tier’s own id is certain');
+	t.ok(one.offered.includes(FAM2_GOLD) && one.softOffered.includes(FAM2_GOLD),
+		'the family’s other tier is in on the hint of its sibling');
+	t.same(one.softOffered, soldIn('20043').filter((id) => (skilldata as Record<string, any>)[id].rarity !== 1),
+		'and the soft list is exactly those other tiers');
+	t.notOk(one.offered.includes(FAM2_NEVER) || one.softOffered.includes(FAM2_NEVER),
+		'Gatekept shares that tier but the game never sells it, so it is in neither list');
+	t.end();
+});
+
+test('the pool leaves out what the career has already learned', (t) => {
+	const owned = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: Number(UNIQUE_GROUP), rarity: 5, level: 2 }],
+	}))!;
+	t.same(owned.offered, [], 'the only family hinted is the uma’s own unique, which it has');
+	t.same(owned.softOffered, [], 'and nothing is offered');
+	t.equal(owned.hints.get(UNIQUE), 2, 'the hint level still lands on that skill');
+	t.ok(owned.warnings.some((w) => /name no skill the Optimizer could offer/.test(w)),
+		'the pool staying as it is gets said out loud');
 	t.end();
 });
 
@@ -352,7 +426,7 @@ test('a snapshot hint tier covers every skill of that group and rarity', (t) => 
 
 test('reports what a snapshot cannot give', (t) => {
 	const base = convertCareerDump(snapshot())!;
-	t.ok(base.warnings.some((w) => /no skill offer list/.test(w)), 'the missing offer list is a note, not a failure');
+	t.ok(base.warnings.some((w) => /pool comes from the hint tiers/.test(w)), 'the pool rule is a note, not a failure');
 
 	const blocked = convertCareerDump(snapshot({
 		disable_skill_id_array: [Number(TIER_SILVER), 999999],

@@ -10,8 +10,8 @@
  *
  * Both turn into app state: the trained uma (outfit, stats, aptitudes, running style,
  * mood, learned skills) plus what the Optimizer needs to answer "what should I buy
- * with the SP I have" (hint levels, SP budget, and the skill list the game was
- * actually offering, which only the Hachimi dump carries).
+ * with the SP I have" (hint levels, SP budget, and the skill pool: the Hachimi dump's
+ * offer list, or for a snapshot the skill families its hint tiers name).
  *
  * Field semantics were read off the writer itself, not guessed:
  *   - `CareerDataDump.rs` (dump body, aptitude/style/stat getters, the 48-item list
@@ -51,8 +51,11 @@
  *     tier, which is what the tier means (the Hachimi path refuses to spread only
  *     because it has the per-skill discount to go on instead).
  *   - `skill_point` is the SP left, `disable_skill_id_array` what that career
- *     cannot learn. There is no offer list in a snapshot, so the pool stays the
- *     app's own set of learnable skills.
+ *     cannot learn. A snapshot carries no offer list, so its pool is the families its
+ *     hint tiers name, less what the career has and what the game never sells
+ *     (`career-unbuyable.json`). Within a hinted family only the hinted tier's own
+ *     rarity is certain, so a skill of another tier is a guess and goes into
+ *     `softOffered`, which the pane lists switched off.
  *
  * Deliberately NOT imported: `raceEvaluations` (bond entries, `ObscuredBool` fields
  * serialized as "<obscured …>"), `acquiredSkills` (contentless), `skillMasterNames`
@@ -65,6 +68,7 @@
 import umas from '../../umas.json';
 import skilldata from '../skill_data.json';
 import skillmeta from '../../skill_meta.json';
+import careerUnbuyable from '../career-unbuyable.json';
 import type { UmaState } from './uma-panel';
 import { uniqueSkillForUma } from '../../components/HorseDefTypes';
 
@@ -108,6 +112,8 @@ interface CareerRow {
 export interface CareerImport {
 	/** Source file name, for the message the pane shows. */
 	file: string;
+	/** Which format was read. Only the pool wording in the pane depends on it. */
+	format: 'dump' | 'snapshot';
 	/** Patch for the current uma; feed it over the existing state and revalidate. */
 	uma: Partial<UmaState>;
 	/** skillId → hint level (0-5), the same map the Skill chart hint buttons edit. */
@@ -116,9 +122,14 @@ export interface CareerImport {
 	budget: number | null;
 	/** Skill ids the trainee already has (`IsGet=1`, or the snapshot's `skill_array`). */
 	owned: string[];
-	/** Skill ids the game was offering at dump time (`IsGet` not 1). Empty for a
-	 *  umadump snapshot, which carries no offer list, so the pool is left alone. */
+	/** Skill ids the game was offering at dump time (`IsGet` not 1). A snapshot has no
+	 *  offer list, so these are its hint tiers' families, less what that career has and
+	 *  what the game never sells. */
 	offered: string[];
+	/** The ids of `offered` whose own (family, rarity) tier is absent from the hint
+	 *  table, so they are in only because a sibling tier of the family is. Empty for a
+	 *  Hachimi dump. */
+	softOffered: string[];
 	/** Skill ids that career cannot learn (`disable_skill_id_array`), kept out of the pool. */
 	blocked: string[];
 	/** One line for the pane: who this is and what came in. */
@@ -430,7 +441,7 @@ function convertHachimiDump(dump: any, file: string): CareerImport {
 	if (hinted) parts.push(hinted);
 
 	return {
-		file, uma, hints, budget, owned, offered, blocked: [],
+		file, format: 'dump', uma, hints, budget, owned, offered, softOffered: [], blocked: [],
 		summary: parts.join(' · '),
 		warnings,
 	};
@@ -466,7 +477,7 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 	applyAptitudes(uma, snapshotAptitudes(c), warnings);
 	applyMood(uma, c.motivation, warnings);
 
-	// ── Skills: owned, unique level, and what that career cannot learn ───────
+	// ── Skills: owned, unique level, blocked ids, and its hint pool ────────────
 	const known = (id: string) => !!(skilldata as Record<string, any>)[id];
 	const owned: string[] = [];
 	let dropped = 0;
@@ -488,8 +499,12 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 		if (isNum(id) && known(String(id))) blocked.push(String(id));
 	}
 
-	const hints = snapshotHints(c.skill_tips_array, warnings);
-	warnings.push('A snapshot has no skill offer list, so the Optimizer pool was left as it is. It shows every skill the app can offer, not only what this career could buy.');
+	const tiers = parseTiers(c.skill_tips_array, warnings);
+	const hints = snapshotHints(tiers, warnings);
+	const pool = snapshotPool(tiers, owned);
+	warnings.push(pool.offered.length
+		? 'The Optimizer pool comes from the hint tiers in this snapshot, so a skill family the career has no tier on at all stays out of it.'
+		: 'The hint tiers in this snapshot name no skill the Optimizer could offer, so the pool was left as it is.');
 
 	const budget = isNum(c.skill_point) ? Math.max(0, Math.round(c.skill_point)) : null;
 	if (budget == null) warnings.push('Skill points were not readable, so the SP budget was left as it was.');
@@ -504,7 +519,8 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 	if (hinted) parts.push(hinted);
 
 	return {
-		file, uma, hints, budget, owned, offered: [], blocked,
+		file, format: 'snapshot', uma, hints, budget, owned,
+		offered: pool.offered, softOffered: pool.soft, blocked,
 		summary: parts.join(' · '),
 		warnings,
 	};
@@ -541,31 +557,52 @@ function tierSkills(groupId: number, rarity: number): string[] {
 	return ids;
 }
 
+/** Skill ids the game's skill screen never sells, so no career pool should offer them. */
+const neverSold = new Set<string>(careerUnbuyable.skills);
+
+/** One readable `skill_tips_array` entry: the hint tier of one family at one rarity. */
+interface HintTier {
+	group: number;
+	rarity: number;
+	level: number;
+}
+
 /**
- * Hint levels from `skill_tips_array`: one entry per (group, rarity) tier the career
- * has hints on, and that tier is the unit the game tracks, so its level is set on
- * every local skill id inside it. A tier at level 0 is written too, which clears a
- * level a previous import left behind.
+ * The readable tiers of `skill_tips_array`, the game's own hint table: one entry per
+ * (family, rarity) the career has hints on.
  */
-function snapshotHints(tips: unknown, warnings: string[]): Map<string, number> {
-	const hints = new Map<string, number>();
+function parseTiers(tips: unknown, warnings: string[]): HintTier[] {
 	if (!Array.isArray(tips)) {
 		warnings.push('The snapshot has no skill_tips_array, so no hint levels were imported.');
-		return hints;
+		return [];
 	}
-	let unknownTiers = 0;
+	const tiers: HintTier[] = [];
 	let unreadable = 0;
-	let clamped = 0;
 	for (const t of tips) {
 		if (!isNum(t?.group_id) || !isNum(t?.rarity) || !isNum(t?.level)) { unreadable++; continue; }
-		const ids = tierSkills(Math.round(t.group_id), Math.round(t.rarity));
-		if (!ids.length) { unknownTiers++; continue; }
-		const level = clamp(Math.round(t.level), 0, HINT_DISCOUNT.length - 1);
-		if (level !== Math.round(t.level)) clamped++;
-		for (const id of ids) hints.set(id, level);
+		tiers.push({ group: Math.round(t.group_id), rarity: Math.round(t.rarity), level: Math.round(t.level) });
 	}
 	if (unreadable) {
 		warnings.push(`${unreadable} hint tier(s) in the snapshot have no readable group, rarity or level and were skipped.`);
+	}
+	return tiers;
+}
+
+/**
+ * Hint levels from the hint tiers: a tier is the unit the game prices, so its level is
+ * set on every local skill id inside it. A tier at level 0 is written too, which clears
+ * a level a previous import left behind.
+ */
+function snapshotHints(tiers: HintTier[], warnings: string[]): Map<string, number> {
+	const hints = new Map<string, number>();
+	let unknownTiers = 0;
+	let clamped = 0;
+	for (const t of tiers) {
+		const ids = tierSkills(t.group, t.rarity);
+		if (!ids.length) { unknownTiers++; continue; }
+		const level = clamp(t.level, 0, HINT_DISCOUNT.length - 1);
+		if (level !== t.level) clamped++;
+		for (const id of ids) hints.set(id, level);
 	}
 	if (unknownTiers) {
 		warnings.push(`${unknownTiers} hint tier(s) in the snapshot match no skill in the local skill table.`);
@@ -574,6 +611,28 @@ function snapshotHints(tips: unknown, warnings: string[]): Map<string, number> {
 		warnings.push(`${clamped} hint tier(s) report a level past the top of the ladder and were taken as level 5.`);
 	}
 	return hints;
+}
+
+/**
+ * The pool a snapshot implies, in local skill-table order: every skill of a family the
+ * hint tiers name, less what the career has and what the game never sells. A tier names
+ * one (family, rarity), so a skill of another tier in a hinted family is a guess: it is
+ * listed as soft as well, and the pane switches those off instead of hiding them.
+ */
+function snapshotPool(tiers: HintTier[], owned: string[]): { offered: string[]; soft: string[] } {
+	const families = new Set(tiers.map((t) => String(t.group)));
+	const certain = new Set(tiers.map((t) => `${t.group}|${t.rarity}`));
+	const have = new Set(owned);
+	const offered: string[] = [];
+	const soft: string[] = [];
+	for (const id of Object.keys(skilldata)) {
+		if (have.has(id) || neverSold.has(id)) continue;
+		const group = String((skillmeta as Record<string, any>)[id]?.groupId ?? '');
+		if (!families.has(group)) continue;
+		offered.push(id);
+		if (!certain.has(`${group}|${(skilldata as Record<string, any>)[id]?.rarity}`)) soft.push(id);
+	}
+	return { offered, soft };
 }
 
 /**

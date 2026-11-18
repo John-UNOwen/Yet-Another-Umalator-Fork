@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 
 import { program, Option } from 'commander';
@@ -161,6 +162,46 @@ function generateNotInGame() {
 }
 
 generateNotInGame();
+
+// The skills the game's skill screen never sells, which master.mdb marks with a
+// negative grade_value. The career import keeps them out of a snapshot's skill pool.
+// Read with node:sqlite like tools/skill-drift.ts, so the sqlite3 CLI is not needed.
+function generateCareerUnbuyable() {
+	const outPath = path.join(dirname, 'career-unbuyable.json');
+	const masterDb = path.join(root, 'docs', 'master.mdb');
+
+	if (!fs.existsSync(masterDb)) {
+		const exists = fs.existsSync(outPath);
+		console.log(
+			`career-unbuyable.json: master.mdb not present, ${exists
+				? 'leaving the committed file alone'
+				: 'no committed file either, writing empty list'}`
+		);
+		if (!exists) {
+			fs.writeFileSync(outPath, JSON.stringify({ skills: [] }));
+		}
+		return;
+	}
+
+	try {
+		// Loaded lazily so a Node without node:sqlite only skips this file.
+		const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+		const db = new DatabaseSync(masterDb, { readOnly: true });
+		let skills;
+		try {
+			const rows = db.prepare('SELECT id FROM skill_data WHERE grade_value < 0 ORDER BY id').all();
+			skills = rows.map(r => String(r.id));
+		} finally {
+			db.close();
+		}
+		fs.writeFileSync(outPath, JSON.stringify({ skills }));
+		console.log(`career-unbuyable.json (master.mdb): ${skills.length} skills`);
+	} catch (e) {
+		console.warn(`Failed to regenerate career-unbuyable.json: ${e.message}. Leaving existing file in place.`);
+	}
+}
+
+generateCareerUnbuyable();
 
 // Sync character/outfit names in umas.json from Global master.mdb.
 // Outfits/charas not yet in the Global DB keep their existing (JP) strings;
