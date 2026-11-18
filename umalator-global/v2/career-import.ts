@@ -143,21 +143,29 @@ export function isUmadumpManifest(obj: any): boolean {
 	return !!obj && typeof obj === 'object' && obj.archive_type === UMADUMP_ARCHIVE_TYPE;
 }
 
-/** Merge every row source the dump carries, keyed by skill id, newest list last. */
-function collectRows(dump: any): { rows: CareerRow[]; sources: string[] } {
+/**
+ * Merge every row source the dump carries, keyed by skill id, newest list last.
+ * `short` lists the sources that arrived cut: the writer caps every list walk at
+ * 48 items, and a source whose own `count` is above the rows it carries lost the
+ * rest (the owned and offered lists then miss skills).
+ */
+function collectRows(dump: any): { rows: CareerRow[]; sources: string[]; short: { key: string; rows: number; count: number }[] } {
 	const byId = new Map<number, CareerRow>();
 	const sources: string[] = [];
-	for (const [key, list] of [
-		['skillRowsObserved', dump.skillRowsObserved?.rows],
-		['skillLearningScreen', dump.skillLearningScreen?.rows],
-	] as [string, unknown][]) {
+	const short: { key: string; rows: number; count: number }[] = [];
+	for (const [key, block] of [
+		['skillRowsObserved', dump.skillRowsObserved],
+		['skillLearningScreen', dump.skillLearningScreen],
+	] as [string, any][]) {
+		const list = block?.rows;
 		if (!Array.isArray(list)) continue;
 		const kept = list.filter((r) => isNum(r?.SkillId));
 		if (!kept.length) continue;
 		sources.push(key);
+		if (isNum(block.count) && block.count > list.length) short.push({ key, rows: list.length, count: block.count });
 		for (const r of kept) byId.set(r.SkillId, r as CareerRow);
 	}
-	return { rows: [...byId.values()], sources };
+	return { rows: [...byId.values()], sources, short };
 }
 
 /** Discount % → hint count on the shared ladder, or -1 when it is off the ladder. */
@@ -340,9 +348,14 @@ function convertHachimiDump(dump: any, file: string): CareerImport {
 	applyMood(uma, c.motivation);
 
 	// ── Skills: owned / offered / unique level ───────────────────────────────
-	const { rows, sources } = collectRows(dump);
+	const { rows, sources, short } = collectRows(dump);
 	if (!sources.length) {
 		warnings.push('The dump has no skill rows: the skill-learning screen was never opened in that session, so nothing was captured.');
+	} else if (short.length === sources.length) {
+		// Every source is cut, so no list holds the whole career. One full source
+		// is enough: the merge is by skill id.
+		const detail = short.map((x) => `${x.key} ${x.rows} of ${x.count}`).join(', ');
+		warnings.push(`The dump's skill rows arrived truncated (${detail}; the writer caps its list walks at 48), so learned and offered skills may be missing. Check the uma's skills and the pool after the import.`);
 	}
 	const known = (id: string) => !!(skilldata as Record<string, any>)[id];
 	const owned: string[] = [];

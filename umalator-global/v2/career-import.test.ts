@@ -86,6 +86,20 @@ test('maps the uma: outfit, stars, stats, aptitudes, style, mood', (t) => {
 	t.end();
 });
 
+// Checkup finding 48: a cut row list replaced the build's skills with no word.
+test('a truncated skill row list is reported', (t) => {
+	const base = dump();
+	const cut = convertCareerDump(dump({ skillRowsObserved: { ...base.skillRowsObserved, count: 97 } }))!;
+	t.ok(cut.warnings.some((w) => w.includes('truncated') && w.includes('4 of 97')), `warned: ${cut.warnings.join(' | ')}`);
+	const whole = convertCareerDump(dump({
+		skillRowsObserved: { ...base.skillRowsObserved, count: 97 },
+		skillLearningScreen: { count: 4, rows: base.skillRowsObserved.rows },
+	}))!;
+	t.notOk(whole.warnings.some((w) => w.includes('skill rows arrived truncated')), 'one complete source is enough');
+	t.notOk(convertCareerDump(dump())!.warnings.length, 'a complete dump stays quiet');
+	t.end();
+});
+
 test('splits owned from offered and reads the unique level', (t) => {
 	const imp = convertCareerDump(dump())!;
 	t.same(imp.owned, [UNIQUE], 'only IsGet=1 is owned');
