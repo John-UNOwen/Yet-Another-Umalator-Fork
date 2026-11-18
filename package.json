@@ -51,7 +51,7 @@
     "globalsim:coverage:write": "node tools/globalsim-coverage.mjs --write",
     "globalsim:coverage:merged": "node tools/globalsim-coverage.mjs --out globalsim/skills.merged.json",
     "typecheck:roster": "bash tools/typecheck-roster.sh",
-    "test:ocr": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" components/screenshot-ocr/ctc.test.ts && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" components/screenshot-ocr/db.test.ts",
+    "test:ocr": "npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" components/screenshot-ocr/ctc.test.ts && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" components/screenshot-ocr/db.test.ts && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" components/screenshot-ocr/matcher.test.ts && npx ts-node --transpile-only --compiler-options \"{\\\"moduleResolution\\\":\\\"node\\\",\\\"module\\\":\\\"commonjs\\\"}\" components/screenshot-ocr/aptitudes.test.ts",
     "check:ocr-assets": "node tools/fetch-ocr-assets.mjs --verify-only"
   },
   "author": "pecan",

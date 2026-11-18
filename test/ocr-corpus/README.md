@@ -24,3 +24,20 @@ goes outside the repo when a run needs one.
 
 Naming is `<character>-<outfit epithet>[-<device or rank>]`. Two files of the same horse differ by
 rank or scroll position, never by crop.
+
+## What these files have settled so far
+
+Timings, single-thread WASM on one desktop machine: a stitched capture around 594x1040 reads in about
+1.3 s (detect 0.6 s), a 3440x1440 Steam capture in about 2.1 s (detect 1.4 s).
+
+Skill names are matched only against the 1340 names this fork offers. Every skill line read from
+these files scored 0.9 to 1.0 and every piece of screen text that is not a skill name scored 0.55 or
+worse, so the accept line at 0.82 sits in an empty band rather than on a slope. `matcher.test.ts`
+pins the misreads that are accepted and the screen text that is refused.
+
+Aptitude letters are colours, and these are the colours the Global client draws on these files: S 44°,
+A 25°, B 340°, C 107°, D 205°, E 287°, F 247°. G carries no colour at all, which is how it is told
+apart from the rest. Over the 90 aptitude cells in the nine files, 81 read the same from the colour of
+the glyph and from the letter the text reader saw, 9 read by colour where the text reader saw nothing,
+and none ever contradicted.
+
