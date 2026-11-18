@@ -1,18 +1,18 @@
 {
 	"name": "oguri-cap-starlight-beat",
-	"scale": 1.6835016835016836,
+	"scale": 1.6891891891891893,
 	"read": {
 		"stats": {
-			"Speed": 1321,
-			"Stamina": 473,
-			"Power": 1208,
-			"Guts": 445,
-			"Wit": 1230
+			"Speed": 1601,
+			"Stamina": 754,
+			"Power": 1239,
+			"Guts": 566,
+			"Wit": 1056
 		},
 		"aptitudes": {
 			"turf": "A",
-			"dirt": "B",
-			"short": "A",
+			"dirt": "A",
+			"short": "E",
 			"mile": "A",
 			"medium": "A",
 			"long": "B",
@@ -22,27 +22,6 @@
 			"oikomi": "D"
 		},
 		"skills": [
-			{
-				"text": "Shooting for Victory!",
-				"name": "Shooting for Victory!",
-				"match": {
-					"id": "900101",
-					"ids": [
-						"900101"
-					],
-					"name": "Shooting for Victory!",
-					"score": 1,
-					"margin": 0.26076923076923086,
-					"trims": 0
-				},
-				"level": null,
-				"box": {
-					"x": 343.7056451612903,
-					"y": 442.0399499999999,
-					"w": 126.34475806451611,
-					"h": 17.728875
-				}
-			},
 			{
 				"text": "Triumphant Pulse",
 				"name": "Triumphant Pulse",
@@ -56,12 +35,54 @@
 					"margin": 0.53,
 					"trims": 0
 				},
-				"level": 4,
+				"level": 5,
 				"box": {
-					"x": 106.58467741935483,
-					"y": 442.0399499999999,
-					"w": 105.98588709677419,
-					"h": 17.1379125
+					"x": 65.64516129032258,
+					"y": 482.73165873015876,
+					"w": 124.12903225806451,
+					"h": 20.237825396825396
+				}
+			},
+			{
+				"text": "Let's Pump Some Iron!",
+				"name": "Let's Pump Some Iron!",
+				"match": {
+					"id": "900271",
+					"ids": [
+						"900271"
+					],
+					"name": "Let's Pump Some Iron!",
+					"score": 1,
+					"margin": 0.42333333333333323,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 347.9193548387097,
+					"y": 482.73165873015876,
+					"w": 157.54838709677418,
+					"h": 20.237825396825396
+				}
+			},
+			{
+				"text": "Moving Past, and Beyond",
+				"name": "Moving Past, and Beyond",
+				"match": {
+					"id": "900591",
+					"ids": [
+						"900591"
+					],
+					"name": "Moving Past, and Beyond",
+					"score": 1,
+					"margin": 0.48857142857142866,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 65.04838709677419,
+					"y": 537.4928333333334,
+					"w": 124.12903225806451,
+					"h": 37.4995
 				}
 			},
 			{
@@ -82,55 +103,10 @@
 				},
 				"level": null,
 				"box": {
-					"x": 344.3044354838709,
-					"y": 494.04465,
-					"w": 103.59072580645162,
-					"h": 17.728875
-				}
-			},
-			{
-				"text": "Budding Blossom",
-				"name": "Budding Blossom",
-				"match": {
-					"id": "900511",
-					"ids": [
-						"900511"
-					],
-					"name": "Budding Blossom",
-					"score": 1,
-					"margin": 0.53,
-					"trims": 0
-				},
-				"level": null,
-				"box": {
-					"x": 106.58467741935483,
-					"y": 494.6356124999999,
-					"w": 105.38709677419354,
-					"h": 17.728875
-				}
-			},
-			{
-				"text": "Firm Conditions O",
-				"name": "Firm Conditions ◎",
-				"match": {
-					"id": null,
-					"ids": [
-						"200151",
-						"200152",
-						"200153"
-					],
-					"name": "Firm Conditions ◎",
-					"score": 1,
-					"margin": 0.26076923076923086,
-					"trims": 0,
-					"why": "marker"
-				},
-				"level": null,
-				"box": {
-					"x": 106.58467741935483,
-					"y": 546.6403124999999,
-					"w": 110.77620967741935,
-					"h": 18.3198375
+					"x": 347.9193548387097,
+					"y": 545.2308253968254,
+					"w": 119.95161290322581,
+					"h": 20.833055555555557
 				}
 			},
 			{
@@ -148,300 +124,412 @@
 				},
 				"level": null,
 				"box": {
-					"x": 343.7056451612903,
-					"y": 547.231275,
-					"w": 136.5241935483871,
-					"h": 18.3198375
+					"x": 347.3225806451613,
+					"y": 607.134761904762,
+					"w": 161.1290322580645,
+					"h": 20.833055555555557
 				}
 			},
 			{
-				"text": "Sprinting Gear",
-				"name": "Sprinting Gear",
-				"match": {
-					"id": "200652",
-					"ids": [
-						"200652"
-					],
-					"name": "Sprinting Gear",
-					"score": 1,
-					"margin": 0.3076923076923077,
-					"trims": 0
-				},
-				"level": null,
-				"box": {
-					"x": 343.10685483870964,
-					"y": 599.8269375,
-					"w": 92.21370967741936,
-					"h": 19.501762499999998
-				}
-			},
-			{
-				"text": "No Stopping Me!",
-				"name": "No Stopping Me!",
-				"match": {
-					"id": "200491",
-					"ids": [
-						"200491"
-					],
-					"name": "No Stopping Me!",
-					"score": 1,
-					"margin": 0.43500000000000005,
-					"trims": 0
-				},
-				"level": null,
-				"box": {
-					"x": 104.7883064516129,
-					"y": 599.8269375,
-					"w": 105.98588709677419,
-					"h": 19.501762499999998
-				}
-			},
-			{
-				"text": "Sprint Corners ◎",
-				"name": "Sprint Corners ◎",
-				"match": {
-					"id": "200971",
-					"ids": [
-						"200971"
-					],
-					"name": "Sprint Corners ◎",
-					"score": 1,
-					"margin": 0.3846153846153846,
-					"trims": 0
-				},
-				"level": null,
-				"box": {
-					"x": 105.98588709677419,
-					"y": 653.604525,
-					"w": 98.80040322580645,
-					"h": 17.728875
-				}
-			},
-			{
-				"text": "Pace Chaser Corners ",
-				"name": "Pace Chaser Corners ◎",
+				"text": "Spring Runner O",
+				"name": "Spring Runner ◎",
 				"match": {
 					"id": null,
 					"ids": [
-						"201321",
-						"201322"
+						"200171",
+						"200172",
+						"200173"
 					],
-					"name": "Pace Chaser Corners ◎",
+					"name": "Spring Runner ◎",
 					"score": 1,
-					"margin": 0.3425,
-					"trims": 0,
-					"why": "level"
-				},
-				"level": null,
-				"box": {
-					"x": 344.3044354838709,
-					"y": 654.1954875,
-					"w": 128.14112903225805,
-					"h": 15.955987499999999
-				}
-			},
-			{
-				"text": "Straight Descent",
-				"name": "Straight Descent",
-				"match": {
-					"id": "201342",
-					"ids": [
-						"201342"
-					],
-					"name": "Straight Descent",
-					"score": 1,
-					"margin": 0.4117647058823529,
-					"trims": 0
-				},
-				"level": null,
-				"box": {
-					"x": 105.98588709677419,
-					"y": 706.2001875,
-					"w": 102.39314516129032,
-					"h": 17.728875
-				}
-			},
-			{
-				"text": "Pace Chaser Savvy O",
-				"name": "Pace Chaser Savvy ◎",
-				"match": {
-					"id": null,
-					"ids": [
-						"201531",
-						"201532"
-					],
-					"name": "Pace Chaser Savvy ◎",
-					"score": 1,
-					"margin": 0.38714285714285723,
+					"margin": 0.3633333333333333,
 					"trims": 0,
 					"why": "marker"
 				},
 				"level": null,
 				"box": {
-					"x": 343.7056451612903,
-					"y": 706.2001875,
-					"w": 128.7399193548387,
-					"h": 17.728875
+					"x": 63.854838709677416,
+					"y": 607.7299920634921,
+					"w": 120.54838709677419,
+					"h": 22.023515873015874
 				}
 			},
 			{
-				"text": "Groundwork",
-				"name": "Groundwork",
+				"text": "Straightaway Adept",
+				"name": "Straightaway Adept",
 				"match": {
-					"id": "201601",
+					"id": "200362",
 					"ids": [
-						"201601"
+						"200362"
 					],
-					"name": "Groundwork",
+					"name": "Straightaway Adept",
 					"score": 1,
-					"margin": 0.6,
+					"margin": 0.23529411764705888,
 					"trims": 0
 				},
 				"level": null,
 				"box": {
-					"x": 345.5020161290322,
-					"y": 758.79585,
-					"w": 74.84879032258064,
-					"h": 17.728875
+					"x": 64.45161290322581,
+					"y": 670.824388888889,
+					"w": 143.2258064516129,
+					"h": 22.023515873015874
 				}
 			},
 			{
-				"text": "Uma Stan",
-				"name": "Uma Stan",
+				"text": "Ramp Up",
+				"name": "Ramp Up",
 				"match": {
-					"id": "201591",
+					"id": "200462",
 					"ids": [
-						"201591"
+						"200462"
 					],
-					"name": "Uma Stan",
+					"name": "Ramp Up",
 					"score": 1,
-					"margin": 0.28,
+					"margin": 0.5,
 					"trims": 0
 				},
 				"level": null,
 				"box": {
-					"x": 105.38709677419354,
-					"y": 758.79585,
-					"w": 61.67540322580645,
-					"h": 18.3198375
+					"x": 346.72580645161287,
+					"y": 670.824388888889,
+					"w": 68.62903225806451,
+					"h": 22.61874603174603
 				}
 			},
 			{
-				"text": "Neck and Neck",
-				"name": "Neck and Neck",
+				"text": "Position Pilfer",
+				"name": "Position Pilfer",
 				"match": {
-					"id": "201901",
+					"id": "200592",
 					"ids": [
-						"201901"
+						"200592"
 					],
-					"name": "Neck and Neck",
+					"name": "Position Pilfer",
 					"score": 1,
-					"margin": 0.6153846153846154,
+					"margin": 0.53,
 					"trims": 0
 				},
 				"level": null,
 				"box": {
-					"x": 105.98588709677419,
-					"y": 811.3915124999999,
-					"w": 93.41129032258064,
-					"h": 17.728875
+					"x": 347.9193548387097,
+					"y": 733.9187857142857,
+					"w": 100.25806451612902,
+					"h": 18.452134920634922
 				}
 			},
 			{
-				"text": "Burning Spirit SPD",
-				"name": "Burning Spirit SPD",
+				"text": "Nimble Navigator",
+				"name": "Nimble Navigator",
 				"match": {
-					"id": "210011",
+					"id": "200492",
 					"ids": [
-						"210011"
+						"200492"
 					],
-					"name": "Burning Spirit SPD",
+					"name": "Nimble Navigator",
 					"score": 1,
-					"margin": 0.125,
+					"margin": 0.47444444444444445,
 					"trims": 0
 				},
 				"level": null,
 				"box": {
-					"x": 343.7056451612903,
-					"y": 811.3915124999999,
-					"w": 113.17137096774194,
-					"h": 19.501762499999998
+					"x": 65.04838709677419,
+					"y": 733.9187857142857,
+					"w": 127.11290322580645,
+					"h": 20.237825396825396
 				}
 			},
 			{
-				"text": "Ignited Spirit PWR",
-				"name": "Ignited Spirit PWR",
+				"text": "Slick Surge",
+				"name": "Slick Surge",
 				"match": {
-					"id": "210032",
+					"id": "200602",
 					"ids": [
-						"210032"
+						"200602"
 					],
-					"name": "Ignited Spirit PWR",
+					"name": "Slick Surge",
 					"score": 1,
-					"margin": 0.1875,
+					"margin": 0.5454545454545454,
 					"trims": 0
 				},
 				"level": null,
 				"box": {
-					"x": 107.18346774193547,
-					"y": 865.1691,
-					"w": 111.37499999999999,
-					"h": 18.3198375
+					"x": 63.854838709677416,
+					"y": 795.8227222222222,
+					"w": 81.75806451612902,
+					"h": 22.61874603174603
+				}
+			},
+			{
+				"text": "Outer Swell",
+				"name": "Outer Swell",
+				"match": {
+					"id": "200612",
+					"ids": [
+						"200612"
+					],
+					"name": "Outer Swell",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 349.11290322580646,
+					"y": 796.4179523809524,
+					"w": 83.54838709677419,
+					"h": 19.64259523809524
+				}
+			},
+			{
+				"text": "Medium Straightaways ",
+				"name": "Medium Straightaways ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201101",
+						"201102"
+					],
+					"name": "Medium Straightaways ◎",
+					"score": 1,
+					"margin": 0.21052631578947367,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 64.45161290322581,
+					"y": 851.179126984127,
+					"w": 118.16129032258065,
+					"h": 38.09473015873011
+				}
+			},
+			{
+				"text": "Late Surger Straightaways ",
+				"name": "Late Surger Straightaways ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201381",
+						"201382"
+					],
+					"name": "Late Surger Straightaways ◎",
+					"score": 1,
+					"margin": 0.2405263157894737,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 347.3225806451613,
+					"y": 851.7743571428572,
+					"w": 118.16129032258065,
+					"h": 36.90426984126989
+				}
+			},
+			{
+				"text": "1,500,000 CC",
+				"name": "1,500,000 CC",
+				"match": {
+					"id": "201412",
+					"ids": [
+						"201412"
+					],
+					"name": "1,500,000 CC",
+					"score": 1,
+					"margin": 0.09999999999999998,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 349.7096774193548,
+					"y": 920.8210555555556,
+					"w": 105.62903225806451,
+					"h": 19.64259523809524
+				}
+			},
+			{
+				"text": "Late Surger Corners",
+				"name": "Late Surger Corners ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201391",
+						"201392"
+					],
+					"name": "Late Surger Corners ◎",
+					"score": 1,
+					"margin": 0.33769230769230774,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 65.04838709677419,
+					"y": 922.011515873016,
+					"w": 143.2258064516129,
+					"h": 19.64259523809524
+				}
+			},
+			{
+				"text": "Late Surger Savvy O",
+				"name": "Late Surger Savvy ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201541",
+						"201542"
+					],
+					"name": "Late Surger Savvy ◎",
+					"score": 1,
+					"margin": 0.3933333333333333,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 64.45161290322581,
+					"y": 984.5106825396825,
+					"w": 146.20967741935482,
+					"h": 20.833055555555557
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 346.72580645161287,
+					"y": 984.5106825396825,
+					"w": 98.46774193548387,
+					"h": 19.64259523809524
+				}
+			},
+			{
+				"text": "Come What May",
+				"name": "Come What May",
+				"match": {
+					"id": "201701",
+					"ids": [
+						"201701"
+					],
+					"name": "Come What May",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 65.64516129032258,
+					"y": 1046.4146190476192,
+					"w": 119.35483870967742,
+					"h": 22.023515873015874
+				}
+			},
+			{
+				"text": "Restraint",
+				"name": "Restraint",
+				"match": {
+					"id": "202161",
+					"ids": [
+						"202161"
+					],
+					"name": "Restraint",
+					"score": 1,
+					"margin": 0.33333333333333326,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 347.3225806451613,
+					"y": 1047.6050793650793,
+					"w": 66.24193548387096,
+					"h": 17.85690476190476
+				}
+			},
+			{
+				"text": "Leap Forward",
+				"name": "Leap Forward",
+				"match": {
+					"id": "202402",
+					"ids": [
+						"202402"
+					],
+					"name": "Leap Forward",
+					"score": 1,
+					"margin": 0.2727272727272727,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 65.04838709677419,
+					"y": 1110.6994761904762,
+					"w": 100.25806451612902,
+					"h": 19.64259523809524
 				}
 			}
 		],
 		"name": "Oguri Cap",
-		"epithet": "[Starlight Beat]",
-		"uniqueLevel": 4
+		"epithet": "[Staright Beatl",
+		"uniqueLevel": 5
 	},
 	"statNotes": [
 		{
 			"stat": "Speed",
-			"text": "U 1321",
+			"text": "Ue1601",
 			"masked": [
-				"1031321",
-				"14151321",
-				"151321"
+				"10531601",
+				"14151601",
+				"1651601"
 			],
 			"agreed": true
 		},
 		{
 			"stat": "Stamina",
-			"text": "473",
+			"text": "754",
 			"masked": [
-				"1473",
-				"1473",
-				"1473"
+				"17541",
+				"17541",
+				"17541"
 			],
 			"agreed": true
 		},
 		{
 			"stat": "Power",
-			"text": "Ue 1208",
+			"text": "U81239",
 			"masked": [
-				"0581208",
-				"14681208",
-				"181208"
+				"1031239",
+				"121239",
+				"1281239"
 			],
 			"agreed": true
 		},
 		{
 			"stat": "Guts",
-			"text": "445",
+			"text": "566",
 			"masked": [
-				"1451",
-				"1451",
-				"1451"
+				"1561",
+				"1561",
+				"1561"
 			],
 			"agreed": false
 		},
 		{
 			"stat": "Wit",
-			"text": "U81230",
+			"text": "1056",
 			"masked": [
-				"10181230",
-				"121230",
-				"181230"
+				"1056",
+				"1056",
+				"1056"
 			],
 			"agreed": true
 		}

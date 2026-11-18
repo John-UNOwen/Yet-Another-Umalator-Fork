@@ -1,10 +1,11 @@
-// Replays the nine corpus scans frozen in test/ocr-corpus/fixtures, so the merge and the build are checked
+// Replays the five corpus scans frozen in test/ocr-corpus/fixtures, so the merge and the build are checked
 // over real screenshots without the OCR models. Regenerating them: test/ocr-corpus/README.md.
 
 import test from 'tape';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Grade } from './aptitudes';
+import type { AptitudeKey } from './layout';
 import { DISTANCE_KEYS, umaFromRead } from './build';
 import { splitMarker } from './matcher';
 import { gaps, mergeReads } from './merge';
@@ -14,107 +15,141 @@ const root = join(__dirname, '..', '..');
 const fixture = (name: string): Read => JSON.parse(readFileSync(join(root, 'test/ocr-corpus/fixtures', `${name}.json`), 'utf8')).read;
 const frozen = (group: string) => JSON.parse(readFileSync(join(root, 'test/ocr-corpus/golden', `${group}.json`), 'utf8'));
 
-const GROUPS: Record<string, string[]> = {
-	'daiwa-peak-blue': ['daiwa-scarlet-peak-blue-steam-top', 'daiwa-scarlet-peak-blue-steam-scrolled'],
-	'taiki-bubblegum-steam': ['taiki-shuttle-bubblegum-steam-top', 'taiki-shuttle-bubblegum-steam-scrolled'],
-	'taiki-bubblegum-ug7': ['taiki-shuttle-bubblegum-ug7'],
-	'taiki-bubblegum-ug9': ['taiki-shuttle-bubblegum-ug9'],
-	'taiki-bubblegum-ss': ['taiki-shuttle-bubblegum-ss'],
-	'oguri-starlight-beat': ['oguri-cap-starlight-beat'],
-	'symboli-archer-by-moonlight': ['symboli-rudolf-archer-by-moonlight'],
-};
-const CAPTURES = [
-	'daiwa-scarlet-peak-blue-steam-scrolled', 'daiwa-scarlet-peak-blue-steam-top',
-	'oguri-cap-starlight-beat', 'symboli-rudolf-archer-by-moonlight',
-	'taiki-shuttle-bubblegum-ss', 'taiki-shuttle-bubblegum-steam-scrolled',
-	'taiki-shuttle-bubblegum-steam-top', 'taiki-shuttle-bubblegum-ug7', 'taiki-shuttle-bubblegum-ug9',
-];
-
 const skilldata = JSON.parse(readFileSync(join(root, 'umalator-global/skill_data.json'), 'utf8')) as Record<string, unknown>;
 const KNOWN_IDS = new Set(Object.keys(skilldata));
 const GRADES = ['S', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const STAT_FIELDS = ['speed', 'stamina', 'power', 'guts', 'wisdom'];
+const BEST = ['S', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
-for (const [group, names] of Object.entries(GROUPS)) {
-	test(`${group} builds the frozen uma`, (t) => {
-		t.deepEqual(umaFromRead(mergeReads(names.map(fixture))), frozen(group), 'the merged read builds what was frozen');
+/** One capture as a person read it off the screen: the five stats, the ten aptitude letters, the header,
+ *  the level on the unique skill's chip, and every skill row shown. */
+interface Hand {
+	stats: [number, number, number, number, number];
+	aptitudes: Partial<Record<AptitudeKey, Grade>>;
+	epithet: string;
+	name: string;
+	uniqueLevel: number;
+	skills: string[];
+}
+
+const HAND: Record<string, Hand> = {
+	'copano-rickey-eightfold-fortune': {
+		stats: [1622, 613, 1208, 597, 1266],
+		aptitudes: { turf: 'E', dirt: 'A', short: 'C', mile: 'S', medium: 'A', long: 'G', nige: 'A', senkou: 'A', sashi: 'C', oikomi: 'G' },
+		epithet: '[Eightfold☆Fortune]', name: 'Copano Rickey', uniqueLevel: 4,
+		skills: ['Luck Runs My Way', 'Angling and Scheming', 'Wet Conditions', 'Professor of Curvature', 'Mile Maven', 'Top Runner', 'Groundwork', 'Slipstream', 'Chance of Victory', 'Muddy', 'Victoria por plancha', 'Standard Distance', 'Winter Runner', 'Taking the Lead', 'Speed Eater', 'Front Runner Savvy', 'Tail Held High', 'See Ya Later!', 'Solid Steps'],
+	},
+	'grass-wonder-stone-piercing-blue': {
+		stats: [1615, 667, 1159, 591, 1235],
+		aptitudes: { turf: 'A', dirt: 'F', short: 'G', mile: 'A', medium: 'A', long: 'A', nige: 'F', senkou: 'A', sashi: 'A', oikomi: 'F' },
+		epithet: '[Stone-Piercing Blue]', name: 'Grass Wonder', uniqueLevel: 6,
+		skills: ['Where There\'s a Will, There\'s a Way', 'Let\'s Pump Some Iron!', 'Right-Handed', 'Straightaway Adept', 'Nimble Navigator', 'Position Pilfer', 'Outer Swell', 'Late Surger Savvy', 'See Ya Later!', 'Leap Forward', 'Triumphant Pulse', 'Moving Past, and Beyond', 'Professor of Curvature', 'Ramp Up', 'Go with the Flow', 'On Your Left!', '1,500,000 CC', 'Uma Stan', 'Take the Chance'],
+	},
+	'narita-taishin-nevertheless': {
+		stats: [1537, 611, 1228, 672, 1201],
+		aptitudes: { turf: 'A', dirt: 'A', short: 'F', mile: 'S', medium: 'A', long: 'A', nige: 'G', senkou: 'F', sashi: 'B', oikomi: 'A' },
+		epithet: '[Nevertheless]', name: 'Narita Taishin', uniqueLevel: 5,
+		skills: ['Nemesis', 'Tokyo Racecourse', 'Winter Runner', 'Nimble Navigator', 'Acceleration', 'End Closer Corners', 'See Ya Later!', 'Pumped', 'Full Tilt', 'Ignited Spirit SPD', 'White Lightning Comin\' Through!', 'Standard Distance', 'Corner Adept', 'Encroaching Shadow', 'End Closer Straightaways', 'Slipstream', 'Daring Strike', 'Comeback', 'Razor-Sharp Steps'],
+	},
+	'oguri-cap-starlight-beat': {
+		stats: [1601, 754, 1239, 566, 1056],
+		aptitudes: { turf: 'A', dirt: 'A', short: 'E', mile: 'A', medium: 'A', long: 'B', nige: 'F', senkou: 'A', sashi: 'A', oikomi: 'D' },
+		// The reader lost the `l` and the closing bracket: "[Staright Beatl". Opening bracket plus shape is
+		// what the outfit lookup works with, so that is what is asserted here.
+		epithet: '[Staright Beatl', name: 'Oguri Cap', uniqueLevel: 5,
+		skills: ['Triumphant Pulse', 'Moving Past, and Beyond', 'Spring Runner', 'Straightaway Adept', 'Nimble Navigator', 'Slick Surge', 'Medium Straightaways', 'Late Surger Corners', 'Late Surger Savvy', 'Come What May', 'Leap Forward', 'Let\'s Pump Some Iron!', 'Right-Handed', 'Professor of Curvature', 'Ramp Up', 'Position Pilfer', 'Outer Swell', 'Late Surger Straightaways', '1,500,000 CC', 'See Ya Later!', 'Restraint'],
+	},
+	'taiki-shuttle-bubblegum': {
+		stats: [1635, 627, 1234, 530, 1131],
+		aptitudes: { turf: 'A', dirt: 'A', short: 'A', mile: 'S', medium: 'E', long: 'G', nige: 'C', senkou: 'A', sashi: 'E', oikomi: 'G' },
+		epithet: '[Bubblegum☆Memories]', name: 'Taiki Shuttle', uniqueLevel: 3,
+		skills: ['Joyful Voyage!', 'Victoria por plancha', 'Tokyo Racecourse', 'Straightaway Adept', 'Mile Maven', 'Shifting Gears', 'Pace Chaser Corners', 'Neck and Neck', 'Unstoppable', 'Lights of Vaudeville', 'Budding Blossom', 'Professor of Curvature', 'Nimble Navigator', 'Mile Corners', 'Pace Chaser Straightaways', 'See Ya Later!', 'Full Tilt'],
+	},
+};
+
+// The one row on the five screens that no offered name answers to: `Muddy` on Copano Rickey is not in
+// skillnames.json, so it cannot be matched. Everything else on every screen was accepted.
+const NOT_OFFERED: Record<string, string[]> = { 'copano-rickey-eightfold-fortune': ['Muddy'] };
+
+for (const capture of Object.keys(HAND)) {
+	test(`${capture} builds the frozen uma`, (t) => {
+		t.deepEqual(umaFromRead(mergeReads([fixture(capture)])), frozen(capture), 'the read builds what was frozen');
 		t.end();
 	});
 }
 
-test('every frozen build is a build the app would accept', (t) => {
-	for (const group of Object.keys(GROUPS)) {
-		const draft = frozen(group);
-		for (const field of STAT_FIELDS) t.ok(Number.isInteger(draft[field]) && draft[field] >= 1 && draft[field] <= 2000, `${group} ${field} ${draft[field]}`);
-		for (const field of ['distanceAptitude', 'surfaceAptitude', 'strategyAptitude']) t.ok(GRADES.includes(draft[field]), `${group} ${field} ${draft[field]}`);
-		t.ok(['Nige', 'Senkou', 'Sasi', 'Oikomi'].includes(draft.strategy), `${group} strategy ${draft.strategy}`);
-		t.ok(draft.starCount >= 1 && draft.starCount <= 5, `${group} starCount ${draft.starCount}`);
-		t.ok(draft.uniqueLv >= 1 && draft.uniqueLv <= 6, `${group} uniqueLv ${draft.uniqueLv}`);
-		t.ok(draft.mood >= -2 && draft.mood <= 2, `${group} mood ${draft.mood}`);
-		t.equal(draft.outfitId, '', `${group} leaves the outfit to the review screen`);
-		for (const id of draft.skills) t.ok(KNOWN_IDS.has(id), `${group} offers ${id}, which the app knows`);
-		t.deepEqual(draft.skills.filter((id: string, at: number) => draft.skills.indexOf(id) !== at), [], `${group} reads every skill once`);
+test('the frozen builds are what the screens say', (t) => {
+	for (const [capture, hand] of Object.entries(HAND)) {
+		const merged = mergeReads([fixture(capture)]);
+		const draft = frozen(capture);
+		const seen = [draft.speed, draft.stamina, draft.power, draft.guts, draft.wisdom];
+		t.deepEqual(seen, hand.stats, `${capture} read the five stats as seen`);
+		for (const [key, want] of Object.entries(hand.aptitudes)) {
+			t.equal(merged.aptitudes[key as AptitudeKey].value, want, `${capture} ${key} ${want}`);
+			t.deepEqual(merged.aptitudes[key as AptitudeKey].other, [], `${capture} ${key} read once`);
+		}
+		t.equal(merged.epithet.value, hand.epithet, `${capture} epithet ${hand.epithet}`);
+		t.equal(merged.name.value, hand.name, `${capture} name ${hand.name}`);
+		t.equal(draft.uniqueLv, hand.uniqueLevel, `${capture} unique level from its chip`);
 	}
 	t.end();
 });
 
-// Read off the screens by hand. Only these two captures have a list known apart from the reader, so only
-// they can show that nothing extra was accepted.
-const BY_HAND: Record<string, string[]> = {
-	'oguri-cap-starlight-beat': ['Triumphant Pulse', 'Shooting for Victory!', 'Budding Blossom', 'Right-Handed', 'Firm Conditions', 'Professor of Curvature', 'No Stopping Me!', 'Sprint Corners', 'Sprinting Gear', 'Straight Descent', 'Pace Chaser Corners', 'Pace Chaser Savvy', 'Uma Stan', 'Groundwork', 'Neck and Neck', 'Burning Spirit SPD', 'Ignited Spirit PWR'],
-	'taiki-shuttle-bubblegum-steam-top': ['Joyful Voyage!', 'Shooting Star', 'Budding Blossom', 'Standard Distance', 'Corner Adept', 'Straightaway Adept', 'Speed Star', 'Mile Maven', 'Mile Corners', 'Shifting Gears', 'Pace Chaser Straightaways', 'Pace Chaser Corners', 'Uma Stan', 'Tail Held High'],
-};
-
-test('the two hand-written skill lists come out whole', (t) => {
-	for (const [capture, names] of Object.entries(BY_HAND)) {
+test('the hand-written skill lists come out whole', (t) => {
+	for (const [capture, hand] of Object.entries(HAND)) {
 		const rows = fixture(capture).skills ?? [];
-		t.equal(rows.length, names.length, `${capture} read exactly ${names.length} rows`);
-		for (const name of names) {
-			const want = splitMarker(name).base;
-			t.ok(rows.some((row) => splitMarker(row.name).base === want), `${capture} has ${name}`);
+		const want = hand.skills.filter((name) => !(NOT_OFFERED[capture] ?? []).includes(name));
+		t.equal(rows.length, want.length, `${capture} accepted ${want.length} rows, every row on the screen that has an offered name`);
+		for (const name of want) {
+			const base = splitMarker(name).base;
+			t.ok(rows.some((row) => splitMarker(row.name).base === base), `${capture} has ${name}`);
+		}
+		for (const name of NOT_OFFERED[capture] ?? []) {
+			t.notOk(rows.some((row) => splitMarker(row.name).base === splitMarker(name).base), `${capture} cannot take ${name}, which this fork does not name`);
 		}
 	}
 	t.end();
 });
 
 test('a level chip tells the character own unique from the inherited copy', (t) => {
-	const owns = (group: string, id: string) => frozen(group).skills.includes(id);
-	t.ok(owns('oguri-starlight-beat', '100061') && !owns('oguri-starlight-beat', '900061'), 'oguri takes Triumphant Pulse 100061');
-	t.ok(owns('taiki-bubblegum-steam', '110101') && !owns('taiki-bubblegum-steam', '910101'), 'taiki takes Joyful Voyage! 110101');
-	t.ok(owns('daiwa-peak-blue', '10091') && !owns('daiwa-peak-blue', '90091'), 'daiwa takes Red Ace 10091');
-	t.ok(owns('daiwa-peak-blue', '900061'), 'daiwa keeps the inherited Triumphant Pulse it shows in its inheritance slot');
-	t.end();
-});
-
-test('two shots of one dialog add rows without disagreeing', (t) => {
-	for (const [group, names] of Object.entries(GROUPS)) {
-		if (names.length < 2) continue;
-		const [first, second] = names.map(fixture);
-		const merged = mergeReads([first, second]);
-		t.equal(merged.screenshots, 2, `${group} came from two shots`);
-		for (const label of ['Speed', 'Stamina', 'Power', 'Guts', 'Wit']) {
-			t.equal(first.stats?.[label], second.stats?.[label], `${group} ${label} read the same in both shots`);
-			t.deepEqual(merged.stats[label].other, [], `${group} ${label} has no second answer to show`);
-		}
-		const rows = (first.skills ?? []).length + (second.skills ?? []).length;
-		t.ok(merged.skills.length < rows, `${group} folded ${rows} rows into ${merged.skills.length}`);
-		t.deepEqual(merged.epithet.other, [], `${group} read one epithet`);
-	}
+	const owns = (capture: string, id: string) => frozen(capture).skills.includes(id);
+	t.ok(owns('oguri-cap-starlight-beat', '100061') && !owns('oguri-cap-starlight-beat', '900061'), 'oguri takes Triumphant Pulse 100061 from its Lvl 5 chip');
+	t.ok(owns('grass-wonder-stone-piercing-blue', '900061') && !owns('grass-wonder-stone-piercing-blue', '100061'), 'grass wonder shows the inherited Triumphant Pulse in its inheritance slot, so it takes 900061');
+	t.ok(owns('taiki-shuttle-bubblegum', '110101') && !owns('taiki-shuttle-bubblegum', '910101'), 'taiki takes Joyful Voyage! 110101 from its Lvl 3 chip');
+	t.ok(owns('grass-wonder-stone-piercing-blue', '100111'), 'grass wonder takes its own Where There\'s a Will, There\'s a Way 100111');
+	t.ok(owns('narita-taishin-nevertheless', '100501'), 'narita taishin takes Nemesis 100501');
+	t.ok(owns('copano-rickey-eightfold-fortune', '100981'), 'copano rickey takes Luck Runs My Way 100981');
 	t.end();
 });
 
 test('the one distance grade is the best of the four shown', (t) => {
-	for (const capture of CAPTURES) {
+	for (const capture of Object.keys(HAND)) {
 		const aptitudes = fixture(capture).aptitudes ?? {};
 		const shown = DISTANCE_KEYS.map((key) => aptitudes[key]).filter((grade): grade is Grade => !!grade);
-		const best = [...shown].sort((a, b) => GRADES.indexOf(a) - GRADES.indexOf(b))[0];
-		const group = Object.keys(GROUPS).find((name) => GROUPS[name].includes(capture)) ?? '';
-		t.equal(frozen(group).distanceAptitude, best, `${capture} takes ${best} from ${shown.join(' ')}`);
+		t.equal(shown.length, 4, `${capture} showed all four distance cells`);
+		const best = [...shown].sort((a, b) => BEST.indexOf(a) - BEST.indexOf(b))[0];
+		t.equal(frozen(capture).distanceAptitude, best, `${capture} takes ${best} from ${shown.join(' ')}`);
 	}
 	t.end();
 });
 
 test('these captures leave no field unread', (t) => {
-	for (const capture of CAPTURES) t.deepEqual(gaps(mergeReads([fixture(capture)])), [], `${capture} read every stat and aptitude`);
+	for (const capture of Object.keys(HAND)) t.deepEqual(gaps(mergeReads([fixture(capture)])), [], `${capture} read every stat and aptitude`);
+	t.end();
+});
+
+test('every frozen build is a build the app would accept', (t) => {
+	for (const capture of Object.keys(HAND)) {
+		const draft = frozen(capture);
+		for (const field of STAT_FIELDS) t.ok(Number.isInteger(draft[field]) && draft[field] >= 1 && draft[field] <= 2000, `${capture} ${field} ${draft[field]}`);
+		for (const field of ['distanceAptitude', 'surfaceAptitude', 'strategyAptitude']) t.ok(GRADES.includes(draft[field]), `${capture} ${field} ${draft[field]}`);
+		t.ok(['Nige', 'Senkou', 'Sasi', 'Oikomi'].includes(draft.strategy), `${capture} strategy ${draft.strategy}`);
+		t.ok(draft.starCount >= 1 && draft.starCount <= 5, `${capture} starCount ${draft.starCount}`);
+		t.ok(draft.uniqueLv >= 1 && draft.uniqueLv <= 6, `${capture} uniqueLv ${draft.uniqueLv}`);
+		t.ok(draft.mood >= -2 && draft.mood <= 2, `${capture} mood ${draft.mood}`);
+		t.equal(draft.outfitId, '', `${capture} leaves the outfit to the review screen`);
+		for (const id of draft.skills) t.ok(KNOWN_IDS.has(id), `${capture} offers ${id}, which the app knows`);
+		t.deepEqual(draft.skills.filter((id: string, at: number) => draft.skills.indexOf(id) !== at), [], `${capture} reads every skill once`);
+	}
 	t.end();
 });

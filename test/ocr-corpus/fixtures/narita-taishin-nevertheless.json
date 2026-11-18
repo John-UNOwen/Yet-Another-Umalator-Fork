@@ -1,0 +1,493 @@
+{
+	"name": "narita-taishin-nevertheless",
+	"scale": 1.2804097311139564,
+	"read": {
+		"stats": {
+			"Speed": 1537,
+			"Stamina": 611,
+			"Power": 1228,
+			"Guts": 672,
+			"Wit": 1201
+		},
+		"aptitudes": {
+			"turf": "A",
+			"dirt": "A",
+			"short": "F",
+			"mile": "S",
+			"medium": "A",
+			"long": "A",
+			"nige": "G",
+			"senkou": "F",
+			"sashi": "B",
+			"oikomi": "A"
+		},
+		"skills": [
+			{
+				"text": "White Lightning Comin' Through!",
+				"name": "White Lightning Comin' Through!",
+				"match": {
+					"id": "900211",
+					"ids": [
+						"900211"
+					],
+					"name": "White Lightning Comin' Through!",
+					"score": 1,
+					"margin": 0.3976923076923077,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 466.0806451612903,
+					"y": 575.1685831473214,
+					"w": 219.65625,
+					"h": 51.22959040178571
+				}
+			},
+			{
+				"text": "Nemesis",
+				"name": "Nemesis",
+				"match": {
+					"id": "100501",
+					"ids": [
+						"100501"
+					],
+					"name": "Nemesis",
+					"score": 1,
+					"margin": 0.5555555555555556,
+					"trims": 0
+				},
+				"level": 5,
+				"box": {
+					"x": 87.39012096774194,
+					"y": 585.2592600446428,
+					"w": 83.45362903225808,
+					"h": 27.94341294642857
+				}
+			},
+			{
+				"text": "Tokyo Racecourse O",
+				"name": "Tokyo Racecourse ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200031",
+						"200032",
+						"200033"
+					],
+					"name": "Tokyo Racecourse ◎",
+					"score": 1,
+					"margin": 0.1875,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 88.96471774193549,
+					"y": 669.0894988839285,
+					"w": 199.18649193548387,
+					"h": 28.719618861607145
+				}
+			},
+			{
+				"text": "Standard Distance ",
+				"name": "Standard Distance ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200131",
+						"200132",
+						"200133"
+					],
+					"name": "Standard Distance ◎",
+					"score": 1,
+					"margin": 0.1578947368421053,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 466.0806451612903,
+					"y": 670.6419107142857,
+					"w": 195.25,
+					"h": 23.28617745535714
+				}
+			},
+			{
+				"text": "Corner Adept O",
+				"name": "Corner Adept ○",
+				"match": {
+					"id": null,
+					"ids": [
+						"200332",
+						"200333"
+					],
+					"name": "Corner Adept ○",
+					"score": 1,
+					"margin": 0.4444444444444444,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 467.65524193548384,
+					"y": 753.6959436383928,
+					"w": 152.7358870967742,
+					"h": 27.16720703125
+				}
+			},
+			{
+				"text": "Winter Runner ©",
+				"name": "Winter Runner ◎",
+				"match": {
+					"id": "200201",
+					"ids": [
+						"200201"
+					],
+					"name": "Winter Runner ◎",
+					"score": 1,
+					"margin": 0.33333333333333326,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 88.96471774193549,
+					"y": 754.4721495535714,
+					"w": 159.82157258064515,
+					"h": 24.062383370535713
+				}
+			},
+			{
+				"text": "Encroaching Shadow",
+				"name": "Encroaching Shadow",
+				"match": {
+					"id": "200641",
+					"ids": [
+						"200641"
+					],
+					"name": "Encroaching Shadow",
+					"score": 1,
+					"margin": 0.4845454545454546,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 464.50604838709677,
+					"y": 836.7499765625,
+					"w": 198.3991935483871,
+					"h": 28.719618861607145
+				}
+			},
+			{
+				"text": "Nimble Navigator",
+				"name": "Nimble Navigator",
+				"match": {
+					"id": "200492",
+					"ids": [
+						"200492"
+					],
+					"name": "Nimble Navigator",
+					"score": 1,
+					"margin": 0.47444444444444445,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 88.17741935483872,
+					"y": 837.5261824776786,
+					"w": 169.26915322580646,
+					"h": 27.94341294642857
+				}
+			},
+			{
+				"text": "End Closer Straightaways ",
+				"name": "End Closer Straightaways ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201451",
+						"201452"
+					],
+					"name": "End Closer Straightaways ◎",
+					"score": 1,
+					"margin": 0.2405263157894737,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 464.50604838709677,
+					"y": 909.7133325892856,
+					"w": 138.56451612903223,
+					"h": 52.00579631696439
+				}
+			},
+			{
+				"text": "Acceleration",
+				"name": "Acceleration",
+				"match": {
+					"id": "201062",
+					"ids": [
+						"201062"
+					],
+					"name": "Acceleration",
+					"score": 1,
+					"margin": 0.16666666666666663,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 88.17741935483872,
+					"y": 920.5802154017856,
+					"w": 123.60584677419354,
+					"h": 26.391001116071426
+				}
+			},
+			{
+				"text": "Slipstream",
+				"name": "Slipstream",
+				"match": {
+					"id": "201651",
+					"ids": [
+						"201651"
+					],
+					"name": "Slipstream",
+					"score": 1,
+					"margin": 0.36363636363636365,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 463.71875,
+					"y": 1004.4104542410714,
+					"w": 104.71068548387096,
+					"h": 27.94341294642857
+				}
+			},
+			{
+				"text": "End Closer Corners",
+				"name": "End Closer Corners ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201461",
+						"201462"
+					],
+					"name": "End Closer Corners ◎",
+					"score": 1,
+					"margin": 0.33769230769230774,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 88.96471774193549,
+					"y": 1005.18666015625,
+					"w": 185.01512096774195,
+					"h": 24.062383370535713
+				}
+			},
+			{
+				"text": "Daring Strike",
+				"name": "Daring Strike",
+				"match": {
+					"id": "202021",
+					"ids": [
+						"202021"
+					],
+					"name": "Daring Strike",
+					"score": 1,
+					"margin": 0.41666666666666674,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 465.29334677419354,
+					"y": 1087.4644871651788,
+					"w": 126.75504032258067,
+					"h": 29.495824776785714
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 86.60282258064517,
+					"y": 1088.240693080357,
+					"w": 132.26612903225805,
+					"h": 25.614795200892857
+				}
+			},
+			{
+				"text": "Comeback",
+				"name": "Comeback",
+				"match": {
+					"id": "202272",
+					"ids": [
+						"202272"
+					],
+					"name": "Comeback",
+					"score": 1,
+					"margin": 0.5454545454545454,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 466.8679435483871,
+					"y": 1167.4136964285715,
+					"w": 102.34879032258065,
+					"h": 27.16720703125
+				}
+			},
+			{
+				"text": "Pumped",
+				"name": "Pumped",
+				"match": {
+					"id": "202112",
+					"ids": [
+						"202112"
+					],
+					"name": "Pumped",
+					"score": 1,
+					"margin": 0.5,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 87.39012096774194,
+					"y": 1168.18990234375,
+					"w": 82.6663306451613,
+					"h": 27.94341294642857
+				}
+			},
+			{
+				"text": "Full Tilt",
+				"name": "Full Tilt",
+				"match": {
+					"id": "202282",
+					"ids": [
+						"202282"
+					],
+					"name": "Full Tilt",
+					"score": 1,
+					"margin": 0.5,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 87.39012096774194,
+					"y": 1251.243935267857,
+					"w": 80.30443548387098,
+					"h": 26.391001116071426
+				}
+			},
+			{
+				"text": "Razor-Sharp Steps",
+				"name": "Razor-Sharp Steps",
+				"match": {
+					"id": "202491",
+					"ids": [
+						"202491"
+					],
+					"name": "Razor-Sharp Steps",
+					"score": 1,
+					"margin": 0.33333333333333326,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 465.29334677419354,
+					"y": 1252.0201411830358,
+					"w": 176.35483870967744,
+					"h": 28.719618861607145
+				}
+			},
+			{
+				"text": "Ignited Spirit SPD",
+				"name": "Ignited Spirit SPD",
+				"match": {
+					"id": "210012",
+					"ids": [
+						"210012"
+					],
+					"name": "Ignited Spirit SPD",
+					"score": 1,
+					"margin": 0.125,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 89.75201612903227,
+					"y": 1336.6265859375,
+					"w": 168.4818548387097,
+					"h": 26.391001116071426
+				}
+			}
+		],
+		"name": "Narita Taishin",
+		"epithet": "[Nevertheless]",
+		"uniqueLevel": 5
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "1537",
+			"masked": [
+				"1537",
+				"1537",
+				"1537"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Stamina",
+			"text": "611",
+			"masked": [
+				"161",
+				"161",
+				"161"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Power",
+			"text": "1228",
+			"masked": [
+				"8128",
+				"128",
+				"128"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Guts",
+			"text": "672",
+			"masked": [
+				"1672",
+				"1672",
+				"1672"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Wit",
+			"text": "U& 1201",
+			"masked": [
+				"1061201",
+				"161201",
+				"161201"
+			],
+			"agreed": true
+		}
+	]
+}

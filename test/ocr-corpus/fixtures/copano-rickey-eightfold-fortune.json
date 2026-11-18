@@ -1,0 +1,471 @@
+{
+	"name": "copano-rickey-eightfold-fortune",
+	"scale": 1.6722408026755853,
+	"read": {
+		"stats": {
+			"Speed": 1622,
+			"Stamina": 613,
+			"Power": 1208,
+			"Guts": 597,
+			"Wit": 1266
+		},
+		"aptitudes": {
+			"turf": "E",
+			"dirt": "A",
+			"short": "C",
+			"mile": "S",
+			"medium": "A",
+			"long": "G",
+			"nige": "A",
+			"senkou": "A",
+			"sashi": "C",
+			"oikomi": "G"
+		},
+		"skills": [
+			{
+				"text": "Victoria por plancha ☆",
+				"name": "Victoria por plancha ☆",
+				"match": {
+					"id": "900141",
+					"ids": [
+						"900141"
+					],
+					"name": "Victoria por plancha ☆",
+					"score": 1,
+					"margin": 0.4766666666666668,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 353.8568548387097,
+					"y": 450.60167633928563,
+					"w": 161.55645161290323,
+					"h": 19.800073660714286
+				}
+			},
+			{
+				"text": "Luck Runs My Way",
+				"name": "Luck Runs My Way",
+				"match": {
+					"id": "100981",
+					"ids": [
+						"100981"
+					],
+					"name": "Luck Runs My Way",
+					"score": 1,
+					"margin": 0.3633333333333333,
+					"trims": 0
+				},
+				"level": 4,
+				"box": {
+					"x": 70.53024193548387,
+					"y": 450.60167633928563,
+					"w": 134.42943548387095,
+					"h": 21.600080357142854
+				}
+			},
+			{
+				"text": "Angling and Scheming",
+				"name": "Angling and Scheming",
+				"match": {
+					"id": "900201",
+					"ids": [
+						"900201"
+					],
+					"name": "Angling and Scheming",
+					"score": 1,
+					"margin": 0.5217391304347826,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 69.9274193548387,
+					"y": 513.6019107142856,
+					"w": 160.3508064516129,
+					"h": 22.20008258928571
+				}
+			},
+			{
+				"text": "Standard Distance O",
+				"name": "Standard Distance ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200131",
+						"200132",
+						"200133"
+					],
+					"name": "Standard Distance ◎",
+					"score": 1,
+					"margin": 0.1578947368421053,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 352.6512096774194,
+					"y": 514.2019129464286,
+					"w": 146.4858870967742,
+					"h": 18.000066964285715
+				}
+			},
+			{
+				"text": "Wet Conditions O",
+				"name": "Wet Conditions ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200161",
+						"200162",
+						"200163"
+					],
+					"name": "Wet Conditions ◎",
+					"score": 1,
+					"margin": 0.2857142857142857,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 70.53024193548387,
+					"y": 577.2021473214285,
+					"w": 125.9899193548387,
+					"h": 18.000066964285715
+				}
+			},
+			{
+				"text": "Winter Runner O",
+				"name": "Winter Runner ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200201",
+						"200202",
+						"200203"
+					],
+					"name": "Winter Runner ◎",
+					"score": 1,
+					"margin": 0.33333333333333326,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 353.8568548387097,
+					"y": 577.2021473214285,
+					"w": 118.75604838709678,
+					"h": 18.60006919642857
+				}
+			},
+			{
+				"text": "Taking the Lead",
+				"name": "Taking the Lead",
+				"match": {
+					"id": "200531",
+					"ids": [
+						"200531"
+					],
+					"name": "Taking the Lead",
+					"score": 1,
+					"margin": 0.2857142857142857,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 352.6512096774194,
+					"y": 639.0023772321427,
+					"w": 117.55040322580645,
+					"h": 20.400075892857142
+				}
+			},
+			{
+				"text": "Professor of Curvature",
+				"name": "Professor of Curvature",
+				"match": {
+					"id": "200331",
+					"ids": [
+						"200331"
+					],
+					"name": "Professor of Curvature",
+					"score": 1,
+					"margin": 0.4845454545454546,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 70.53024193548387,
+					"y": 639.6023794642856,
+					"w": 160.3508064516129,
+					"h": 18.60006919642857
+				}
+			},
+			{
+				"text": "Mile Maven",
+				"name": "Mile Maven",
+				"match": {
+					"id": "200681",
+					"ids": [
+						"200681"
+					],
+					"name": "Mile Maven",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 70.53024193548387,
+					"y": 702.0026116071427,
+					"w": 85.60080645161291,
+					"h": 19.200071428571427
+				}
+			},
+			{
+				"text": "Speed Eater",
+				"name": "Speed Eater",
+				"match": {
+					"id": "201082",
+					"ids": [
+						"201082"
+					],
+					"name": "Speed Eater",
+					"score": 1,
+					"margin": 0.22999999999999998,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 352.0483870967742,
+					"y": 702.0026116071427,
+					"w": 91.02620967741936,
+					"h": 20.400075892857142
+				}
+			},
+			{
+				"text": "Top Runner",
+				"name": "Top Runner",
+				"match": {
+					"id": "201271",
+					"ids": [
+						"201271"
+					],
+					"name": "Top Runner",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 70.53024193548387,
+					"y": 764.4028437499999,
+					"w": 84.99798387096773,
+					"h": 21.600080357142854
+				}
+			},
+			{
+				"text": "Front Runner Savvy O",
+				"name": "Front Runner Savvy ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201521",
+						"201522"
+					],
+					"name": "Front Runner Savvy ◎",
+					"score": 1,
+					"margin": 0.3633333333333333,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 352.6512096774194,
+					"y": 765.0028459821427,
+					"w": 152.5141129032258,
+					"h": 20.400075892857142
+				}
+			},
+			{
+				"text": "Tail Held High",
+				"name": "Tail Held High",
+				"match": {
+					"id": "201611",
+					"ids": [
+						"201611"
+					],
+					"name": "Tail Held High",
+					"score": 1,
+					"margin": 0.4915384615384616,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 352.6512096774194,
+					"y": 826.8030758928571,
+					"w": 107.3024193548387,
+					"h": 21.000078125
+				}
+			},
+			{
+				"text": "Groundwork",
+				"name": "Groundwork",
+				"match": {
+					"id": "201601",
+					"ids": [
+						"201601"
+					],
+					"name": "Groundwork",
+					"score": 1,
+					"margin": 0.6,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 70.53024193548387,
+					"y": 826.8030758928571,
+					"w": 89.82056451612902,
+					"h": 19.800073660714286
+				}
+			},
+			{
+				"text": "Slipstream",
+				"name": "Slipstream",
+				"match": {
+					"id": "201651",
+					"ids": [
+						"201651"
+					],
+					"name": "Slipstream",
+					"score": 1,
+					"margin": 0.36363636363636365,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 69.32459677419355,
+					"y": 886.2032968749999,
+					"w": 78.36693548387098,
+					"h": 21.000078125
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 352.0483870967742,
+					"y": 886.8032991071427,
+					"w": 98.2600806451613,
+					"h": 18.60006919642857
+				}
+			},
+			{
+				"text": "Solid Steps",
+				"name": "Solid Steps",
+				"match": {
+					"id": "202332",
+					"ids": [
+						"202332"
+					],
+					"name": "Solid Steps",
+					"score": 1,
+					"margin": 0.36363636363636365,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 352.0483870967742,
+					"y": 948.0035267857143,
+					"w": 83.18951612903227,
+					"h": 22.80008482142857
+				}
+			},
+			{
+				"text": "Chance of Victory",
+				"name": "Chance of Victory",
+				"match": {
+					"id": "202261",
+					"ids": [
+						"202261"
+					],
+					"name": "Chance of Victory",
+					"score": 1,
+					"margin": 0.4146153846153846,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 71.73588709677419,
+					"y": 949.2035312499999,
+					"w": 125.9899193548387,
+					"h": 21.600080357142854
+				}
+			}
+		],
+		"name": "Copano Rickey",
+		"epithet": "[Eightfold☆Fortune]",
+		"uniqueLevel": 4
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "UE1622",
+			"masked": [
+				"058162",
+				"1265162",
+				"16162"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Stamina",
+			"text": "613",
+			"masked": [
+				"1613",
+				"1613",
+				"1613"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Power",
+			"text": "U 1208",
+			"masked": [
+				"10831208",
+				"1631208",
+				"161208"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Guts",
+			"text": "597",
+			"masked": [
+				"1597",
+				"1597",
+				"1597"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Wit",
+			"text": "U81266",
+			"masked": [
+				"708126",
+				"1218126",
+				"128126"
+			],
+			"agreed": false
+		}
+	]
+}

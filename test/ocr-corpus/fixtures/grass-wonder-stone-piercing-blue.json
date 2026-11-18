@@ -1,0 +1,486 @@
+{
+	"name": "grass-wonder-stone-piercing-blue",
+	"scale": 1.6891891891891893,
+	"read": {
+		"stats": {
+			"Speed": 1615,
+			"Stamina": 667,
+			"Power": 1159,
+			"Guts": 591,
+			"Wit": 1235
+		},
+		"aptitudes": {
+			"turf": "A",
+			"dirt": "F",
+			"short": "G",
+			"mile": "A",
+			"medium": "A",
+			"long": "A",
+			"nige": "F",
+			"senkou": "A",
+			"sashi": "A",
+			"oikomi": "F"
+		},
+		"skills": [
+			{
+				"text": "Where There's a Will, There's a Way",
+				"name": "Where There's a Will, There's a Way",
+				"match": {
+					"id": "100111",
+					"ids": [
+						"100111"
+					],
+					"name": "Where There's a Will, There's a Way",
+					"score": 1,
+					"margin": 0.5515384615384615,
+					"trims": 0
+				},
+				"level": 6,
+				"box": {
+					"x": 65.04838709677419,
+					"y": 474.09333333333325,
+					"w": 152.17741935483872,
+					"h": 39.11270000000001
+				}
+			},
+			{
+				"text": "Triumphant Pulse",
+				"name": "Triumphant Pulse",
+				"match": {
+					"id": "900061",
+					"ids": [
+						"900061"
+					],
+					"name": "Triumphant Pulse",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 348.51612903225805,
+					"y": 482.98258333333325,
+					"w": 124.12903225806451,
+					"h": 19.55635
+				}
+			},
+			{
+				"text": "Moving Past, and Beyond",
+				"name": "Moving Past, and Beyond",
+				"match": {
+					"id": "900591",
+					"ids": [
+						"900591"
+					],
+					"name": "Moving Past, and Beyond",
+					"score": 1,
+					"margin": 0.48857142857142866,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 347.3225806451613,
+					"y": 537.5033166666666,
+					"w": 127.11290322580646,
+					"h": 37.33485000000004
+				}
+			},
+			{
+				"text": "Let's Pump Some lron!",
+				"name": "Let's Pump Some Iron!",
+				"match": {
+					"id": "900271",
+					"ids": [
+						"900271"
+					],
+					"name": "Let's Pump Some Iron!",
+					"score": 0.9375,
+					"margin": 0.36083333333333323,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 64.45161290322581,
+					"y": 545.79995,
+					"w": 158.14516129032256,
+					"h": 20.148966666666663
+				}
+			},
+			{
+				"text": "Right-Handed O",
+				"name": "Right-Handed ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200011",
+						"200012",
+						"200013"
+					],
+					"name": "Right-Handed ◎",
+					"score": 1,
+					"margin": 0.25,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 65.04838709677419,
+					"y": 608.0246999999999,
+					"w": 119.95161290322581,
+					"h": 20.148966666666663
+				}
+			},
+			{
+				"text": "Professor of Curvature",
+				"name": "Professor of Curvature",
+				"match": {
+					"id": "200331",
+					"ids": [
+						"200331"
+					],
+					"name": "Professor of Curvature",
+					"score": 1,
+					"margin": 0.4845454545454546,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 347.3225806451613,
+					"y": 608.0246999999999,
+					"w": 161.1290322580645,
+					"h": 20.148966666666663
+				}
+			},
+			{
+				"text": "Ramp Up",
+				"name": "Ramp Up",
+				"match": {
+					"id": "200462",
+					"ids": [
+						"200462"
+					],
+					"name": "Ramp Up",
+					"score": 1,
+					"margin": 0.5,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 346.72580645161287,
+					"y": 670.2494499999999,
+					"w": 69.2258064516129,
+					"h": 24.29728333333333
+				}
+			},
+			{
+				"text": "Straightaway Adept",
+				"name": "Straightaway Adept",
+				"match": {
+					"id": "200362",
+					"ids": [
+						"200362"
+					],
+					"name": "Straightaway Adept",
+					"score": 1,
+					"margin": 0.23529411764705888,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 63.854838709677416,
+					"y": 670.8420666666666,
+					"w": 144.41935483870967,
+					"h": 22.519433333333332
+				}
+			},
+			{
+				"text": "Go with the Flow",
+				"name": "Go with the Flow",
+				"match": {
+					"id": "200502",
+					"ids": [
+						"200502"
+					],
+					"name": "Go with the Flow",
+					"score": 1,
+					"margin": 0.6014285714285714,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 349.7096774193548,
+					"y": 733.6594333333333,
+					"w": 121.14516129032256,
+					"h": 19.55635
+				}
+			},
+			{
+				"text": "Nimble Navigator",
+				"name": "Nimble Navigator",
+				"match": {
+					"id": "200492",
+					"ids": [
+						"200492"
+					],
+					"name": "Nimble Navigator",
+					"score": 1,
+					"margin": 0.47444444444444445,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 64.45161290322581,
+					"y": 734.2520499999999,
+					"w": 127.11290322580645,
+					"h": 20.148966666666663
+				}
+			},
+			{
+				"text": "On Your Left!",
+				"name": "On Your Left!",
+				"match": {
+					"id": "200601",
+					"ids": [
+						"200601"
+					],
+					"name": "On Your Left!",
+					"score": 1,
+					"margin": 0.5454545454545454,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 347.9193548387097,
+					"y": 796.4767999999999,
+					"w": 99.66129032258064,
+					"h": 19.55635
+				}
+			},
+			{
+				"text": "Position Pilfer",
+				"name": "Position Pilfer",
+				"match": {
+					"id": "200592",
+					"ids": [
+						"200592"
+					],
+					"name": "Position Pilfer",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 65.04838709677419,
+					"y": 796.4767999999999,
+					"w": 101.45161290322581,
+					"h": 19.55635
+				}
+			},
+			{
+				"text": "Outer Swell",
+				"name": "Outer Swell",
+				"match": {
+					"id": "200612",
+					"ids": [
+						"200612"
+					],
+					"name": "Outer Swell",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 66.24193548387096,
+					"y": 858.7015499999999,
+					"w": 84.14516129032258,
+					"h": 19.55635
+				}
+			},
+			{
+				"text": "1,500,000 CC",
+				"name": "1,500,000 CC",
+				"match": {
+					"id": "201412",
+					"ids": [
+						"201412"
+					],
+					"name": "1,500,000 CC",
+					"score": 1,
+					"margin": 0.09999999999999998,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 350.30645161290323,
+					"y": 859.2941666666666,
+					"w": 103.83870967741936,
+					"h": 18.371116666666666
+				}
+			},
+			{
+				"text": "Uma Stan",
+				"name": "Uma Stan",
+				"match": {
+					"id": "201591",
+					"ids": [
+						"201591"
+					],
+					"name": "Uma Stan",
+					"score": 1,
+					"margin": 0.28,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 347.3225806451613,
+					"y": 922.1115333333332,
+					"w": 71.01612903225806,
+					"h": 19.55635
+				}
+			},
+			{
+				"text": "Late Surger Savvy O",
+				"name": "Late Surger Savvy ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201541",
+						"201542"
+					],
+					"name": "Late Surger Savvy ◎",
+					"score": 1,
+					"margin": 0.3933333333333333,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 64.45161290322581,
+					"y": 922.1115333333332,
+					"w": 145.61290322580643,
+					"h": 20.74158333333333
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 63.854838709677416,
+					"y": 984.9288999999999,
+					"w": 99.06451612903226,
+					"h": 19.55635
+				}
+			},
+			{
+				"text": "Take the Chance",
+				"name": "Take the Chance",
+				"match": {
+					"id": "202082",
+					"ids": [
+						"202082"
+					],
+					"name": "Take the Chance",
+					"score": 1,
+					"margin": 0.45857142857142863,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 348.51612903225805,
+					"y": 985.5215166666665,
+					"w": 121.14516129032256,
+					"h": 18.371116666666666
+				}
+			},
+			{
+				"text": "Leap Forward",
+				"name": "Leap Forward",
+				"match": {
+					"id": "202402",
+					"ids": [
+						"202402"
+					],
+					"name": "Leap Forward",
+					"score": 1,
+					"margin": 0.2727272727272727,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 64.45161290322581,
+					"y": 1048.3388833333331,
+					"w": 100.85483870967742,
+					"h": 20.148966666666663
+				}
+			}
+		],
+		"name": "Grass Wonder",
+		"epithet": "[Stone-Piercing Blue]",
+		"uniqueLevel": 6
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "U&1615",
+			"masked": [
+				"1081615",
+				"1426151615",
+				"12181615"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Stamina",
+			"text": "667",
+			"masked": [
+				"167",
+				"167",
+				"167"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Power",
+			"text": "1159",
+			"masked": [
+				"159",
+				"159",
+				"159"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Guts",
+			"text": "591",
+			"masked": [
+				"1591",
+				"1591",
+				"1591"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Wit",
+			"text": "U:1235",
+			"masked": [
+				"10181235",
+				"121235",
+				"1281235"
+			],
+			"agreed": true
+		}
+	]
+}

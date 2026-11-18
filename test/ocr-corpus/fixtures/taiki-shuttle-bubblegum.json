@@ -1,0 +1,446 @@
+{
+	"name": "taiki-shuttle-bubblegum",
+	"scale": 1.589825119236884,
+	"read": {
+		"stats": {
+			"Speed": 1635,
+			"Stamina": 627,
+			"Power": 1234,
+			"Guts": 530,
+			"Wit": 1131
+		},
+		"aptitudes": {
+			"turf": "A",
+			"dirt": "A",
+			"short": "A",
+			"mile": "S",
+			"medium": "E",
+			"long": "G",
+			"nige": "C",
+			"senkou": "A",
+			"sashi": "E",
+			"oikomi": "G"
+		},
+		"skills": [
+			{
+				"text": "Joyful Voyage!",
+				"name": "Joyful Voyage!",
+				"match": {
+					"id": "110101",
+					"ids": [
+						"110101"
+					],
+					"name": "Joyful Voyage!",
+					"score": 1,
+					"margin": 0.6666666666666666,
+					"trims": 0
+				},
+				"level": 3,
+				"box": {
+					"x": 80.52721774193549,
+					"y": 524.1123165983607,
+					"w": 110.96270161290322,
+					"h": 24.0244487704918
+				}
+			},
+			{
+				"text": "Lights of Vaudeville",
+				"name": "Lights of Vaudeville",
+				"match": {
+					"id": "900051",
+					"ids": [
+						"900051"
+					],
+					"name": "Lights of Vaudeville",
+					"score": 1,
+					"margin": 0.48857142857142866,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 363.95766129032256,
+					"y": 524.7445389344263,
+					"w": 145.83669354838707,
+					"h": 20.863337090163938
+				}
+			},
+			{
+				"text": "Victoria por plancha ☆",
+				"name": "Victoria por plancha ☆",
+				"match": {
+					"id": "900141",
+					"ids": [
+						"900141"
+					],
+					"name": "Victoria por plancha ☆",
+					"score": 1,
+					"margin": 0.4766666666666668,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 83.06350806451613,
+					"y": 586.7023278688525,
+					"w": 162.32258064516128,
+					"h": 20.863337090163938
+				}
+			},
+			{
+				"text": "Budding Blossom",
+				"name": "Budding Blossom",
+				"match": {
+					"id": "900511",
+					"ids": [
+						"900511"
+					],
+					"name": "Budding Blossom",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 363.95766129032256,
+					"y": 587.3345502049181,
+					"w": 126.18044354838709,
+					"h": 21.49555942622951
+				}
+			},
+			{
+				"text": "Professor of Curvature",
+				"name": "Professor of Curvature",
+				"match": {
+					"id": "200331",
+					"ids": [
+						"200331"
+					],
+					"name": "Professor of Curvature",
+					"score": 1,
+					"margin": 0.4845454545454546,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 364.59173387096774,
+					"y": 649.9245614754099,
+					"w": 160.4203629032258,
+					"h": 20.23111475409836
+				}
+			},
+			{
+				"text": "Tokyo Racecourse O",
+				"name": "Tokyo Racecourse ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200031",
+						"200032",
+						"200033"
+					],
+					"name": "Tokyo Racecourse ◎",
+					"score": 1,
+					"margin": 0.1875,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 82.42943548387098,
+					"y": 649.9245614754099,
+					"w": 149.0070564516129,
+					"h": 21.49555942622951
+				}
+			},
+			{
+				"text": "Straightaway Adept",
+				"name": "Straightaway Adept",
+				"match": {
+					"id": "200362",
+					"ids": [
+						"200362"
+					],
+					"name": "Straightaway Adept",
+					"score": 1,
+					"margin": 0.23529411764705888,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 81.7953629032258,
+					"y": 712.5145727459017,
+					"w": 143.93447580645162,
+					"h": 22.127781762295083
+				}
+			},
+			{
+				"text": "Nimble Navigator",
+				"name": "Nimble Navigator",
+				"match": {
+					"id": "200492",
+					"ids": [
+						"200492"
+					],
+					"name": "Nimble Navigator",
+					"score": 1,
+					"margin": 0.47444444444444445,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 364.59173387096774,
+					"y": 713.1467950819673,
+					"w": 126.18044354838709,
+					"h": 20.23111475409836
+				}
+			},
+			{
+				"text": "Mile Maven",
+				"name": "Mile Maven",
+				"match": {
+					"id": "200681",
+					"ids": [
+						"200681"
+					],
+					"name": "Mile Maven",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 81.16129032258064,
+					"y": 775.736806352459,
+					"w": 86.86794354838709,
+					"h": 19.598892418032786
+				}
+			},
+			{
+				"text": "Mile Corners ©",
+				"name": "Mile Corners ◎",
+				"match": {
+					"id": "201041",
+					"ids": [
+						"201041"
+					],
+					"name": "Mile Corners ◎",
+					"score": 1,
+					"margin": 0.3076923076923077,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 364.59173387096774,
+					"y": 776.3690286885245,
+					"w": 109.69455645161291,
+					"h": 18.966670081967212
+				}
+			},
+			{
+				"text": "Pace Chaser Straightaways 0",
+				"name": "Pace Chaser Straightaways ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201311",
+						"201312"
+					],
+					"name": "Pace Chaser Straightaways ◎",
+					"score": 1,
+					"margin": 0.2572727272727273,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 363.95766129032256,
+					"y": 829.4757049180329,
+					"w": 115.40120967741937,
+					"h": 39.19778483606557
+				}
+			},
+			{
+				"text": "Shifting Gears",
+				"name": "Shifting Gears",
+				"match": {
+					"id": "201052",
+					"ids": [
+						"201052"
+					],
+					"name": "Shifting Gears",
+					"score": 1,
+					"margin": 0.3076923076923077,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 81.16129032258064,
+					"y": 837.6945952868853,
+					"w": 105.25604838709677,
+					"h": 21.49555942622951
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 363.95766129032256,
+					"y": 901.5490512295082,
+					"w": 98.28125,
+					"h": 18.966670081967212
+				}
+			},
+			{
+				"text": "Pace Chaser Corners",
+				"name": "Pace Chaser Corners ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201321",
+						"201322"
+					],
+					"name": "Pace Chaser Corners ◎",
+					"score": 1,
+					"margin": 0.3425,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 82.42943548387098,
+					"y": 901.5490512295082,
+					"w": 147.1048387096774,
+					"h": 18.966670081967212
+				}
+			},
+			{
+				"text": "Neck and Neck",
+				"name": "Neck and Neck",
+				"match": {
+					"id": "201901",
+					"ids": [
+						"201901"
+					],
+					"name": "Neck and Neck",
+					"score": 1,
+					"margin": 0.6153846153846154,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 81.7953629032258,
+					"y": 963.5068401639344,
+					"w": 109.69455645161291,
+					"h": 19.598892418032786
+				}
+			},
+			{
+				"text": "Full Tilt",
+				"name": "Full Tilt",
+				"match": {
+					"id": "202282",
+					"ids": [
+						"202282"
+					],
+					"name": "Full Tilt",
+					"score": 1,
+					"margin": 0.5,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 363.95766129032256,
+					"y": 963.5068401639344,
+					"w": 60.23689516129032,
+					"h": 19.598892418032786
+				}
+			},
+			{
+				"text": "Unstoppable",
+				"name": "Unstoppable",
+				"match": {
+					"id": "202371",
+					"ids": [
+						"202371"
+					],
+					"name": "Unstoppable",
+					"score": 1,
+					"margin": 0.5,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 79.89314516129032,
+					"y": 1025.4646290983608,
+					"w": 98.28125,
+					"h": 23.39222643442623
+				}
+			}
+		],
+		"name": "Taiki Shuttle",
+		"epithet": "[Bubblegum☆Memories]",
+		"uniqueLevel": 3
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "1635",
+			"masked": [
+				"21635",
+				"521635",
+				"621635"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Stamina",
+			"text": "627",
+			"masked": [
+				"1627",
+				"1627",
+				"1627"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Power",
+			"text": "1234",
+			"masked": [
+				"81234",
+				"31234",
+				"51234"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Guts",
+			"text": "530",
+			"masked": [
+				"15301",
+				"15301",
+				"15301"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Wit",
+			"text": "8S1131",
+			"masked": [
+				"8638131",
+				"20131",
+				"835131"
+			],
+			"agreed": false
+		}
+	]
+}
