@@ -120,6 +120,7 @@ export function cellBox(cell: AptitudeCell): Box {
 
 /** The five stats, in the order the dialog prints them across the row. */
 export const STAT_LABELS = ['Speed', 'Stamina', 'Power', 'Guts', 'Wit'] as const;
+export type StatKey = typeof STAT_LABELS[number];
 
 export interface StatColumn {
 	label: typeof STAT_LABELS[number];
