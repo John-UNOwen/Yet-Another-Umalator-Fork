@@ -16,6 +16,8 @@ import { BASE_PATH } from '../../components/base-path';
 import { mapCharacterNameToOutfitId, mapOutfitNameToId } from '../../components/GeminiOCR';
 import { GRADES } from '../../components/screenshot-ocr/aptitudes';
 import type { Grade } from '../../components/screenshot-ocr/aptitudes';
+import { DISTANCE_KEYS, skillKey, styleAptitudeOf, umaFromRead } from '../../components/screenshot-ocr/build';
+import type { Edits, Strategy, UmaDraft } from '../../components/screenshot-ocr/build';
 import { gaps, mergeReads } from '../../components/screenshot-ocr/merge';
 import type { MergedRead, Read, SkillRead } from '../../components/screenshot-ocr/merge';
 import { STAT_LABELS } from '../../components/screenshot-ocr/layout';
@@ -50,9 +52,6 @@ const STRATEGY_OPTIONS = [
 	{ value: 'Sasi', label: 'Late Surger' },
 	{ value: 'Oikomi', label: 'End Closer' },
 ];
-const DEFAULT_STATS: Record<StatKey, number> = { Speed: 1200, Stamina: 1200, Power: 800, Guts: 400, Wit: 400 };
-const STRATEGY_APTITUDE: Record<string, AptitudeKey> = { Nige: 'nige', Senkou: 'senkou', Sasi: 'sashi', Oikomi: 'oikomi' };
-const BEST_OF: AptitudeKey[] = ['short', 'mile', 'medium', 'long'];
 
 export function OCRModal(props: OCRModalProps) {
 	const [cloud, setCloud] = useState(false);
@@ -73,36 +72,22 @@ interface Progress {
 	total: number;
 }
 
-interface Edits {
-	stats: Partial<Record<StatKey, number>>;
-	surface: Grade | null;
-	distance: Grade | null;
-	style: Grade | null;
-	strategy: string;
+/** The review screen's own fields, on top of what `umaFromRead` consumes. */
+interface UiEdits extends Edits {
 	epithet: string;
 	outfitId: string;
-	starCount: number;
-	uniqueLv: number;
-	skillPicks: Record<string, string>;
-	skillOff: Record<string, boolean>;
 }
 
-const EMPTY_EDITS: Edits = {
+const EMPTY_EDITS: UiEdits = {
 	stats: {},
-	surface: null,
-	distance: null,
-	style: null,
+	aptitudes: {},
 	strategy: 'Senkou',
 	epithet: '',
 	outfitId: '',
 	starCount: 3,
 	uniqueLv: 1,
-	skillPicks: {},
-	skillOff: {},
+	skills: {},
 };
-
-/** The key a skill row is remembered by while the user picks between its candidates. */
-const skillKey = (s: SkillRead) => s.match.ids.join(',');
 
 /**
  * Which screenshot a combined skill row came from: the one that read that text at that place. Rows keep
@@ -120,7 +105,7 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 	const [progress, setProgress] = useState<Progress | null>(null);
 	const [downloadBytes, setDownloadBytes] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [edits, setEdits] = useState<Edits>(EMPTY_EDITS);
+	const [edits, setEdits] = useState<UiEdits>(EMPTY_EDITS);
 
 	const fileRef = useRef<HTMLInputElement>(null);
 	const zoneRef = useRef<HTMLDivElement>(null);
@@ -235,7 +220,19 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 		return () => document.removeEventListener('paste', onPaste);
 	}, [isOpen, addFiles]);
 
-	const edit = useCallback(<K extends keyof Edits>(field: K, value: Edits[K]) => setEdits((held) => ({ ...held, [field]: value })), []);
+	const edit = useCallback(<K extends keyof UiEdits>(field: K, value: UiEdits[K]) => setEdits((held) => ({ ...held, [field]: value })), []);
+	const setStat = useCallback((label: StatKey, value: number) => setEdits((held) => ({ ...held, stats: { ...held.stats, [label]: value } })), []);
+	const setAptitude = useCallback((key: AptitudeKey, value: Grade) => setEdits((held) => ({ ...held, aptitudes: { ...held.aptitudes, [key]: value } })), []);
+	// The panel keeps one distance grade, so choosing one stands in for the four cells the read fills in.
+	const setDistance = useCallback((value: Grade) => setEdits((held) => {
+		const aptitudes = { ...held.aptitudes };
+		for (const key of DISTANCE_KEYS) aptitudes[key] = value;
+		return { ...held, aptitudes };
+	}), []);
+	const setSkill = useCallback((key: string, value: { pick?: string; off?: boolean }) => setEdits((held) => ({
+		...held,
+		skills: { ...held.skills, [key]: { ...held.skills[key], ...value } },
+	})), []);
 
 	const outfit = useMemo(() => {
 		const typed = edits.epithet || merged.epithet.value || '';
@@ -243,48 +240,20 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 		return { typed, id };
 	}, [edits.epithet, edits.outfitId, merged]);
 
-	const build = useCallback((): UmaState | null => {
-		const grade = (key: AptitudeKey, picked: Grade | null) => picked ?? merged.aptitudes[key]?.value ?? null;
-		const readDistance = BEST_OF.map((k) => grade(k, edits.distance)).filter((g): g is Grade => !!g);
-		const distance = readDistance.sort((a, b) => GRADES.indexOf(b) - GRADES.indexOf(a))[0] ?? 'A';
-		const stats = {} as Record<StatKey, number>;
-		for (const label of STAT_LABELS) stats[label] = edits.stats[label] ?? merged.stats[label].value ?? DEFAULT_STATS[label];
-
-		const skills: string[] = [];
-		for (const s of merged.skills) {
-			const key = skillKey(s);
-			if (edits.skillOff[key]) continue;
-			const id = edits.skillPicks[key] ?? s.match.id ?? s.match.ids[0];
-			if (id) skills.push(id);
-		}
-
-		return validateAndParseUmaJson({
-			outfitId: outfit.id,
-			starCount: edits.starCount,
-			uniqueLv: edits.uniqueLv || merged.uniqueLevel.value || 1,
-			speed: stats.Speed,
-			stamina: stats.Stamina,
-			power: stats.Power,
-			guts: stats.Guts,
-			wisdom: stats.Wit,
-			strategy: edits.strategy,
-			distanceAptitude: distance,
-			surfaceAptitude: grade('turf', edits.surface) ?? 'A',
-			strategyAptitude: grade(STRATEGY_APTITUDE[edits.strategy], edits.style) ?? 'A',
-			mood: 2,
-			skills,
-			forcedSkillPositions: {},
-		});
-	}, [edits, merged, outfit]);
+	// The draft the fields show is the draft that gets validated, so the defaults live in one module.
+	const draft = useMemo(() => {
+		const { epithet, ...typed } = edits;
+		return umaFromRead(merged, { ...typed, outfitId: outfit.id });
+	}, [merged, edits, outfit.id]);
 
 	const load = useCallback(() => {
-		const state = build();
+		const state = validateAndParseUmaJson(draft);
 		if (!state) setError('That build did not pass validation. Check the stats and the aptitudes.');
 		else {
 			onConfirm(state);
 			onClose();
 		}
-	}, [build, onConfirm, onClose]);
+	}, [draft, onConfirm, onClose]);
 
 	const percent = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
 
@@ -333,7 +302,7 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 					</div>
 				</div>
 			) : phase === 'review' ? (
-				<Review merged={merged} missing={missing} pairs={results.map((r, i) => ({ url: shots[i]?.url ?? '', read: r.read }))} notes={results.flatMap((r) => r.statNotes)} edits={edits} edit={edit} outfit={outfit} onOutfit={(v) => { edit('epithet', v); edit('outfitId', ''); }} />
+				<Review merged={merged} missing={missing} pairs={results.map((r, i) => ({ url: shots[i]?.url ?? '', read: r.read }))} notes={results.flatMap((r) => r.statNotes)} draft={draft} skills={edits.skills} edit={edit} setStat={setStat} setAptitude={setAptitude} setDistance={setDistance} setSkill={setSkill} outfit={outfit} onOutfit={(v) => { edit('epithet', v); edit('outfitId', ''); }} />
 			) : (
 				<div class="v2-ocr-upload">
 					<div class="v2-ocr-section">
@@ -371,18 +340,24 @@ function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { 
 	);
 }
 
-function Review({ merged, missing, pairs, notes, edits, edit, outfit, onOutfit }: {
+const STAT_FIELD: Record<StatKey, keyof UmaDraft> = { Speed: 'speed', Stamina: 'stamina', Power: 'power', Guts: 'guts', Wit: 'wisdom' };
+
+function Review({ merged, missing, pairs, notes, draft, skills, edit, setStat, setAptitude, setDistance, setSkill, outfit, onOutfit }: {
 	merged: MergedRead;
 	missing: string[];
 	pairs: readonly { url: string; read: Read }[];
 	notes: readonly StatNote[];
-	edits: Edits;
-	edit: <K extends keyof Edits>(field: K, value: Edits[K]) => void;
+	draft: UmaDraft;
+	skills: UiEdits['skills'];
+	edit: <K extends keyof UiEdits>(field: K, value: UiEdits[K]) => void;
+	setStat: (label: StatKey, value: number) => void;
+	setAptitude: (key: AptitudeKey, value: Grade) => void;
+	setDistance: (value: Grade) => void;
+	setSkill: (key: string, value: { pick?: string; off?: boolean }) => void;
 	outfit: { typed: string; id: string };
 	onOutfit: (value: string) => void;
 }) {
 	const byStat = new Map(notes.map((n) => [n.stat, n]));
-	const lineOf = (stat: StatKey) => byStat.get(stat);
 	const skillOptions = (s: SkillRead) => s.match.ids.map((id) => ({ value: id, label: NAME_OF.get(id) ?? id }));
 
 	return (
@@ -396,62 +371,66 @@ function Review({ merged, missing, pairs, notes, edits, edit, outfit, onOutfit }
 							<input class="v2-ocr-input" value={outfit.typed} onInput={(e) => onOutfit((e.target as HTMLInputElement).value)} />
 							<span class="v2-ocr-review-value">{outfit.id ? `id ${outfit.id}` : 'not recognised'}</span>
 						</div>
-						{STAT_LABELS.map((label) => (
-							<div class="v2-ocr-review-item">
-								<span class="v2-ocr-review-key">{label}:</span>
-								<input
-									class="v2-ocr-input"
-									type="number"
-									value={edits.stats[label] ?? merged.stats[label].value ?? 0}
-									onInput={(e) => edit('stats', { ...edits.stats, [label]: Number((e.target as HTMLInputElement).value) })}
-								/>
-								{lineOf(label) && !lineOf(label)!.agreed && <span title={`The reader also saw: ${lineOf(label)!.masked.join(' ')} from “${lineOf(label)!.text}”`}><AlertTriangle size={14} /></span>}
-								{merged.stats[label].other.length > 0 && <span class="v2-ocr-review-value">other shot said {merged.stats[label].other.join(', ')}</span>}
-							</div>
-						))}
+						{STAT_LABELS.map((label) => {
+							const note = byStat.get(label);
+							return (
+								<div class="v2-ocr-review-item">
+									<span class="v2-ocr-review-key">{label}:</span>
+									<input
+										class="v2-ocr-input"
+										type="number"
+										value={draft[STAT_FIELD[label]] as number}
+										onInput={(e) => setStat(label, Number((e.target as HTMLInputElement).value))}
+									/>
+									{note && !note.agreed && <span title={`The digit reader saw ${note.masked.join(' ')} in the box for “${note.text}”`}><AlertTriangle size={14} /></span>}
+									{merged.stats[label].other.length > 0 && <span class="v2-ocr-review-value">other shot said {merged.stats[label].other.join(', ')}</span>}
+								</div>
+							);
+						})}
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Surface:</span>
-							<CustomSelect value={edits.surface ?? merged.aptitudes.turf.value ?? 'A'} onChange={(v) => edit('surface', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
+							<CustomSelect value={draft.surfaceAptitude} onChange={(v) => setAptitude('turf', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
 						</div>
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Distance:</span>
-							<CustomSelect value={edits.distance ?? BEST_OF.map((k) => merged.aptitudes[k].value).filter(Boolean).sort((a, b) => GRADES.indexOf(b as Grade) - GRADES.indexOf(a as Grade))[0] ?? 'A'} onChange={(v) => edit('distance', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
+							<CustomSelect value={draft.distanceAptitude} onChange={(v) => setDistance(v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
 						</div>
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Strategy:</span>
-							<CustomSelect value={edits.strategy} onChange={(v) => edit('strategy', String(v))} options={STRATEGY_OPTIONS} className="v2-ocr-select-strategy" />
+							<CustomSelect value={draft.strategy} onChange={(v) => edit('strategy', String(v) as Strategy)} options={STRATEGY_OPTIONS} className="v2-ocr-select-strategy" />
 						</div>
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Style apt:</span>
-							<CustomSelect value={edits.style ?? merged.aptitudes[STRATEGY_APTITUDE[edits.strategy]].value ?? 'A'} onChange={(v) => edit('style', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
+							<CustomSelect value={draft.strategyAptitude} onChange={(v) => setAptitude(styleAptitudeOf(draft.strategy), v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
 						</div>
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Stars:</span>
-							<CustomSelect value={String(edits.starCount)} onChange={(v) => edit('starCount', Number(v))} options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }))} className="v2-ocr-select-small" />
+							<CustomSelect value={String(draft.starCount)} onChange={(v) => edit('starCount', Number(v))} options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }))} className="v2-ocr-select-small" />
 							<span class="v2-ocr-review-value">the dialog does not show this</span>
 						</div>
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Unique lv:</span>
-							<CustomSelect value={String(edits.uniqueLv !== 1 ? edits.uniqueLv : (merged.uniqueLevel.value ?? 1))} onChange={(v) => edit('uniqueLv', Number(v))} options={[1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: String(n) }))} className="v2-ocr-select-small" />
+							<CustomSelect value={String(draft.uniqueLv)} onChange={(v) => edit('uniqueLv', Number(v))} options={[1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: String(n) }))} className="v2-ocr-select-small" />
 						</div>
 						<div class="v2-ocr-review-item v2-ocr-review-skills">
 							<span class="v2-ocr-review-key">Skills ({merged.skills.length}):</span>
 							<div class="v2-ocr-skill-list">
 								{merged.skills.map((s) => {
 									const key = skillKey(s);
-									const picked = edits.skillPicks[key] ?? s.match.id ?? s.match.ids[0];
+									const choice = skills?.[key];
+									const picked = choice?.pick ?? s.match.id ?? s.match.ids[0];
 									return (
 										<div class="v2-ocr-review-item" key={key} style={{ width: '100%' }}>
 											<label class="v2-ocr-checkbox">
-												<input type="checkbox" checked={!edits.skillOff[key]} onChange={(e) => edit('skillOff', { ...edits.skillOff, [key]: !(e.target as HTMLInputElement).checked })} />
+												<input type="checkbox" checked={!choice?.off} onChange={(e) => setSkill(key, { off: !(e.target as HTMLInputElement).checked })} />
 											</label>
 											{s.box && <Crop url={shotOf(pairs, s)} box={s.box} />}
 											{skillOptions(s).length > 1 ? (
-												<CustomSelect value={picked} onChange={(v) => edit('skillPicks', { ...edits.skillPicks, [key]: String(v) })} options={skillOptions(s)} className="v2-ocr-select-small" />
+												<CustomSelect value={picked} onChange={(v) => setSkill(key, { pick: String(v) })} options={skillOptions(s)} className="v2-ocr-select-small" />
 											) : (
 												<span class="v2-ocr-review-value">{NAME_OF.get(picked) ?? picked}</span>
 											)}
-											{s.match.id === null && <span class="v2-ocr-review-value">{s.match.id === null ? `which one? (${s.match.why ?? 'level'})` : ''}</span>}
+											{s.match.id === null && <span class="v2-ocr-review-value">which one? ({s.match.why ?? 'level'})</span>}
 											{s.level !== null && <span class="v2-ocr-review-value">Lvl {s.level}</span>}
 										</div>
 									);
