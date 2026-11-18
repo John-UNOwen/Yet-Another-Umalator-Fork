@@ -1,0 +1,469 @@
+{
+	"name": "symboli-rudolf-archer-by-moonlight",
+	"scale": 1.658374792703151,
+	"read": {
+		"stats": {
+			"Speed": 1588,
+			"Stamina": 794,
+			"Power": 1186,
+			"Guts": 607,
+			"Wit": 959
+		},
+		"aptitudes": {
+			"turf": "A",
+			"dirt": "G",
+			"short": "E",
+			"mile": "B",
+			"medium": "S",
+			"long": "A",
+			"nige": "B",
+			"senkou": "A",
+			"sashi": "A",
+			"oikomi": "C"
+		},
+		"skills": [
+			{
+				"text": "Arrows Whistle, Shadows Disperse",
+				"name": "Arrows Whistle, Shadows Disperse",
+				"match": {
+					"id": "110171",
+					"ids": [
+						"110171"
+					],
+					"name": "Arrows Whistle, Shadows Disperse",
+					"score": 1,
+					"margin": 0.5800000000000001,
+					"trims": 0
+				},
+				"level": 4,
+				"box": {
+					"x": 107.59173387096774,
+					"y": 435.21210937499995,
+					"w": 110.63104838709675,
+					"h": 31.30156250000004
+				}
+			},
+			{
+				"text": "Lights of Vaudeville",
+				"name": "Lights of Vaudeville",
+				"match": {
+					"id": "900051",
+					"ids": [
+						"900051"
+					],
+					"name": "Lights of Vaudeville",
+					"score": 1,
+					"margin": 0.48857142857142866,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 344.6582661290323,
+					"y": 441.231640625,
+					"w": 124.00403225806453,
+					"h": 18.05859375
+				}
+			},
+			{
+				"text": "Triumphant Pulse",
+				"name": "Triumphant Pulse",
+				"match": {
+					"id": "900061",
+					"ids": [
+						"900061"
+					],
+					"name": "Triumphant Pulse",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 106.98387096774192,
+					"y": 494.20351562499997,
+					"w": 106.37600806451613,
+					"h": 17.456640625
+				}
+			},
+			{
+				"text": "Right-Handed O",
+				"name": "Right-Handed ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200011",
+						"200012",
+						"200013"
+					],
+					"name": "Right-Handed ◎",
+					"score": 1,
+					"margin": 0.25,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 344.6582661290323,
+					"y": 494.20351562499997,
+					"w": 103.9445564516129,
+					"h": 17.456640625
+				}
+			},
+			{
+				"text": "Professor of Curvature",
+				"name": "Professor of Curvature",
+				"match": {
+					"id": "200331",
+					"ids": [
+						"200331"
+					],
+					"name": "Professor of Curvature",
+					"score": 1,
+					"margin": 0.4845454545454546,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 106.37600806451613,
+					"y": 547.175390625,
+					"w": 136.16129032258064,
+					"h": 18.05859375
+				}
+			},
+			{
+				"text": "Straightaway Adept",
+				"name": "Straightaway Adept",
+				"match": {
+					"id": "200362",
+					"ids": [
+						"200362"
+					],
+					"name": "Straightaway Adept",
+					"score": 1,
+					"margin": 0.23529411764705888,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 344.6582661290323,
+					"y": 547.175390625,
+					"w": 123.3961693548387,
+					"h": 19.864453124999997
+				}
+			},
+			{
+				"text": "Calm and Collected",
+				"name": "Calm and Collected",
+				"match": {
+					"id": "200561",
+					"ids": [
+						"200561"
+					],
+					"name": "Calm and Collected",
+					"score": 1,
+					"margin": 0.43000000000000005,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 108.19959677419355,
+					"y": 600.1472656249999,
+					"w": 119.74899193548387,
+					"h": 17.456640625
+				}
+			},
+			{
+				"text": "Race Planner",
+				"name": "Race Planner",
+				"match": {
+					"id": "200571",
+					"ids": [
+						"200571"
+					],
+					"name": "Race Planner",
+					"score": 1,
+					"margin": 0.3633333333333333,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 344.6582661290323,
+					"y": 601.351171875,
+					"w": 81.45362903225808,
+					"h": 16.252734375
+				}
+			},
+			{
+				"text": "Medium Straightaways ",
+				"name": "Medium Straightaways ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201101",
+						"201102"
+					],
+					"name": "Medium Straightaways ◎",
+					"score": 1,
+					"margin": 0.21052631578947367,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 344.6582661290323,
+					"y": 646.4976562499999,
+					"w": 99.68951612903228,
+					"h": 32.505468750000134
+				}
+			},
+			{
+				"text": "Up-Tempo",
+				"name": "Up-Tempo",
+				"match": {
+					"id": "200722",
+					"ids": [
+						"200722"
+					],
+					"name": "Up-Tempo",
+					"score": 1,
+					"margin": 0.625,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 105.76814516129032,
+					"y": 653.7210937499999,
+					"w": 69.90423387096774,
+					"h": 19.2625
+				}
+			},
+			{
+				"text": "Pace Chaser Straightaways O",
+				"name": "Pace Chaser Straightaways ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201311",
+						"201312"
+					],
+					"name": "Pace Chaser Straightaways ◎",
+					"score": 1,
+					"margin": 0.2572727272727273,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 344.6582661290323,
+					"y": 700.0714843750001,
+					"w": 100.29737903225809,
+					"h": 31.30156249999997
+				}
+			},
+			{
+				"text": "Medium Corners ©",
+				"name": "Medium Corners ◎",
+				"match": {
+					"id": "201111",
+					"ids": [
+						"201111"
+					],
+					"name": "Medium Corners ◎",
+					"score": 1,
+					"margin": 0.3076923076923077,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 106.98387096774192,
+					"y": 706.69296875,
+					"w": 110.63104838709677,
+					"h": 16.252734375
+				}
+			},
+			{
+				"text": "Straight Descent",
+				"name": "Straight Descent",
+				"match": {
+					"id": "201342",
+					"ids": [
+						"201342"
+					],
+					"name": "Straight Descent",
+					"score": 1,
+					"margin": 0.4117647058823529,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 345.2661290322581,
+					"y": 758.4609375,
+					"w": 102.7288306451613,
+					"h": 18.05859375
+				}
+			},
+			{
+				"text": "Pace Chaser Corners ",
+				"name": "Pace Chaser Corners ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201321",
+						"201322"
+					],
+					"name": "Pace Chaser Corners ◎",
+					"score": 1,
+					"margin": 0.3425,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 106.98387096774192,
+					"y": 759.062890625,
+					"w": 139.20060483870967,
+					"h": 16.252734375
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 344.0504032258064,
+					"y": 811.4328125,
+					"w": 83.8850806451613,
+					"h": 17.456640625
+				}
+			},
+			{
+				"text": "Uma Stan",
+				"name": "Uma Stan",
+				"match": {
+					"id": "201591",
+					"ids": [
+						"201591"
+					],
+					"name": "Uma Stan",
+					"score": 1,
+					"margin": 0.28,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 105.76814516129032,
+					"y": 811.4328125,
+					"w": 62.609879032258064,
+					"h": 18.05859375
+				}
+			},
+			{
+				"text": "Unstoppable",
+				"name": "Unstoppable",
+				"match": {
+					"id": "202371",
+					"ids": [
+						"202371"
+					],
+					"name": "Unstoppable",
+					"score": 1,
+					"margin": 0.5,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 344.0504032258064,
+					"y": 863.8027343749999,
+					"w": 82.66935483870968,
+					"h": 19.864453124999997
+				}
+			},
+			{
+				"text": "Head-On",
+				"name": "Head-On",
+				"match": {
+					"id": "201902",
+					"ids": [
+						"201902"
+					],
+					"name": "Head-On",
+					"score": 1,
+					"margin": 0.4444444444444444,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 105.76814516129032,
+					"y": 864.4046874999999,
+					"w": 62.00201612903226,
+					"h": 18.05859375
+				}
+			}
+		],
+		"name": "Symboli Rudolf",
+		"epithet": "[Archer by Moonlightd",
+		"uniqueLevel": 4
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "D1588",
+			"masked": [
+				"158",
+				"12158",
+				"260158"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Stamina",
+			"text": "794",
+			"masked": [
+				"1794",
+				"1794",
+				"1794"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Power",
+			"text": "8S1186",
+			"masked": [
+				"835186",
+				"203571861",
+				"281501861"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Guts",
+			"text": "607",
+			"masked": [
+				"1607",
+				"1607",
+				"1607"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Wit",
+			"text": "A959",
+			"masked": [
+				"14109591",
+				"15329591",
+				"2145329591"
+			],
+			"agreed": true
+		}
+	]
+}

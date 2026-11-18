@@ -1,0 +1,360 @@
+{
+	"name": "daiwa-scarlet-peak-blue-steam-scrolled",
+	"scale": 1,
+	"read": {
+		"stats": {
+			"Speed": 1311,
+			"Stamina": 523,
+			"Power": 923,
+			"Guts": 584,
+			"Wit": 596
+		},
+		"aptitudes": {
+			"turf": "A",
+			"dirt": "D",
+			"short": "F",
+			"mile": "A",
+			"medium": "A",
+			"long": "B",
+			"nige": "A",
+			"senkou": "A",
+			"sashi": "E",
+			"oikomi": "G"
+		},
+		"skills": [
+			{
+				"text": "Cormer Adept O",
+				"name": "Corner Adept ○",
+				"match": {
+					"id": null,
+					"ids": [
+						"200332",
+						"200333"
+					],
+					"name": "Corner Adept ○",
+					"score": 0.9090909090909091,
+					"margin": 0.40909090909090906,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 317,
+					"y": 495.3308823529412,
+					"w": 122,
+					"h": 21.83823529411765
+				}
+			},
+			{
+				"text": "Corner Recovery O",
+				"name": "Corner Recovery ○",
+				"match": {
+					"id": null,
+					"ids": [
+						"200352",
+						"200353"
+					],
+					"name": "Corner Recovery ○",
+					"score": 1,
+					"margin": 0.4444444444444444,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 605,
+					"y": 496.3235294117647,
+					"w": 134,
+					"h": 20.84558823529412
+				}
+			},
+			{
+				"text": "Straightaway Adept",
+				"name": "Straightaway Adept",
+				"match": {
+					"id": "200362",
+					"ids": [
+						"200362"
+					],
+					"name": "Straightaway Adept",
+					"score": 1,
+					"margin": 0.23529411764705888,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 316,
+					"y": 557.8676470588235,
+					"w": 148,
+					"h": 22.830882352941178
+				}
+			},
+			{
+				"text": "Straightaway Recovery",
+				"name": "Straightaway Recovery",
+				"match": {
+					"id": "200382",
+					"ids": [
+						"200382"
+					],
+					"name": "Straightaway Recovery",
+					"score": 1,
+					"margin": 0.3241176470588236,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 602,
+					"y": 557.8676470588235,
+					"w": 165,
+					"h": 23.823529411764707
+				}
+			},
+			{
+				"text": "It's On!",
+				"name": "It's On!",
+				"match": {
+					"id": "200461",
+					"ids": [
+						"200461"
+					],
+					"name": "It's On!",
+					"score": 1,
+					"margin": 0.5714285714285714,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 316,
+					"y": 620.4044117647059,
+					"w": 61,
+					"h": 22.830882352941178
+				}
+			},
+			{
+				"text": "Nimble Navigator",
+				"name": "Nimble Navigator",
+				"match": {
+					"id": "200492",
+					"ids": [
+						"200492"
+					],
+					"name": "Nimble Navigator",
+					"score": 1,
+					"margin": 0.47444444444444445,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 601,
+					"y": 620.4044117647059,
+					"w": 130,
+					"h": 22.830882352941178
+				}
+			},
+			{
+				"text": "Pace Chaser Straightaways ",
+				"name": "Pace Chaser Straightaways ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201311",
+						"201312"
+					],
+					"name": "Pace Chaser Straightaways ◎",
+					"score": 1,
+					"margin": 0.2572727272727273,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 602,
+					"y": 675.9926470588235,
+					"w": 120,
+					"h": 37.720588235294144
+				}
+			},
+			{
+				"text": "Preferred Position",
+				"name": "Preferred Position",
+				"match": {
+					"id": "200572",
+					"ids": [
+						"200572"
+					],
+					"name": "Preferred Position",
+					"score": 1,
+					"margin": 0.47444444444444445,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 318,
+					"y": 682.9411764705883,
+					"w": 133,
+					"h": 21.83823529411765
+				}
+			},
+			{
+				"text": "Straight Descent",
+				"name": "Straight Descent",
+				"match": {
+					"id": "201342",
+					"ids": [
+						"201342"
+					],
+					"name": "Straight Descent",
+					"score": 1,
+					"margin": 0.4117647058823529,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 600,
+					"y": 746.4705882352941,
+					"w": 125,
+					"h": 21.83823529411765
+				}
+			},
+			{
+				"text": "Pace Chaser Corners ©",
+				"name": "Pace Chaser Corners ◎",
+				"match": {
+					"id": "201321",
+					"ids": [
+						"201321"
+					],
+					"name": "Pace Chaser Corners ◎",
+					"score": 1,
+					"margin": 0.3425,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 316,
+					"y": 746.4705882352941,
+					"w": 170,
+					"h": 21.83823529411765
+				}
+			},
+			{
+				"text": "Head-On",
+				"name": "Head-On",
+				"match": {
+					"id": "201902",
+					"ids": [
+						"201902"
+					],
+					"name": "Head-On",
+					"score": 1,
+					"margin": 0.4444444444444444,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 601,
+					"y": 807.0220588235294,
+					"w": 73,
+					"h": 23.823529411764707
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 317,
+					"y": 808.0147058823529,
+					"w": 104,
+					"h": 21.83823529411765
+				}
+			},
+			{
+				"text": "Unstoppable",
+				"name": "Unstoppable",
+				"match": {
+					"id": "202371",
+					"ids": [
+						"202371"
+					],
+					"name": "Unstoppable",
+					"score": 1,
+					"margin": 0.5,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 317,
+					"y": 869.5588235294118,
+					"w": 100,
+					"h": 25.808823529411764
+				}
+			}
+		],
+		"name": "Daiwa Scarlet",
+		"epithet": "[Peak Blue]"
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "U1311",
+			"masked": [
+				"10131",
+				"131",
+				"105131"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Stamina",
+			"text": "C 523",
+			"masked": [
+				"152523",
+				"152523",
+				"152523"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Power",
+			"text": "A 923",
+			"masked": [
+				"14180923",
+				"21452923",
+				"1452923"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Guts",
+			"text": "C584",
+			"masked": [
+				"12584",
+				"152584",
+				"152584"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Wit",
+			"text": "C596",
+			"masked": [
+				"252596",
+				"152596",
+				"252596"
+			],
+			"agreed": true
+		}
+	]
+}

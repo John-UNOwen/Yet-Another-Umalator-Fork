@@ -1,0 +1,358 @@
+{
+	"name": "taiki-shuttle-bubblegum-steam-scrolled",
+	"scale": 1,
+	"read": {
+		"stats": {
+			"Speed": 1597,
+			"Stamina": 610,
+			"Power": 1249,
+			"Guts": 525,
+			"Wit": 1025
+		},
+		"aptitudes": {
+			"turf": "A",
+			"dirt": "A",
+			"short": "A",
+			"mile": "S",
+			"medium": "E",
+			"long": "G",
+			"nige": "C",
+			"senkou": "A",
+			"sashi": "E",
+			"oikomi": "G"
+		},
+		"skills": [
+			{
+				"text": "Corner Adept O",
+				"name": "Corner Adept ○",
+				"match": {
+					"id": null,
+					"ids": [
+						"200332",
+						"200333"
+					],
+					"name": "Corner Adept ○",
+					"score": 1,
+					"margin": 0.4444444444444444,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 864.9768518518518,
+					"y": 663,
+					"w": 156.27314814814815,
+					"h": 27
+				}
+			},
+			{
+				"text": "Straightaway Adept",
+				"name": "Straightaway Adept",
+				"match": {
+					"id": "200362",
+					"ids": [
+						"200362"
+					],
+					"name": "Straightaway Adept",
+					"score": 1,
+					"margin": 0.23529411764705888,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 1243.2175925925926,
+					"y": 663,
+					"w": 193.10185185185185,
+					"h": 27
+				}
+			},
+			{
+				"text": "Mile Maven",
+				"name": "Mile Maven",
+				"match": {
+					"id": "200681",
+					"ids": [
+						"200681"
+					],
+					"name": "Mile Maven",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 1244.212962962963,
+					"y": 744,
+					"w": 114.4675925925926,
+					"h": 28
+				}
+			},
+			{
+				"text": "Speed Star",
+				"name": "Speed Star",
+				"match": {
+					"id": "200581",
+					"ids": [
+						"200581"
+					],
+					"name": "Speed Star",
+					"score": 1,
+					"margin": 0.030000000000000027,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 864.9768518518518,
+					"y": 744,
+					"w": 112.47685185185185,
+					"h": 29
+				}
+			},
+			{
+				"text": "Shifting Gears",
+				"name": "Shifting Gears",
+				"match": {
+					"id": "201052",
+					"ids": [
+						"201052"
+					],
+					"name": "Shifting Gears",
+					"score": 1,
+					"margin": 0.3076923076923077,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 1243.2175925925926,
+					"y": 828,
+					"w": 137.36111111111111,
+					"h": 29
+				}
+			},
+			{
+				"text": "Mile Corners O",
+				"name": "Mile Corners ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201041",
+						"201042"
+					],
+					"name": "Mile Corners ◎",
+					"score": 1,
+					"margin": 0.3076923076923077,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 866.9675925925926,
+					"y": 829,
+					"w": 147.3148148148148,
+					"h": 26
+				}
+			},
+			{
+				"text": "Pace Chaser Straightaways ©",
+				"name": "Pace Chaser Straightaways ◎",
+				"match": {
+					"id": "201311",
+					"ids": [
+						"201311"
+					],
+					"name": "Pace Chaser Straightaways ◎",
+					"score": 1,
+					"margin": 0.2572727272727273,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 865.9722222222222,
+					"y": 902,
+					"w": 160.25462962962956,
+					"h": 50
+				}
+			},
+			{
+				"text": "Pace Chaser Corners ©",
+				"name": "Pace Chaser Corners ◎",
+				"match": {
+					"id": "201321",
+					"ids": [
+						"201321"
+					],
+					"name": "Pace Chaser Corners ◎",
+					"score": 1,
+					"margin": 0.3425,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 1243.2175925925926,
+					"y": 912,
+					"w": 219.97685185185185,
+					"h": 26
+				}
+			},
+			{
+				"text": "Tail Held High",
+				"name": "Tail Held High",
+				"match": {
+					"id": "201611",
+					"ids": [
+						"201611"
+					],
+					"name": "Tail Held High",
+					"score": 1,
+					"margin": 0.4915384615384616,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 1245.2083333333333,
+					"y": 995,
+					"w": 142.33796296296296,
+					"h": 29
+				}
+			},
+			{
+				"text": "Uma Stan",
+				"name": "Uma Stan",
+				"match": {
+					"id": "201591",
+					"ids": [
+						"201591"
+					],
+					"name": "Uma Stan",
+					"score": 1,
+					"margin": 0.28,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 866.9675925925926,
+					"y": 995,
+					"w": 94.56018518518518,
+					"h": 28
+				}
+			},
+			{
+				"text": "Perfect Spot!",
+				"name": "Perfect Spot!",
+				"match": {
+					"id": "201652",
+					"ids": [
+						"201652"
+					],
+					"name": "Perfect Spot!",
+					"score": 1,
+					"margin": 0.36363636363636365,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 865.9722222222222,
+					"y": 1079,
+					"w": 128.40277777777777,
+					"h": 27
+				}
+			},
+			{
+				"text": "See Ya Later!",
+				"name": "See Ya Later!",
+				"match": {
+					"id": "201662",
+					"ids": [
+						"201662"
+					],
+					"name": "See Ya Later!",
+					"score": 1,
+					"margin": 0.4,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 1242.2222222222222,
+					"y": 1080,
+					"w": 132.38425925925927,
+					"h": 26
+				}
+			},
+			{
+				"text": "Neck and Neck",
+				"name": "Neck and Neck",
+				"match": {
+					"id": "201901",
+					"ids": [
+						"201901"
+					],
+					"name": "Neck and Neck",
+					"score": 1,
+					"margin": 0.6153846153846154,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 866.9675925925926,
+					"y": 1163,
+					"w": 147.3148148148148,
+					"h": 26
+				}
+			}
+		],
+		"name": "Taiki Shuttle",
+		"epithet": "[Bubblegum☆Memories]"
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "1597",
+			"masked": [
+				"81597",
+				"01597",
+				"01597"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Stamina",
+			"text": "610",
+			"masked": [
+				"1610",
+				"16101",
+				"1610"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Power",
+			"text": "u81249",
+			"masked": [
+				"10381249",
+				"181249",
+				"181249"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Guts",
+			"text": "525",
+			"masked": [
+				"1525",
+				"1525",
+				"1525"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Wit",
+			"text": "1025",
+			"masked": [
+				"1025",
+				"1025",
+				"1025"
+			],
+			"agreed": true
+		}
+	]
+}

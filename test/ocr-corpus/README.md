@@ -1,8 +1,18 @@
 # Screenshot corpus
 
-Real Global English captures the screenshot import is calibrated and tested against. Each file will
-carry a golden JSON of the same name, holding what a correct read must produce, as
+Real Global English captures the screenshot import is calibrated and tested against. Each one was scanned
+once with the real engine and frozen into `fixtures/<name>.json`, which holds what the reader produced.
+`golden/<group>.json` holds the build a group of captures makes, and
+[components/screenshot-ocr/corpus.test.ts](../../components/screenshot-ocr/corpus.test.ts), run by
+`npm run test:ocr`, replays the fixtures through `merge.ts` and `build.ts` and compares against it, as
 [docs/ocr-import-plan.md](../../docs/ocr-import-plan.md) describes.
+
+A group is one uma: the two Steam shots of one dialog together, or a single capture. The Steam pairs are
+the case `merge.ts` has to join, so they are frozen as one build.
+
+A fixture is one `scanScreen` run over the decoded image with the offered skill names as the pool. The
+reader is not in git, so re-freezing means running `node tools/fetch-ocr-assets.mjs` first, and a Steam
+JPEG needs a decoded PNG twin outside the repo.
 
 | File | Where it came from | Screen |
 |---|---|---|
@@ -66,11 +76,10 @@ The skill list is the lines that answer to a name the fork offers, so nothing ha
 table sits. Every line of every capture was tried against the 1340 offered names, each entry's display
 name: 143 lines answered, 13 to 19 per capture. The icons, the `Lvl 4` chips, the stat labels and the
 stat numbers answer to no name, so no line of the screen other than a skill name was ever accepted. Two
-to seven rows per
-capture stay a choice for the user, all of them acquisition markers read as a letter or lost. Only oguri
-and the taiki Steam shot have their skills written down above, so only those two carry the claim that
-nothing was accepted that should not have been: oguri came out at its 17 names and taiki Steam top at its
-14, with nothing missing and nothing extra.
+to seven rows per capture stay a choice for the user, all of them acquisition markers read as a letter or
+lost. Only oguri and the taiki Steam top have their lists written down by hand, in `corpus.test.ts`, so
+only those two carry the claim that nothing was accepted that should not have been: oguri came out at its
+17 names and taiki Steam top at its 14, with nothing missing and nothing extra.
 
 Four things this row only shows on these files. Long names wrap onto a second line, and seven of nine
 captures needed the join: `Pace Chaser Straightaways` arrived as `Pace Chaser` over `Straightaways`, and
@@ -84,3 +93,9 @@ settled by nothing intruding between them rather than by a fixed reach. That lev
 character's own skill from the copy another character inherits under the same name: Triumphant Pulse
 `100061` rather than `900061`, Joyful Voyage! `110101` rather than `910101`, Red Ace `10091` rather than
 `90091`.
+
+Two of the nine carry Triumphant Pulse with no chip at all, and both are the inherited copy in the
+inheritance slot, `900061`. On oguri's own screen the same name arrives with `Lvl 4` and comes out `100061`.
+
+Every one of the nine read all five stats and all ten aptitude cells, so `gaps` answers empty for each of
+them. The fallbacks in `build.ts` are not what fills these nine builds.

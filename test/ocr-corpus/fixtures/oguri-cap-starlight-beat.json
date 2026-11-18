@@ -1,0 +1,449 @@
+{
+	"name": "oguri-cap-starlight-beat",
+	"scale": 1.6835016835016836,
+	"read": {
+		"stats": {
+			"Speed": 1321,
+			"Stamina": 473,
+			"Power": 1208,
+			"Guts": 445,
+			"Wit": 1230
+		},
+		"aptitudes": {
+			"turf": "A",
+			"dirt": "B",
+			"short": "A",
+			"mile": "A",
+			"medium": "A",
+			"long": "B",
+			"nige": "F",
+			"senkou": "A",
+			"sashi": "A",
+			"oikomi": "D"
+		},
+		"skills": [
+			{
+				"text": "Shooting for Victory!",
+				"name": "Shooting for Victory!",
+				"match": {
+					"id": "900101",
+					"ids": [
+						"900101"
+					],
+					"name": "Shooting for Victory!",
+					"score": 1,
+					"margin": 0.26076923076923086,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 343.7056451612903,
+					"y": 442.0399499999999,
+					"w": 126.34475806451611,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Triumphant Pulse",
+				"name": "Triumphant Pulse",
+				"match": {
+					"id": "100061",
+					"ids": [
+						"100061"
+					],
+					"name": "Triumphant Pulse",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": 4,
+				"box": {
+					"x": 106.58467741935483,
+					"y": 442.0399499999999,
+					"w": 105.98588709677419,
+					"h": 17.1379125
+				}
+			},
+			{
+				"text": "Right-Handed O",
+				"name": "Right-Handed ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200011",
+						"200012",
+						"200013"
+					],
+					"name": "Right-Handed ◎",
+					"score": 1,
+					"margin": 0.25,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 344.3044354838709,
+					"y": 494.04465,
+					"w": 103.59072580645162,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Budding Blossom",
+				"name": "Budding Blossom",
+				"match": {
+					"id": "900511",
+					"ids": [
+						"900511"
+					],
+					"name": "Budding Blossom",
+					"score": 1,
+					"margin": 0.53,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 106.58467741935483,
+					"y": 494.6356124999999,
+					"w": 105.38709677419354,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Firm Conditions O",
+				"name": "Firm Conditions ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"200151",
+						"200152",
+						"200153"
+					],
+					"name": "Firm Conditions ◎",
+					"score": 1,
+					"margin": 0.26076923076923086,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 106.58467741935483,
+					"y": 546.6403124999999,
+					"w": 110.77620967741935,
+					"h": 18.3198375
+				}
+			},
+			{
+				"text": "Professor of Curvature",
+				"name": "Professor of Curvature",
+				"match": {
+					"id": "200331",
+					"ids": [
+						"200331"
+					],
+					"name": "Professor of Curvature",
+					"score": 1,
+					"margin": 0.4845454545454546,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 343.7056451612903,
+					"y": 547.231275,
+					"w": 136.5241935483871,
+					"h": 18.3198375
+				}
+			},
+			{
+				"text": "Sprinting Gear",
+				"name": "Sprinting Gear",
+				"match": {
+					"id": "200652",
+					"ids": [
+						"200652"
+					],
+					"name": "Sprinting Gear",
+					"score": 1,
+					"margin": 0.3076923076923077,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 343.10685483870964,
+					"y": 599.8269375,
+					"w": 92.21370967741936,
+					"h": 19.501762499999998
+				}
+			},
+			{
+				"text": "No Stopping Me!",
+				"name": "No Stopping Me!",
+				"match": {
+					"id": "200491",
+					"ids": [
+						"200491"
+					],
+					"name": "No Stopping Me!",
+					"score": 1,
+					"margin": 0.43500000000000005,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 104.7883064516129,
+					"y": 599.8269375,
+					"w": 105.98588709677419,
+					"h": 19.501762499999998
+				}
+			},
+			{
+				"text": "Sprint Corners ◎",
+				"name": "Sprint Corners ◎",
+				"match": {
+					"id": "200971",
+					"ids": [
+						"200971"
+					],
+					"name": "Sprint Corners ◎",
+					"score": 1,
+					"margin": 0.3846153846153846,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 105.98588709677419,
+					"y": 653.604525,
+					"w": 98.80040322580645,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Pace Chaser Corners ",
+				"name": "Pace Chaser Corners ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201321",
+						"201322"
+					],
+					"name": "Pace Chaser Corners ◎",
+					"score": 1,
+					"margin": 0.3425,
+					"trims": 0,
+					"why": "level"
+				},
+				"level": null,
+				"box": {
+					"x": 344.3044354838709,
+					"y": 654.1954875,
+					"w": 128.14112903225805,
+					"h": 15.955987499999999
+				}
+			},
+			{
+				"text": "Straight Descent",
+				"name": "Straight Descent",
+				"match": {
+					"id": "201342",
+					"ids": [
+						"201342"
+					],
+					"name": "Straight Descent",
+					"score": 1,
+					"margin": 0.4117647058823529,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 105.98588709677419,
+					"y": 706.2001875,
+					"w": 102.39314516129032,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Pace Chaser Savvy O",
+				"name": "Pace Chaser Savvy ◎",
+				"match": {
+					"id": null,
+					"ids": [
+						"201531",
+						"201532"
+					],
+					"name": "Pace Chaser Savvy ◎",
+					"score": 1,
+					"margin": 0.38714285714285723,
+					"trims": 0,
+					"why": "marker"
+				},
+				"level": null,
+				"box": {
+					"x": 343.7056451612903,
+					"y": 706.2001875,
+					"w": 128.7399193548387,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Groundwork",
+				"name": "Groundwork",
+				"match": {
+					"id": "201601",
+					"ids": [
+						"201601"
+					],
+					"name": "Groundwork",
+					"score": 1,
+					"margin": 0.6,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 345.5020161290322,
+					"y": 758.79585,
+					"w": 74.84879032258064,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Uma Stan",
+				"name": "Uma Stan",
+				"match": {
+					"id": "201591",
+					"ids": [
+						"201591"
+					],
+					"name": "Uma Stan",
+					"score": 1,
+					"margin": 0.28,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 105.38709677419354,
+					"y": 758.79585,
+					"w": 61.67540322580645,
+					"h": 18.3198375
+				}
+			},
+			{
+				"text": "Neck and Neck",
+				"name": "Neck and Neck",
+				"match": {
+					"id": "201901",
+					"ids": [
+						"201901"
+					],
+					"name": "Neck and Neck",
+					"score": 1,
+					"margin": 0.6153846153846154,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 105.98588709677419,
+					"y": 811.3915124999999,
+					"w": 93.41129032258064,
+					"h": 17.728875
+				}
+			},
+			{
+				"text": "Burning Spirit SPD",
+				"name": "Burning Spirit SPD",
+				"match": {
+					"id": "210011",
+					"ids": [
+						"210011"
+					],
+					"name": "Burning Spirit SPD",
+					"score": 1,
+					"margin": 0.125,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 343.7056451612903,
+					"y": 811.3915124999999,
+					"w": 113.17137096774194,
+					"h": 19.501762499999998
+				}
+			},
+			{
+				"text": "Ignited Spirit PWR",
+				"name": "Ignited Spirit PWR",
+				"match": {
+					"id": "210032",
+					"ids": [
+						"210032"
+					],
+					"name": "Ignited Spirit PWR",
+					"score": 1,
+					"margin": 0.1875,
+					"trims": 0
+				},
+				"level": null,
+				"box": {
+					"x": 107.18346774193547,
+					"y": 865.1691,
+					"w": 111.37499999999999,
+					"h": 18.3198375
+				}
+			}
+		],
+		"name": "Oguri Cap",
+		"epithet": "[Starlight Beat]",
+		"uniqueLevel": 4
+	},
+	"statNotes": [
+		{
+			"stat": "Speed",
+			"text": "U 1321",
+			"masked": [
+				"1031321",
+				"14151321",
+				"151321"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Stamina",
+			"text": "473",
+			"masked": [
+				"1473",
+				"1473",
+				"1473"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Power",
+			"text": "Ue 1208",
+			"masked": [
+				"0581208",
+				"14681208",
+				"181208"
+			],
+			"agreed": true
+		},
+		{
+			"stat": "Guts",
+			"text": "445",
+			"masked": [
+				"1451",
+				"1451",
+				"1451"
+			],
+			"agreed": false
+		},
+		{
+			"stat": "Wit",
+			"text": "U81230",
+			"masked": [
+				"10181230",
+				"121230",
+				"181230"
+			],
+			"agreed": true
+		}
+	]
+}
