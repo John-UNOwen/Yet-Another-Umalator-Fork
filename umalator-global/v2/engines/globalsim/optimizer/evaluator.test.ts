@@ -191,6 +191,27 @@ test('§K: pinBuilds exempts pinned entries from LRU eviction', async t => {
 	t.end();
 });
 
+// Checkup finding 2: one batch bigger than the cap evicted its own first
+// entries before the caller read them, and the bandit took the empty slots
+// for a candidate that did not survive.
+test('eviction never drops what the same ensure just raced', async t => {
+	const probe = mkEval();
+	await probe.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }]);
+	const cap = probe.cacheStats().estimatedBytes + 100; // room for one entry only
+	probe.dispose();
+	const ev = mkEval(cap);
+	await ev.ensure([base, add1, add2].map(build => ({ ns: NS_SEARCH, scenarioIdx: 0, build, positions })));
+	for (const b of [base, add1, add2]) t.equal(ev.slots(NS_SEARCH, 0, b.id).filter(v => v !== null).length, SEEDS, `${b.id || '(base)'} is readable after its own batch`);
+	t.ok(ev.paired(NS_SEARCH, 0, add1, base, v => v.lead), 'the pair the bandit reads next exists');
+	// The next batch may evict the old ones again (the cap still holds between batches).
+	const add3 = { id: simIdentity(space, [candidates[2]]), selection: [candidates[2]] };
+	await ev.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: add3, positions }]);
+	t.ok(ev.cacheStats().evictions >= 2, 'later batches still evict down to the cap');
+	t.equal(ev.slots(NS_SEARCH, 0, add3.id).filter(v => v !== null).length, SEEDS, 'and keep the entry they asked for');
+	ev.dispose();
+	t.end();
+});
+
 test('search vs verify seed lists are disjoint (P3)', t => {
 	const s = ev.seeds(NS_SEARCH, 0, 1000);
 	const v = ev.seeds(NS_VERIFY, 0, 1000);

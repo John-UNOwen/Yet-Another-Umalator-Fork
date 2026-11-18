@@ -449,8 +449,15 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 				}
 			}
 			// Keep the table bounded; the search pins what it must not evict
-			// (incumbent, restart ends, shortlist — §K).
-			cache.evict(pinKeys);
+			// (incumbent, restart ends, shortlist — §K). Nor may this pass
+			// evict what this batch was asked for: its caller reads those slots
+			// next (a bandit rung pairs every candidate), and an entry gone
+			// before that read looks unmeasured, so a candidate died of cache
+			// pressure and the run's answer depended on the cache cap. The cap
+			// can be passed for one batch, as pins already allow.
+			const keep = new Set(pinKeys);
+			for (const req of reqs) keep.add(cache.keyFor(cns(req.ns), sid(req.scenarioIdx), req.build.id));
+			cache.evict(keep);
 			return { jobErrors: res.errors };
 		},
 		slots(ns, si, identity) {
