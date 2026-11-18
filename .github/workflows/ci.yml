@@ -11,8 +11,9 @@ name: CI
 #                 profile (phase0, 25 seeds), then the GlobalSim pipeline
 #                 suites (compact-record parity and the full-spurt judge
 #                 included), the roster type gate, and both app builds.
-#   optimizer   : the skill optimizer's suites (test:optimizer). Synthetic
-#                 evaluators, no engine, so it runs beside the others.
+#   optimizer   : the skill optimizer's suites (test:optimizer). Mostly
+#                 synthetic evaluators, but evaluator.test.ts runs the real
+#                 engine, so the job builds its own wasm pkg.
 #   app-logic   : career import, skill hints, skill drift against
 #                 docs/master.mdb, the mechanics explorer and base-path.
 #                 Not run anywhere yet: test:optimizer:slow (about an hour),
@@ -213,6 +214,34 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # evaluator.test.ts runs the real engine through the wasm pkg, so this
+      # job builds it the same way wasm-parity does (same caches).
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            globalsim-wasm/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('globalsim-wasm/Cargo.lock', 'vendor/GlobalSim/Cargo.lock') }}
+
+      - name: Cache wasm-pack 0.15.1
+        id: cache-wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-0.15.1
+
+      - name: Install wasm-pack 0.15.1
+        if: steps.cache-wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.1 --locked
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: wasm-pack build
+        working-directory: globalsim-wasm
+        run: wasm-pack build --target web --release --out-dir pkg
 
       - name: npm ci
         run: npm ci --no-audit --no-fund
