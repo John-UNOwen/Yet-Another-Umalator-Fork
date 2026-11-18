@@ -132,16 +132,23 @@ seed (paired race − certify, 95% interval):
 
 | Run seed | certify ℓ | race ℓ | race − certify |
 |---|---|---|---|
-| 20261118 | −6.14 L | −5.00 L | +1.14 [1.04, 1.25] |
-| 20261119 | −4.85 L | −5.01 L | −0.16 [−0.24, −0.08] |
-| 20261120 | −5.38 L | −5.19 L | +0.19 [0.12, 0.25] |
-| 20261121 | −5.25 L | −4.84 L | +0.41 [0.32, 0.50] |
-| mean, spread | −5.40, 1.29 L | −5.01, 0.35 L | +0.40 |
+| 20261118 | −6.14 L | −4.93 L | +1.21 [1.11, 1.31] |
+| 20261119 | −4.85 L | −4.93 L | −0.08 [−0.17, 0.01] |
+| 20261120 | −5.38 L | −5.06 L | +0.32 [0.26, 0.38] |
+| 20261121 | −5.25 L | −5.23 L | +0.03 [−0.06, 0.11] |
+| mean, spread | −5.40, 1.29 L | −5.04, 0.30 L | +0.37 |
 
 The certify runs took 306–362 s (its wave overran the limit) and climbed in one
-restart. The race runs took 301–304 s and climbed in all three. Before Stage D
+restart. The race runs took 296–302 s and climbed in all three. Before Stage D
 was held to half of each slice, three Stage Ds took 266 s of one race run and
 that seed lost by 0.54 L.
+
+The race column is the code after the review fixes of 2026-11-18 (the noise
+estimate leaves out moves that change no race, among others). The runs before
+those fixes, on the same seeds, gave −5.00, −5.01, −5.19 and −4.84 L, a mean of
++0.40 L over certify. The race climb slices its time limit, so a run also moves
+with machine speed and load, and one seed's result is not repeatable: seed
+20261121 went from +0.41 to +0.03 L. The mean is the number to compare.
 
 ## Noise calibration record (§7.3, measured 2026-11-15)
 
