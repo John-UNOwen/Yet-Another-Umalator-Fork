@@ -849,6 +849,35 @@ test('settings: builds shown caps the report, every build carries its skill wort
 	t.end();
 });
 
+// The current build as the best measured: it takes a mandatory shortlist slot
+// (the incumbent), and the report takes it out as the reference, so a set
+// build count used to come back one short.
+test('settings: builds shown is met when the current build is the best measured', async t => {
+	const options: OptOption[] = Array.from({ length: 6 }, (_, i) => ({ id: `o${i}`, groupId: `g${i}`, cost: 20, tierIndex: 0, forced: false }));
+	const groups = new Map(options.map(o => [o.groupId, [o]] as const));
+	const space: BuildSpace = {
+		ownedByGroup: new Map(), fixedIds: [], forcedCost: 0,
+		options, byId: new Map(options.map(o => [o.id, o] as const)), groups, budget: 100, warnings: [],
+	};
+	// Every skill costs lead except o0, worth about as much as the noise can
+	// tell apart, so the empty (current) build is often the best measured in
+	// the search and still loses the check to {o0}.
+	const current = refOf(space, []);
+	for (const gain of [0.02, 0.04, 0.06, 0.08, 0.1]) {
+		const inst: Instance = {
+			space,
+			mu: (identity: string) => (identity ? identity.split(',') : []).reduce((a, id) => a + (id === 'o0' ? gain : -0.3 - 0.01 * Number(id.slice(1))), 0),
+			ranked: [], dead: new Set<string>(),
+		};
+		const ev = new OracleEval(inst);
+		const res = await runOptimizer(ev, { space, scenarioIdx: 0, objective: 'gainVsCurrent', aggregation: 'mean', effort: applyTuning(TEST_CFG, { buildsShown: 3 }), current },
+			createController(), () => undefined);
+		ev.dispose();
+		t.equal(res.shortlist.length, 3, `o0 worth ${gain} L: exactly the 3 builds asked for (${res.shortlist.map(r => r.build.id || '(current)').join(' | ')}${res.reference ? ', current apart' : ''})`);
+	}
+	t.end();
+});
+
 // §K refill: a drop's full top-up is the only move that reaches "sell one,
 // buy the rest" builds beyond two adds. The hand-made instance below is
 // adversarial for the old move space: the incumbent {exp} is a local peak for

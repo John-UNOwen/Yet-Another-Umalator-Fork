@@ -1919,6 +1919,10 @@ async function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<strin
 		.filter(x => !deadSkills(ev, si, x.b).length);
 	const out: BuildRefLite[] = [];
 	const take = (b: BuildRefLite) => { if (!out.some(o => o.id === b.id)) out.push(b); };
+	// The user's current build (fillSkip) can take a mandatory slot below, and
+	// the report takes it back out as the reference, so it does not count
+	// toward k. Counted, a set build count came back one short.
+	const full = (): boolean => out.filter(o => o.id !== fillSkip).length >= k;
 	for (const e of restartEnds) {
 		await readDeadFloor(e);
 		if (affordable(space, e.selection) && !deadSkills(ev, si, e).length) take(e);
@@ -1935,7 +1939,7 @@ async function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<strin
 		.filter(x => x.obj!.n >= SHORTLIST_MIN_SEEDS && x.b.id !== fillSkip && !out.some(o => o.id === x.b.id))
 		.map(x => ({ b: x.b, lcb: x.obj!.mean - 1.96 * (Number.isFinite(x.obj!.sem) ? x.obj!.sem : 0) }))
 		.sort((x, y) => y.lcb - x.lcb || (x.b.id < y.b.id ? -1 : 1));
-	for (const f of fill) { if (out.length >= k) break; take(f.b); }
+	for (const f of fill) { if (full()) break; take(f.b); }
 	// A set build count (relaxFill) fills what is still open from builds
 	// under the seed floor, ranked by the same lower bound: a thin build pays
 	// for its noise there, and Stage G re-races every pick on fresh seeds, so
@@ -1945,7 +1949,7 @@ async function shortlistBy(ev: SearchEvaluator, si: number, evaluated: Map<strin
 			.filter(x => x.obj!.n >= 2 && Number.isFinite(x.obj!.sem) && x.b.id !== fillSkip && !neverFired(x.b) && !out.some(o => o.id === x.b.id))
 			.map(x => ({ b: x.b, lcb: x.obj!.mean - 1.96 * x.obj!.sem }))
 			.sort((x, y) => y.lcb - x.lcb || (x.b.id < y.b.id ? -1 : 1));
-		for (const f of thin) { if (out.length >= k) break; take(f.b); }
+		for (const f of thin) { if (full()) break; take(f.b); }
 	}
 	return out;
 }
