@@ -144,7 +144,20 @@ test('(1c) addPairH2H: averaged margin, 2n placings, per-race HP, seed-level rus
 	t.equal(agg.methodCounts.tie, 1, 'sub-noise combined margin counted as tie');
 	t.equal(agg.placing1[3], 2, 'uma1 ran both races → 2 placing samples');
 	t.equal(agg.placing2[3], 2, 'uma2 likewise');
-	t.equal(agg.hpEmptyN, 4, 'HP counted per race (2 races × 2 umas)');
+	t.deepEqual([agg.hpEmptyN1, agg.hpEmptyN2], [2, 2], 'HP counted per race, against each uma (2 races each)');
+	// Finding 38: an uma that empties HP in both of its races reads 100%, not 50%.
+	const hp = newAggregate();
+	addPairH2H(hp,
+		[rec({ hpEmptyOnRace: true }), rec({ finishTimeRaw: 119.5 })],
+		[rec({ finishTimeRaw: 119.5 }), rec({ hpEmptyOnRace: true })],
+		2000);
+	const hs = summarizeAggregate(hp);
+	t.deepEqual([hs.hpEmptyRate1, hs.hpEmptyRate2], [0.5, 0.5], 'one empty race of two, per uma');
+	addPairH2H(hp,
+		[rec({ hpEmptyOnRace: true }), rec({ finishTimeRaw: 119.5 })],
+		[rec({ finishTimeRaw: 119.5, hpEmptyOnRace: true }), rec({})],
+		2000);
+	t.equal(summarizeAggregate(hp).hpEmptyRate1, 0.75, 'uma1: 3 empty races of 4');
 	t.deepEqual([agg.fullSpurtN1, agg.fullSpurtN2], [0, 0], 'no spurt verdicts on these records');
 	// Full spurt counts each uma's own player race: race A for uma1, race B for uma2.
 	const spurt = newAggregate();
@@ -160,7 +173,7 @@ test('(1c) addPairH2H: averaged margin, 2n placings, per-race HP, seed-level rus
 		2000);
 	t.equal(agg.rushSeeds2, 1, 'rushing counted once per seed');
 	t.equal(agg.rushStarts2, 2, 'start counts summed across both races');
-	t.equal(agg.placing2[3] + agg.placing2[3], agg.placing2[3] * 2, 'sane histogram growth');
+	t.equal(agg.placing2[3], 4, 'uma2 placings grow by two races per seed');
 	const s = summarizeAggregate(agg);
 	t.equal(s.n, 2, 'summary counts seeds, not races');
 	t.end();

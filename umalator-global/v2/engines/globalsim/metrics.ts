@@ -295,8 +295,8 @@ export interface CompareAggregate {
 	win1: number;                    // margin < 0
 	placing1: number[];              // finishOrder histograms (0-based place → count), 9 bins
 	placing2: number[];
-	hpEmpty1: number; hpEmptyN: number;   // hpEmptyOnRace === true count / non-null count
-	hpEmpty2: number;
+	hpEmpty1: number; hpEmpty2: number;   // hpEmptyOnRace === true count, per uma
+	hpEmptyN1: number; hpEmptyN2: number; // non-null hpEmptyOnRace count, per uma
 	fullSpurt1: number; fullSpurt2: number;   // fullSpurt === true count, per uma
 	fullSpurtN1: number; fullSpurtN2: number; // non-null fullSpurt count, per uma
 	rushSeeds1: number; rushSeeds2: number;       // seeds with rushingStartCount > 0
@@ -313,7 +313,7 @@ export function newAggregate(): CompareAggregate {
 	return {
 		n: 0, margins: [], ties: 0, win2: 0, win1: 0,
 		placing1: new Array(9).fill(0), placing2: new Array(9).fill(0),
-		hpEmpty1: 0, hpEmpty2: 0, hpEmptyN: 0,
+		hpEmpty1: 0, hpEmpty2: 0, hpEmptyN1: 0, hpEmptyN2: 0,
 		fullSpurt1: 0, fullSpurt2: 0, fullSpurtN1: 0, fullSpurtN2: 0,
 		rushSeeds1: 0, rushSeeds2: 0, rushStarts1: 0, rushStarts2: 0,
 		marginSum: 0, marginSumSq: 0, minMargin: Infinity, maxMargin: -Infinity,
@@ -339,11 +339,8 @@ export function addPair(agg: CompareAggregate, recA: SeedCompactRecord, recB: Se
 	const oA = recA.finishOrder as number, oB = recB.finishOrder as number;
 	if (oA >= 0 && oA < 9) agg.placing1[oA] += 1;
 	if (oB >= 0 && oB < 9) agg.placing2[oB] += 1;
-	if (recA.hpEmptyOnRace != null || recB.hpEmptyOnRace != null) {
-		agg.hpEmptyN += 1;
-		if (recA.hpEmptyOnRace === true) agg.hpEmpty1 += 1;
-		if (recB.hpEmptyOnRace === true) agg.hpEmpty2 += 1;
-	}
+	countHpEmpty(agg, recA, 0);
+	countHpEmpty(agg, recB, 1);
 	countFullSpurt(agg, recA, 0);
 	countFullSpurt(agg, recB, 1);
 	if ((recA.rushingStartCount ?? 0) > 0) agg.rushSeeds1 += 1;
@@ -406,10 +403,7 @@ export function addPairH2H(
 			const placing = side ? agg.placing2 : agg.placing1;
 			const o = r.finishOrder as number;
 			if (o >= 0 && o < 9) placing[o] += 1;
-			if (r.hpEmptyOnRace != null) {
-				agg.hpEmptyN += 1;
-				if (r.hpEmptyOnRace === true) { if (side) agg.hpEmpty2 += 1; else agg.hpEmpty1 += 1; }
-			}
+			countHpEmpty(agg, r, side);
 		}
 	}
 	countFullSpurt(agg, raceA[0], 0);
@@ -430,6 +424,15 @@ export function addPairH2H(
  * (race A for UMA 1, race B for UMA 2): compare judges the player record,
  * whose skill activations rebuild its in-race stats.
  */
+/** One record's HP verdict, counted against its own uma (side 0 = UMA 1).
+ *  Each uma has its own denominator, so head-to-head (two races per uma per
+ *  seed) and mob mode (one) both give that uma's share of its own races. */
+function countHpEmpty(agg: CompareAggregate, r: SeedCompactRecord, side: number): void {
+	if (r.hpEmptyOnRace == null) return;
+	if (side) { agg.hpEmptyN2 += 1; if (r.hpEmptyOnRace) agg.hpEmpty2 += 1; }
+	else { agg.hpEmptyN1 += 1; if (r.hpEmptyOnRace) agg.hpEmpty1 += 1; }
+}
+
 function countFullSpurt(agg: CompareAggregate, r: SeedCompactRecord, side: number): void {
 	if (r.fullSpurt == null) return;
 	if (side) { agg.fullSpurtN2 += 1; if (r.fullSpurt) agg.fullSpurt2 += 1; }
@@ -443,7 +446,8 @@ export function mergeAggregates(a: CompareAggregate, b: CompareAggregate): Compa
 	out.margins = a.margins.concat(b.margins);
 	out.ties = a.ties + b.ties; out.win2 = a.win2 + b.win2; out.win1 = a.win1 + b.win1;
 	for (let i = 0; i < 9; i++) { out.placing1[i] = a.placing1[i] + b.placing1[i]; out.placing2[i] = a.placing2[i] + b.placing2[i]; }
-	out.hpEmpty1 = a.hpEmpty1 + b.hpEmpty1; out.hpEmpty2 = a.hpEmpty2 + b.hpEmpty2; out.hpEmptyN = a.hpEmptyN + b.hpEmptyN;
+	out.hpEmpty1 = a.hpEmpty1 + b.hpEmpty1; out.hpEmpty2 = a.hpEmpty2 + b.hpEmpty2;
+	out.hpEmptyN1 = a.hpEmptyN1 + b.hpEmptyN1; out.hpEmptyN2 = a.hpEmptyN2 + b.hpEmptyN2;
 	out.fullSpurt1 = a.fullSpurt1 + b.fullSpurt1; out.fullSpurt2 = a.fullSpurt2 + b.fullSpurt2;
 	out.fullSpurtN1 = a.fullSpurtN1 + b.fullSpurtN1; out.fullSpurtN2 = a.fullSpurtN2 + b.fullSpurtN2;
 	out.rushSeeds1 = a.rushSeeds1 + b.rushSeeds1; out.rushSeeds2 = a.rushSeeds2 + b.rushSeeds2;
@@ -503,7 +507,7 @@ export interface CompareSummary {
 	ci95: [number, number];
 	winRateUma1: number; winRateUma2: number; tieRate: number;   // fractions of n
 	placing1: number[]; placing2: number[];
-	hpEmptyRate1: number; hpEmptyRate2: number;                  // fractions of hpEmptyN
+	hpEmptyRate1: number; hpEmptyRate2: number;                  // fractions of hpEmptyN1/N2
 	fullSpurtRate1: number; fullSpurtRate2: number;              // fractions of fullSpurtN1/N2, NaN without verdicts
 	rushingRate1: number; rushingRate2: number;                   // fractions of n
 	methodCounts: CompareAggregate['methodCounts'];
@@ -540,8 +544,8 @@ export function summarizeAggregate(agg: CompareAggregate): CompareSummary {
 		stdDev, ci95: ci95(mean, stdDev, n),
 		winRateUma1: n ? agg.win1 / n : NaN, winRateUma2: n ? agg.win2 / n : NaN, tieRate: n ? agg.ties / n : NaN,
 		placing1: agg.placing1.slice(), placing2: agg.placing2.slice(),
-		hpEmptyRate1: agg.hpEmptyN ? agg.hpEmpty1 / agg.hpEmptyN : NaN,
-		hpEmptyRate2: agg.hpEmptyN ? agg.hpEmpty2 / agg.hpEmptyN : NaN,
+		hpEmptyRate1: agg.hpEmptyN1 ? agg.hpEmpty1 / agg.hpEmptyN1 : NaN,
+		hpEmptyRate2: agg.hpEmptyN2 ? agg.hpEmpty2 / agg.hpEmptyN2 : NaN,
 		fullSpurtRate1: agg.fullSpurtN1 ? agg.fullSpurt1 / agg.fullSpurtN1 : NaN,
 		fullSpurtRate2: agg.fullSpurtN2 ? agg.fullSpurt2 / agg.fullSpurtN2 : NaN,
 		rushingRate1: n ? agg.rushSeeds1 / n : NaN,
