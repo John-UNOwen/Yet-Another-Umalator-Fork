@@ -1,11 +1,11 @@
 /**
- * Aptitude block layout tests. The boxes are the shapes the reader really returns: the geometry comes
+ * Aptitude block layout tests. The boxes are the shapes the reader returns: the geometry comes
  * from the corpus captures, with the coordinates pulled back to what one cell looks like.
  *
  * Run via: npm run test:ocr
  */
 import test from 'tape';
-import { APTITUDE_WORDS, aptitudeCells, cellBox, letterProbes } from './layout';
+import { APTITUDE_WORDS, aptitudeCells, cellBox, letterProbes, statColumns, statNumberLine } from './layout';
 import type { OcrLine } from './contract';
 
 const line = (text: string, x: number, y: number, w: number, h = 24, score = 0.99): OcrLine => ({ text, score, box: { x, y, w, h } });
@@ -84,5 +84,55 @@ test('a cell box covers the word and its letter', (t) => {
 
 test('every aptitude word the dialog prints is known', (t) => {
 	t.deepEqual(Object.values(APTITUDE_WORDS), ['Turf', 'Dirt', 'Sprint', 'Mile', 'Medium', 'Long', 'Front', 'Pace', 'Late', 'End'], 'the ten words a details dialog can show');
+	t.end();
+});
+
+test('the five stat numbers are placed by their labels', (t) => {
+	const columns = statColumns([
+		line('5 Speed', 288, 259, 60, 20),
+		line('Stamina', 399, 259, 70, 20),
+		line('F Power', 517, 259, 60, 20),
+		line('Guts', 637, 259, 50, 20),
+		line('Wit', 751, 259, 40, 20),
+		line('Speed of Light', 288, 400, 120, 22),
+	]);
+	t.deepEqual(columns.map((c) => c.label), ['Speed', 'Stamina', 'Power', 'Guts', 'Wit'], 'a skill row is not a stat label');
+	const first = columns[0].region;
+	t.equal(Math.round(first.x), 260, 'the region reaches left of the label so the rank badge falls inside it');
+	t.equal(Math.round(first.w), 135, 'and stops before the next column');
+	t.equal(Math.round(first.y), 273, 'below the label');
+	t.equal(Math.round(first.h), 60);
+	t.ok(columns[4].region.x + columns[4].region.w > 791, 'the last column runs past its label');
+	t.end();
+});
+
+test('a number line is the box under its own label, not the widest one reaching in', (t) => {
+	const numbers = [
+		line('5 Speed', 288, 259, 60, 20),
+		line('Stamina', 399, 259, 70, 20),
+		line('F Power', 517, 259, 60, 20),
+		line('Guts', 637, 259, 50, 20),
+		line('Wit', 751, 259, 40, 20),
+		line('U 1321', 268, 285, 92, 40),
+		line('473', 400, 286, 62, 38),
+		line('Ue 1208', 470, 285, 130, 42),
+	];
+	const columns = statColumns(numbers);
+	t.equal(statNumberLine(numbers, columns[0])!.text, 'U 1321', 'the rank badge is glued to the front of it');
+	t.equal(statNumberLine(numbers, columns[1])!.text, '473', 'the wider box from the next column that reaches into this region is not this column number');
+	t.equal(statNumberLine(numbers, columns[2])!.text, 'Ue 1208');
+	t.equal(statNumberLine(numbers, columns[4]), null, 'no number under the last label is said, not guessed');
+	t.end();
+});
+
+test('a label with a glyph glued to its front is still found', (t) => {
+	const noisy = statColumns([
+		line('5 Speed', 288, 259, 60, 20),
+		line('♡ Stamina', 399, 259, 70, 20),
+		line('. Power', 517, 259, 60, 20),
+		line('yGuts', 637, 259, 52, 20),
+		line('4Wit', 751, 259, 40, 20),
+	]);
+	t.deepEqual(noisy.map((c) => c.label), ['Speed', 'Stamina', 'Power', 'Guts', 'Wit'], 'the noise sits in front of the word, so the end of the word still matches');
 	t.end();
 });

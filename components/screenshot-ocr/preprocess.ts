@@ -35,6 +35,16 @@ export const binarizeGray = (gray: Gray, cut = 170): Uint8Array => {
 	return mask;
 };
 
+/** A mask back to RGBA, ink black on white, for a recognizer fed one of the ladder's binarized crops. */
+export function maskToRgba(mask: Uint8Array, width: number, height: number): { rgba: Uint8ClampedArray; width: number; height: number } {
+	const rgba = new Uint8ClampedArray(width * height * 4);
+	for (let i = 0, p = 0; i < mask.length; i++, p += 4) {
+		const v = mask[i] ? 0 : 255;
+		rgba[p] = v; rgba[p + 1] = v; rgba[p + 2] = v; rgba[p + 3] = 255;
+	}
+	return { rgba, width, height };
+}
+
 /** Bilinear resize of RGBA rows. `scale` is the factor relative to the source, and a scale of 1 copies. */
 export function resize(rgba: Uint8ClampedArray, width: number, height: number, scale: number): { rgba: Uint8ClampedArray; width: number; height: number } {
 	if (scale === 1) return { rgba, width, height };

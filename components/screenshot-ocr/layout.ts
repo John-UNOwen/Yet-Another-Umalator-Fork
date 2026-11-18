@@ -117,3 +117,66 @@ export function cellBox(cell: AptitudeCell): Box {
 	const right = cell.letter ? cell.letter.box.x + cell.letter.box.w : cell.word.box.x + cell.word.box.w;
 	return { x: cell.word.box.x, y: cell.word.box.y, w: right - cell.word.box.x, h: cell.word.box.h };
 }
+
+/** The five stats, in the order the dialog prints them across the row. */
+export const STAT_LABELS = ['Speed', 'Stamina', 'Power', 'Guts', 'Wit'] as const;
+
+export interface StatColumn {
+	label: typeof STAT_LABELS[number];
+	/** Middle of the label, which the number below it is aligned to. */
+	centre: number;
+	/** Where the number sits: below its label, up to the next column, badge included. */
+	region: Box;
+}
+
+/**
+ * The five number regions, placed by the labels above them rather than by the numbers themselves,
+ * because the rank badge beside a number gets glued to it by the detector. The region reaches left of
+ * the label so the badge is inside it, which is what lets the reader cut the badge out by colour.
+ */
+export function statColumns(lines: readonly OcrLine[]): StatColumn[] {
+	const found = STAT_LABELS.map((label) => {
+		const wanted = label.toLowerCase();
+		// The reader often glues a glyph or two onto the front of a short word, so the label may end
+		// with the word rather than be it.
+		const word = lines
+			.filter((l) => {
+				const last = l.text.trim().toLowerCase().split(/\s+/).pop() ?? '';
+				return last.endsWith(wanted) && last.length - wanted.length <= 2;
+			})
+			.sort((a, b) => a.box.x - b.box.x)[0];
+		return word ? { label, word } : null;
+	}).filter((l): l is { label: typeof STAT_LABELS[number]; word: OcrLine } => !!l);
+	if (found.length < 3) return [];
+
+	const rowCentre = found.reduce((sum, f) => sum + f.word.box.y + f.word.box.h / 2, 0) / found.length;
+	const row = found.filter((f) => Math.abs(f.word.box.y + f.word.box.h / 2 - rowCentre) < 30).sort((a, b) => a.word.box.x - b.word.box.x);
+	return row.map((f, i) => {
+		const h = f.word.box.h;
+		const x0 = f.word.box.x - h * 1.4;
+		const x1 = i + 1 < row.length ? row[i + 1].word.box.x - h * 0.2 : f.word.box.x + f.word.box.w + h * 2;
+		return {
+			label: f.label,
+			centre: f.word.box.x + f.word.box.w / 2,
+			region: { x: x0, y: f.word.box.y + f.word.box.h - h * 0.3, w: x1 - x0, h: h * 3 },
+		};
+	});
+}
+
+/**
+ * The line that carries a stat's number. The detector glues the rank badge to the digits, so the
+ * number is one wide box rather than a digit run, and a box that belongs to the next column can still
+ * reach into this region. Alignment decides: a number sits under its own label, so the digit-bearing
+ * box nearest the label's middle is the one.
+ */
+export function statNumberLine(lines: readonly OcrLine[], column: StatColumn): OcrLine | null {
+	const bottom = column.region.y + column.region.h;
+	const found = lines.filter((l) => {
+		if (!/\d{2,}/.test(l.text)) return false;
+		const centre = l.box.x + l.box.w / 2;
+		if (centre < column.region.x || centre > column.region.x + column.region.w) return false;
+		return l.box.y > column.region.y - l.box.h * 0.5 && l.box.y < bottom;
+	});
+	if (!found.length) return null;
+	return found.sort((a, b) => Math.abs(a.box.x + a.box.w / 2 - column.centre) - Math.abs(b.box.x + b.box.w / 2 - column.centre))[0];
+}
