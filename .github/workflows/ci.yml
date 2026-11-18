@@ -10,6 +10,8 @@ name: CI
 #   wasm-parity — globalsim-wasm build, wasm-vs-native byte parity on the v77
 #                 profile (phase0, 25 seeds), then every node suite of the
 #                 GlobalSim pipeline, the roster type gate, and both app builds.
+#   ocr         : the screenshot parser suites, plus a check that every
+#                 published ocr/ file matches ocr/MANIFEST.json.
 #
 # What does NOT run here: GlobalSim's upstream python regression suite over
 # tests/fixtures (84 official captures). It is native-side, upstream-CI
@@ -179,3 +181,31 @@ jobs:
 
       - name: Build v1 + v2 (esbuild)
         run: npm run build:global
+
+  ocr:
+    name: screenshot OCR suites and asset check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The binaries are not in git. Fetched once per manifest, and the tool re-checks
+      # every file it fetches or loads from this cache.
+      - name: Cache the OCR assets
+        uses: actions/cache@v4
+        with:
+          path: ocr
+          key: ${{ runner.os }}-ocr-${{ hashFiles('ocr/MANIFEST.json') }}
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify the OCR assets against the manifest
+        run: node tools/fetch-ocr-assets.mjs
+
+      - name: Parser suites
+        run: npm run test:ocr
