@@ -37,7 +37,9 @@ pins the misreads that are accepted and the screen text that is refused.
 
 Aptitude letters are colours, and these are the colours the Global client draws on these files: S 44°,
 A 25°, B 340°, C 107°, D 205°, E 287°, F 247°. G carries no colour at all, which is how it is told
-apart from the rest. Over the 90 aptitude cells in the nine files, 81 read the same from the colour of
-the glyph and from the letter the text reader saw, 9 read by colour where the text reader saw nothing,
-and none ever contradicted.
+apart from the rest. Over the 90 aptitude cells in the nine files the colour answered every one: 49
+from a letter the detector had boxed on its own, 8 from the strip just past the value word, and 33
+from inside the word's own box. In none of them did the colour disagree with the letter the text
+reader saw, and none needed a guess. That agreement is what the reader can check on its own; the
+goldens below are still what pins the letters themselves.
 
