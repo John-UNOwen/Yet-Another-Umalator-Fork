@@ -1,31 +1,35 @@
 /**
- * v2 OCR Modal
- * Import horse data from screenshots using Google Gemini AI
+ * Import a uma from screenshots, recognised on this device: a worker runs PP-OCR over each image, the
+ * parser modules turn the lines into a uma, and nothing leaves the machine unless the cloud fallback is
+ * opened. Several screenshots of one uma are combined, so a list too long for one screen still imports.
  *
  * Copyright (c) 2026 TheCing (https://github.com/TheCing/uma-tools)
  * Licensed under GPL-3.0-or-later
  */
 
 import { h, Fragment } from 'preact';
-import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'preact/hooks';
 import { Modal, Button, CustomSelect } from './components';
-import { Upload, Camera, ArrowLeft, Check, Loader2, ExternalLink } from 'lucide-react';
+import { Upload, Loader2, Plus, Cloud, Check, AlertTriangle } from 'lucide-react';
 
-import {
-	extractHorseDataFromImage,
-	fileToBase64,
-	getStoredApiKey,
-	storeApiKey,
-	clearStoredApiKey,
-	mapSkillNamesToIds,
-	mapOutfitNameToId,
-	mapCharacterNameToOutfitId,
-	OCR_PROXY_URL,
-	OCRHorseData
-} from '../../components/GeminiOCR';
-import { getTurnstileToken } from '../../components/turnstile';
+import { BASE_PATH } from '../../components/base-path';
+import { mapCharacterNameToOutfitId, mapOutfitNameToId } from '../../components/GeminiOCR';
+import { GRADES } from '../../components/screenshot-ocr/aptitudes';
+import type { Grade } from '../../components/screenshot-ocr/aptitudes';
+import { gaps, mergeReads } from '../../components/screenshot-ocr/merge';
+import type { MergedRead, Read, SkillRead } from '../../components/screenshot-ocr/merge';
+import { STAT_LABELS } from '../../components/screenshot-ocr/layout';
+import type { AptitudeKey, StatKey } from '../../components/screenshot-ocr/layout';
+import type { Box } from '../../components/screenshot-ocr/contract';
+import type { NameEntry } from '../../components/screenshot-ocr/matcher';
+import { manifestKey } from '../../components/screenshot-ocr/model-cache';
+import type { ScanResult, StatNote } from '../../components/screenshot-ocr/scan';
 
+import skillnames from '../skillnames.json';
+import notInGame from '../not-in-game.json';
+import { validateAndParseUmaJson } from './storage';
 import type { UmaState } from './uma-panel';
+import { GeminiOcrModal } from './gemini-ocr-step';
 
 interface OCRModalProps {
 	isOpen: boolean;
@@ -33,425 +37,448 @@ interface OCRModalProps {
 	onConfirm: (state: UmaState) => void;
 }
 
-// Aptitude options for dropdowns
-const APTITUDE_OPTIONS = ['S', 'A', 'B', 'C', 'D', 'E', 'F', 'G'].map(v => ({
-	value: v,
-	label: v
-}));
+/** The pool a skill line can be matched against: this fork's names, minus what the player cannot have. */
+const OFFERED: NameEntry[] = Object.entries(skillnames as Record<string, string | string[]>)
+	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v.slice(-1)[0] : v }))
+	.filter((e) => !(notInGame as { skills: string[] }).skills.includes(e.id) && /[a-z]/i.test(e.name));
+const NAME_OF = new Map(OFFERED.map((e) => [e.id, e.name]));
 
-// Strategy options
+const APTITUDE_OPTIONS = GRADES.map((g) => ({ value: g, label: g }));
 const STRATEGY_OPTIONS = [
-	{ value: 'Oonige', label: 'Runaway' },
 	{ value: 'Nige', label: 'Front Runner' },
 	{ value: 'Senkou', label: 'Pace Chaser' },
 	{ value: 'Sasi', label: 'Late Surger' },
 	{ value: 'Oikomi', label: 'End Closer' },
 ];
+const DEFAULT_STATS: Record<StatKey, number> = { Speed: 1200, Stamina: 1200, Power: 800, Guts: 400, Wit: 400 };
+const STRATEGY_APTITUDE: Record<string, AptitudeKey> = { Nige: 'nige', Senkou: 'senkou', Sasi: 'sashi', Oikomi: 'oikomi' };
+const BEST_OF: AptitudeKey[] = ['short', 'mile', 'medium', 'long'];
 
-/**
- * Convert OCRHorseData to UmaState
- */
-function ocrDataToUmaState(data: OCRHorseData): UmaState {
-	// Try to match outfit first, fall back to character name if that fails
-	let outfitId = mapOutfitNameToId(data.outfit);
-	if (!outfitId && data.name) {
-		outfitId = mapCharacterNameToOutfitId(data.name);
-	}
-
-	return {
-		outfitId: outfitId || '',
-		speed: data.speed || 1200,
-		stamina: data.stamina || 1200,
-		power: data.power || 800,
-		guts: data.guts || 400,
-		wisdom: data.wisdom || 400,
-		strategy: (data.strategy as any) || 'Senkou',
-		distanceAptitude: (data.distanceAptitude as any) || 'A',
-		surfaceAptitude: (data.surfaceAptitude as any) || 'A',
-		strategyAptitude: (data.strategyAptitude as any) || 'A',
-		mood: 2,
-		skills: mapSkillNamesToIds(data.skills || []),
-		forcedSkillPositions: {},
-	};
+export function OCRModal(props: OCRModalProps) {
+	const [cloud, setCloud] = useState(false);
+	if (cloud) return <GeminiOcrModal {...props} />;
+	return <DeviceModal {...props} onCloud={() => setCloud(true)} />;
 }
 
-export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
-	const [apiKey, setApiKey] = useState(getStoredApiKey() || '');
-	const [saveApiKey, setSaveApiKey] = useState(!!getStoredApiKey());
-	const [imagePreview, setImagePreview] = useState<string | null>(null);
-	const [imageFile, setImageFile] = useState<File | null>(null);
-	const [loading, setLoading] = useState(false);
+interface Shot {
+	url: string;
+	bytes: ArrayBuffer;
+	size: number;
+}
+
+type Phase = 'pick' | 'ask' | 'work' | 'review';
+interface Progress {
+	stage: string;
+	done: number;
+	total: number;
+}
+
+interface Edits {
+	stats: Partial<Record<StatKey, number>>;
+	surface: Grade | null;
+	distance: Grade | null;
+	style: Grade | null;
+	strategy: string;
+	epithet: string;
+	outfitId: string;
+	starCount: number;
+	uniqueLv: number;
+	skillPicks: Record<string, string>;
+	skillOff: Record<string, boolean>;
+}
+
+const EMPTY_EDITS: Edits = {
+	stats: {},
+	surface: null,
+	distance: null,
+	style: null,
+	strategy: 'Senkou',
+	epithet: '',
+	outfitId: '',
+	starCount: 3,
+	uniqueLv: 1,
+	skillPicks: {},
+	skillOff: {},
+};
+
+/** The key a skill row is remembered by while the user picks between its candidates. */
+const skillKey = (s: SkillRead) => s.match.ids.join(',');
+
+/**
+ * Which screenshot a combined skill row came from: the one that read that text at that place. Rows keep
+ * their boxes from the shot they were read from, so the crop the user checks is the real one.
+ */
+function shotOf(pairs: readonly { url: string; read: Read }[], skill: SkillRead): string {
+	const found = pairs.find((p) => p.read.skills?.some((s) => s.text === skill.text && s.box?.x === skill.box?.x && s.box?.y === skill.box?.y));
+	return (found ?? pairs[0])?.url ?? '';
+}
+
+function DeviceModal({ isOpen, onClose, onConfirm, onCloud }: OCRModalProps & { onCloud: () => void }) {
+	const [shots, setShots] = useState<Shot[]>([]);
+	const [results, setResults] = useState<ScanResult[]>([]);
+	const [phase, setPhase] = useState<Phase>('pick');
+	const [progress, setProgress] = useState<Progress | null>(null);
+	const [downloadBytes, setDownloadBytes] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [extractedData, setExtractedData] = useState<OCRHorseData | null>(null);
-	const [editableData, setEditableData] = useState<OCRHorseData | null>(null);
-	const [step, setStep] = useState<'upload' | 'review'>('upload');
+	const [edits, setEdits] = useState<Edits>(EMPTY_EDITS);
 
-	const fileInputRef = useRef<HTMLInputElement>(null);
-	const dropZoneRef = useRef<HTMLDivElement>(null);
+	const fileRef = useRef<HTMLInputElement>(null);
+	const zoneRef = useRef<HTMLDivElement>(null);
+	const workerRef = useRef<Worker | null>(null);
+	const waitingRef = useRef(new Map<number, { resolve: (r: ScanResult) => void; reject: (e: Error) => void }>());
 
-	// Reset state when modal opens
-	useEffect(() => {
-		if (isOpen) {
-			setImagePreview(null);
-			setImageFile(null);
-			setError(null);
-			setExtractedData(null);
-			setEditableData(null);
-			setStep('upload');
-			setLoading(false);
-		}
-	}, [isOpen]);
-
-	const processFile = useCallback((file: File) => {
-		if (!file.type.startsWith('image/')) {
-			setError('Please select an image file');
-			return;
-		}
-
-		setError(null);
-		setImageFile(file);
-
-		const reader = new FileReader();
-		reader.onload = () => {
-			setImagePreview(reader.result as string);
-		};
-		reader.readAsDataURL(file);
-	}, []);
-
-	const handleFileSelect = useCallback((e: Event) => {
-		const input = e.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (file) {
-			processFile(file);
-		}
-	}, [processFile]);
-
-	const handleDragOver = useCallback((e: DragEvent) => {
-		e.preventDefault();
-		e.stopPropagation();
-		dropZoneRef.current?.classList.add('dragover');
-	}, []);
-
-	const handleDragLeave = useCallback((e: DragEvent) => {
-		e.preventDefault();
-		e.stopPropagation();
-		dropZoneRef.current?.classList.remove('dragover');
-	}, []);
-
-	const handleDrop = useCallback((e: DragEvent) => {
-		e.preventDefault();
-		e.stopPropagation();
-		dropZoneRef.current?.classList.remove('dragover');
-
-		const file = e.dataTransfer?.files?.[0];
-		if (file) {
-			processFile(file);
-		}
-	}, [processFile]);
-
-	// Add paste listener when modal is open
 	useEffect(() => {
 		if (!isOpen) return;
-
-		function handlePaste(e: ClipboardEvent) {
-			const items = e.clipboardData?.items;
-			if (!items) return;
-
-			for (let i = 0; i < items.length; i++) {
-				const item = items[i];
-				if (item.type.startsWith('image/')) {
-					const file = item.getAsFile();
-					if (file) {
-						processFile(file);
-						break;
-					}
-				}
-			}
-		}
-
-		document.addEventListener('paste', handlePaste);
-		return () => document.removeEventListener('paste', handlePaste);
-	}, [isOpen, processFile]);
-
-	const handleExtract = useCallback(async () => {
-		if (!imageFile) {
-			setError('Please select an image first');
-			return;
-		}
-
-		if (!OCR_PROXY_URL && !apiKey.trim()) {
-			setError('Please enter your Gemini API key');
-			return;
-		}
-
-		setLoading(true);
+		setShots([]);
+		setResults([]);
+		setPhase('pick');
+		setProgress(null);
+		setDownloadBytes(null);
 		setError(null);
+		setEdits(EMPTY_EDITS);
+	}, [isOpen]);
 
-		try {
-			const { base64, mimeType } = await fileToBase64(imageFile);
-			const turnstileToken = await getTurnstileToken();
-			const result = await extractHorseDataFromImage(base64, mimeType, apiKey.trim(), turnstileToken);
+	const merged = useMemo(() => mergeReads(results.map((r) => r.read)), [results]);
+	const missing = useMemo(() => gaps(merged), [merged]);
 
-			if (result.success && result.data) {
-				// Save API key if checkbox is checked
-				if (saveApiKey) {
-					storeApiKey(apiKey.trim());
-				} else {
-					clearStoredApiKey();
-				}
-
-				setExtractedData(result.data);
-				setEditableData(result.data);
-				setStep('review');
-			} else {
-				setError(result.error || 'Failed to extract data from image');
+	const worker = useCallback((): Worker => {
+		if (workerRef.current) return workerRef.current;
+		const w = new Worker(new URL('../../components/screenshot-ocr/ocr.worker.ts', import.meta.url), { type: 'module' });
+		w.onmessage = (e: MessageEvent) => {
+			const m = e.data as { type: string; id?: number; result?: ScanResult; message?: string } & Partial<Progress>;
+			if (m.type === 'progress') setProgress({ stage: m.stage!, done: m.done!, total: m.total! });
+			else if (m.type === 'scanned') {
+				const held = waitingRef.current.get(m.id!);
+				waitingRef.current.delete(m.id!);
+				if (held) held.resolve(m.result!);
+			} else if (m.type === 'failed') {
+				for (const held of waitingRef.current.values()) held.reject(new Error(m.message ?? 'the reader failed'));
+				waitingRef.current.clear();
 			}
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'An error occurred');
-		} finally {
-			setLoading(false);
-		}
-	}, [imageFile, apiKey, saveApiKey]);
-
-	const handleConfirm = useCallback(() => {
-		if (editableData) {
-			const umaState = ocrDataToUmaState(editableData);
-			onConfirm(umaState);
-			onClose();
-		}
-	}, [editableData, onConfirm, onClose]);
-
-	const handleBack = useCallback(() => {
-		setStep('upload');
-		setExtractedData(null);
-		setEditableData(null);
+		};
+		w.onerror = (e) => {
+			for (const held of waitingRef.current.values()) held.reject(new Error(e.message));
+			waitingRef.current.clear();
+		};
+		workerRef.current = w;
+		return w;
 	}, []);
 
-	const updateEditableData = useCallback((field: keyof OCRHorseData, value: any) => {
-		if (editableData) {
-			setEditableData({ ...editableData, [field]: value });
+	const scanAll = useCallback(async (list: readonly Shot[]) => {
+		const w = worker();
+		w.postMessage({ type: 'prepare', names: OFFERED });
+		const found: ScanResult[] = [];
+		try {
+			for (const [i, shot] of list.entries()) {
+				setProgress({ stage: 'read', done: i, total: list.length });
+				found.push(await new Promise<ScanResult>((resolve, reject) => {
+					const id = waitingRef.current.size + 1000 + i;
+					waitingRef.current.set(id, { resolve, reject });
+					w.postMessage({ type: 'scan', id, source: shot.bytes }, [shot.bytes]);
+				}));
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			setPhase('pick');
+			return;
 		}
-	}, [editableData]);
+		setResults((held) => [...held, ...found]);
+		setPhase('review');
+	}, [worker]);
 
-	// Upload step footer
-	const uploadFooter = (
+	const start = useCallback(async (list: readonly Shot[]) => {
+		setError(null);
+		setProgress(null);
+		try {
+			const r = await fetch(`${BASE_PATH}/ocr/MANIFEST.json`, { cache: 'no-store' });
+			if (!r.ok) throw new Error(`The model list did not load (HTTP ${r.status}).`);
+			const manifest = await r.json();
+			const total = (manifest.assets as { bytes: number }[]).reduce((n, a) => n + a.bytes, 0);
+			const stored = typeof caches !== 'undefined' && await caches.has('ocr-' + manifestKey(manifest));
+			if (stored) await scanAll(list);
+			else {
+				setDownloadBytes(total);
+				setPhase('ask');
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			setPhase('pick');
+		}
+	}, [scanAll]);
+
+	const addFiles = useCallback((files: File[]) => {
+		const images = [...files].filter((f) => f.type.startsWith('image/'));
+		if (!images.length) return;
+		setError(null);
+		setPhase('pick');
+		for (const file of images) {
+			file.arrayBuffer().then((bytes) => {
+				setShots((held) => [...held, { url: URL.createObjectURL(file), bytes, size: file.size }]);
+			});
+		}
+	}, []);
+
+	const onDrop = useCallback((e: DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		zoneRef.current?.classList.remove('dragover');
+		if (e.dataTransfer?.files?.length) addFiles(Array.from(e.dataTransfer.files));
+	}, [addFiles]);
+
+	useEffect(() => {
+		if (!isOpen) return;
+		const onPaste = (e: ClipboardEvent) => {
+			const files = e.clipboardData?.files;
+			if (files?.length) addFiles(Array.from(files));
+		};
+		document.addEventListener('paste', onPaste);
+		return () => document.removeEventListener('paste', onPaste);
+	}, [isOpen, addFiles]);
+
+	const edit = useCallback(<K extends keyof Edits>(field: K, value: Edits[K]) => setEdits((held) => ({ ...held, [field]: value })), []);
+
+	const outfit = useMemo(() => {
+		const typed = edits.epithet || merged.epithet.value || '';
+		const id = edits.outfitId || mapOutfitNameToId(typed) || mapCharacterNameToOutfitId(merged.name.value ?? '');
+		return { typed, id };
+	}, [edits.epithet, edits.outfitId, merged]);
+
+	const build = useCallback((): UmaState | null => {
+		const grade = (key: AptitudeKey, picked: Grade | null) => picked ?? merged.aptitudes[key]?.value ?? null;
+		const readDistance = BEST_OF.map((k) => grade(k, edits.distance)).filter((g): g is Grade => !!g);
+		const distance = readDistance.sort((a, b) => GRADES.indexOf(b) - GRADES.indexOf(a))[0] ?? 'A';
+		const stats = {} as Record<StatKey, number>;
+		for (const label of STAT_LABELS) stats[label] = edits.stats[label] ?? merged.stats[label].value ?? DEFAULT_STATS[label];
+
+		const skills: string[] = [];
+		for (const s of merged.skills) {
+			const key = skillKey(s);
+			if (edits.skillOff[key]) continue;
+			const id = edits.skillPicks[key] ?? s.match.id ?? s.match.ids[0];
+			if (id) skills.push(id);
+		}
+
+		return validateAndParseUmaJson({
+			outfitId: outfit.id,
+			starCount: edits.starCount,
+			uniqueLv: edits.uniqueLv || merged.uniqueLevel.value || 1,
+			speed: stats.Speed,
+			stamina: stats.Stamina,
+			power: stats.Power,
+			guts: stats.Guts,
+			wisdom: stats.Wit,
+			strategy: edits.strategy,
+			distanceAptitude: distance,
+			surfaceAptitude: grade('turf', edits.surface) ?? 'A',
+			strategyAptitude: grade(STRATEGY_APTITUDE[edits.strategy], edits.style) ?? 'A',
+			mood: 2,
+			skills,
+			forcedSkillPositions: {},
+		});
+	}, [edits, merged, outfit]);
+
+	const load = useCallback(() => {
+		const state = build();
+		if (!state) setError('That build did not pass validation. Check the stats and the aptitudes.');
+		else {
+			onConfirm(state);
+			onClose();
+		}
+	}, [build, onConfirm, onClose]);
+
+	const percent = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+
+	const footer = phase === 'review' ? (
+		<>
+			<Button variant="ghost" onClick={() => setPhase('pick')} icon={<Plus size={14} />}>Add a screenshot</Button>
+			<Button variant="primary" onClick={load} icon={<Check size={14} />}>Load build</Button>
+		</>
+	) : phase === 'ask' ? (
+		<>
+			<Button variant="ghost" onClick={() => setPhase('pick')}>Cancel</Button>
+			<Button variant="primary" onClick={() => scanAll(shots)}>Download and read</Button>
+		</>
+	) : (
 		<>
 			<Button variant="ghost" onClick={onClose}>Cancel</Button>
-			<Button
-				variant="primary"
-				onClick={handleExtract}
-				disabled={loading || !imageFile}
-				icon={loading ? <Loader2 size={14} class="v2-ocr-spinner" /> : <Camera size={14} />}
-			>
-				{loading ? 'Extracting...' : 'Extract Data'}
-			</Button>
-		</>
-	);
-
-	// Review step footer
-	const reviewFooter = (
-		<>
-			<Button variant="ghost" onClick={handleBack} icon={<ArrowLeft size={14} />}>
-				Back
-			</Button>
-			<Button variant="primary" onClick={handleConfirm} icon={<Check size={14} />}>
-				Confirm & Load
+			<Button variant="primary" onClick={() => start(shots)} disabled={!shots.length || phase === 'work'} icon={phase === 'work' ? <Loader2 size={14} class="v2-ocr-spinner" /> : <Upload size={14} />}>
+				{phase === 'work' ? 'Reading...' : 'Read screenshots'}
 			</Button>
 		</>
 	);
 
 	return (
-		<Modal
-			isOpen={isOpen}
-			onClose={onClose}
-			title="Import from Screenshot (OCR)"
-			footer={step === 'upload' ? uploadFooter : reviewFooter}
-			size="xl"
-			className="v2-ocr-modal"
-		>
-			{step === 'upload' ? (
+		<Modal isOpen={isOpen} onClose={onClose} title="Import from Screenshot" footer={footer} size="xl" className="v2-ocr-modal">
+			{phase === 'ask' ? (
+				<div class="v2-ocr-section">
+					<label class="v2-ocr-label">Recognition models</label>
+					<p>
+						Nothing is installed on this site for reading screenshots yet. About {(downloadBytes! / 1048576).toFixed(1)} MB of
+						PP-OCR models are fetched once, checked against their published checksums, and kept for next time. Reading happens on this
+						device either way.
+					</p>
+					<div class="v2-ocr-review-item">
+						<Button variant="ghost" onClick={onCloud} icon={<Cloud size={14} />}>Use cloud OCR instead (needs API key)</Button>
+					</div>
+				</div>
+			) : phase === 'work' ? (
+				<div class="v2-ocr-section">
+					<label class="v2-ocr-label">{progress?.stage === 'assets' ? 'Fetching models' : progress?.stage === 'models' ? 'Loading models' : 'Reading screenshots'}</label>
+					<div class="v2-ocr-dropzone" style={{ cursor: 'default' }}>
+						<Loader2 size={28} class="v2-ocr-spinner" />
+						<span>
+							{progress?.stage === 'assets' ? `${(progress.done / 1048576).toFixed(1)} of ${(progress.total / 1048576).toFixed(1)} MB` : `${progress?.done ?? 0} of ${progress?.total ?? 0}`}
+							{' '}({percent}%)
+						</span>
+					</div>
+				</div>
+			) : phase === 'review' ? (
+				<Review merged={merged} missing={missing} pairs={results.map((r, i) => ({ url: shots[i]?.url ?? '', read: r.read }))} notes={results.flatMap((r) => r.statNotes)} edits={edits} edit={edit} outfit={outfit} onOutfit={(v) => { edit('epithet', v); edit('outfitId', ''); }} />
+			) : (
 				<div class="v2-ocr-upload">
-					{/* API Key Section - collapsible, auto-opens if key is saved */}
-					{OCR_PROXY_URL ? (
-						<details class="v2-ocr-section v2-ocr-details" open={!!apiKey}>
-							<summary class="v2-ocr-summary">
-								Use your own Gemini API Key <span class="v2-ocr-optional">(optional)</span>
-							</summary>
-							<div class="v2-ocr-details-content">
-								<div class="v2-ocr-api-row">
-									<input
-										type="password"
-										class="v2-ocr-input"
-										placeholder="Enter your Gemini API key"
-										value={apiKey}
-										onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
-									/>
-									<label class="v2-ocr-checkbox">
-										<input
-											type="checkbox"
-											checked={saveApiKey}
-											onChange={(e) => setSaveApiKey((e.target as HTMLInputElement).checked)}
-										/>
-										<span>Save key</span>
-									</label>
-								</div>
-								<a
-									class="v2-ocr-api-link"
-									href="https://aistudio.google.com/app/apikey"
-									target="_blank"
-									rel="noopener noreferrer"
-								>
-									<ExternalLink size={12} />
-									Get a free API key from Google AI Studio
-								</a>
-							</div>
-						</details>
-					) : (
-						<div class="v2-ocr-section">
-							<label class="v2-ocr-label">Gemini API Key</label>
-							<div class="v2-ocr-api-row">
-								<input
-									type="password"
-									class="v2-ocr-input"
-									placeholder="Enter your Gemini API key"
-									value={apiKey}
-									onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
-								/>
-								<label class="v2-ocr-checkbox">
-									<input
-										type="checkbox"
-										checked={saveApiKey}
-										onChange={(e) => setSaveApiKey((e.target as HTMLInputElement).checked)}
-									/>
-									<span>Save key</span>
-								</label>
-							</div>
-							<a
-								class="v2-ocr-api-link"
-								href="https://aistudio.google.com/app/apikey"
-								target="_blank"
-								rel="noopener noreferrer"
-							>
-								<ExternalLink size={12} />
-								Get a free API key from Google AI Studio
-							</a>
-						</div>
-					)}
-
-					{/* Image Upload Section */}
 					<div class="v2-ocr-section">
-						<label class="v2-ocr-label">Screenshot</label>
+						<label class="v2-ocr-label">Screenshots of the Details dialog</label>
 						<div
-							ref={dropZoneRef}
-							class={`v2-ocr-dropzone ${imagePreview ? 'has-image' : ''}`}
-							onClick={() => fileInputRef.current?.click()}
-							onDragOver={handleDragOver}
-							onDragLeave={handleDragLeave}
-							onDrop={handleDrop}
+							ref={zoneRef}
+							class={`v2-ocr-dropzone ${shots.length ? 'has-image' : ''}`}
+							onClick={() => fileRef.current?.click()}
+							onDragOver={(e: DragEvent) => { e.preventDefault(); zoneRef.current?.classList.add('dragover'); }}
+							onDragLeave={(e: DragEvent) => { e.preventDefault(); zoneRef.current?.classList.remove('dragover'); }}
+							onDrop={onDrop}
 						>
-							{imagePreview ? (
-								<img src={imagePreview} alt="Preview" class="v2-ocr-preview" />
+							{shots.length ? (
+								<div class="v2-ocr-skill-list">
+									{shots.map((s, i) => <img key={i} src={s.url} alt={`Screenshot ${i + 1}`} class="v2-ocr-preview" style={{ maxHeight: '160px', marginRight: '6px' }} />)}
+								</div>
 							) : (
 								<div class="v2-ocr-dropzone-content">
 									<Upload size={32} class="v2-ocr-dropzone-icon" />
-									<span>Click to select, drag & drop, or paste an image</span>
+									<span>Click to select, drag & drop, or paste. Two shots of one dialog, or a scrolled list, are combined.</span>
 								</div>
 							)}
 						</div>
-						<input
-							ref={fileInputRef}
-							type="file"
-							accept="image/*"
-							style={{ display: 'none' }}
-							onChange={handleFileSelect}
-						/>
+						<input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => addFiles(Array.from((e.target as HTMLInputElement).files ?? []))} />
 					</div>
-
-					{/* Error Message */}
+					<div class="v2-ocr-section">
+						<div class="v2-ocr-review-item">
+							<Button variant="ghost" onClick={onCloud} icon={<Cloud size={14} />}>Use cloud OCR (needs API key)</Button>
+						</div>
+					</div>
 					{error && <div class="v2-ocr-error">{error}</div>}
-				</div>
-			) : (
-				<div class="v2-ocr-review">
-					{/* Side by side layout */}
-					<div class="v2-ocr-review-layout">
-						{/* Image Preview */}
-						<div class="v2-ocr-review-image-section">
-							<label class="v2-ocr-label">Screenshot</label>
-							{imagePreview && (
-								<img src={imagePreview} alt="Screenshot" class="v2-ocr-review-image" />
-							)}
-						</div>
-
-						{/* Extracted Data */}
-						<div class="v2-ocr-review-data-section">
-							<label class="v2-ocr-label">Extracted Data</label>
-							<div class="v2-ocr-review-grid">
-								<div class="v2-ocr-review-item">
-									<span class="v2-ocr-review-key">Name:</span>
-									<span class="v2-ocr-review-value">{extractedData?.name || '-'}</span>
-								</div>
-								<div class="v2-ocr-review-item">
-									<span class="v2-ocr-review-key">Outfit:</span>
-									<span class="v2-ocr-review-value">{extractedData?.outfit || '-'}</span>
-								</div>
-								<div class="v2-ocr-review-item v2-ocr-review-stats">
-									<span class="v2-ocr-review-key">Stats:</span>
-									<span class="v2-ocr-review-value">
-										SPD {extractedData?.speed} / STA {extractedData?.stamina} / POW {extractedData?.power} / GUT {extractedData?.guts} / WIS {extractedData?.wisdom}
-									</span>
-								</div>
-
-								{/* Editable fields */}
-								<div class="v2-ocr-review-item v2-ocr-review-editable">
-									<span class="v2-ocr-review-key">Surface:</span>
-									<CustomSelect
-										value={editableData?.surfaceAptitude || 'A'}
-										onChange={(v) => updateEditableData('surfaceAptitude', v)}
-										options={APTITUDE_OPTIONS}
-										className="v2-ocr-select-small"
-									/>
-								</div>
-								<div class="v2-ocr-review-item v2-ocr-review-editable">
-									<span class="v2-ocr-review-key">Distance:</span>
-									<CustomSelect
-										value={editableData?.distanceAptitude || 'A'}
-										onChange={(v) => updateEditableData('distanceAptitude', v)}
-										options={APTITUDE_OPTIONS}
-										className="v2-ocr-select-small"
-									/>
-								</div>
-								<div class="v2-ocr-review-item v2-ocr-review-editable">
-									<span class="v2-ocr-review-key">Strategy:</span>
-									<CustomSelect
-										value={editableData?.strategy || 'Senkou'}
-										onChange={(v) => updateEditableData('strategy', v)}
-										options={STRATEGY_OPTIONS}
-										className="v2-ocr-select-strategy"
-									/>
-								</div>
-								<div class="v2-ocr-review-item v2-ocr-review-editable">
-									<span class="v2-ocr-review-key">Style Apt:</span>
-									<CustomSelect
-										value={editableData?.strategyAptitude || 'A'}
-										onChange={(v) => updateEditableData('strategyAptitude', v)}
-										options={APTITUDE_OPTIONS}
-										className="v2-ocr-select-small"
-									/>
-								</div>
-
-								<div class="v2-ocr-review-item v2-ocr-review-skills">
-									<span class="v2-ocr-review-key">Skills ({extractedData?.skills?.length || 0}):</span>
-									<div class="v2-ocr-skill-list">
-										{extractedData?.skills?.map((skill, i) => (
-											<span key={i} class="v2-ocr-skill-tag">{skill}</span>
-										)) || '-'}
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
 				</div>
 			)}
 		</Modal>
+	);
+}
+
+function Review({ merged, missing, pairs, notes, edits, edit, outfit, onOutfit }: {
+	merged: MergedRead;
+	missing: string[];
+	pairs: readonly { url: string; read: Read }[];
+	notes: readonly StatNote[];
+	edits: Edits;
+	edit: <K extends keyof Edits>(field: K, value: Edits[K]) => void;
+	outfit: { typed: string; id: string };
+	onOutfit: (value: string) => void;
+}) {
+	const byStat = new Map(notes.map((n) => [n.stat, n]));
+	const lineOf = (stat: StatKey) => byStat.get(stat);
+	const skillOptions = (s: SkillRead) => s.match.ids.map((id) => ({ value: id, label: NAME_OF.get(id) ?? id }));
+
+	return (
+		<div class="v2-ocr-review">
+			<div class="v2-ocr-review-layout">
+				<div class="v2-ocr-review-data-section">
+					<label class="v2-ocr-label">From {merged.screenshots} screenshot{merged.screenshots === 1 ? '' : 's'}</label>
+					<div class="v2-ocr-review-grid">
+						<div class="v2-ocr-review-item">
+							<span class="v2-ocr-review-key">Outfit:</span>
+							<input class="v2-ocr-input" value={outfit.typed} onInput={(e) => onOutfit((e.target as HTMLInputElement).value)} />
+							<span class="v2-ocr-review-value">{outfit.id ? `id ${outfit.id}` : 'not recognised'}</span>
+						</div>
+						{STAT_LABELS.map((label) => (
+							<div class="v2-ocr-review-item">
+								<span class="v2-ocr-review-key">{label}:</span>
+								<input
+									class="v2-ocr-input"
+									type="number"
+									value={edits.stats[label] ?? merged.stats[label].value ?? 0}
+									onInput={(e) => edit('stats', { ...edits.stats, [label]: Number((e.target as HTMLInputElement).value) })}
+								/>
+								{lineOf(label) && !lineOf(label)!.agreed && <span title={`The reader also saw: ${lineOf(label)!.masked.join(' ')} from “${lineOf(label)!.text}”`}><AlertTriangle size={14} /></span>}
+								{merged.stats[label].other.length > 0 && <span class="v2-ocr-review-value">other shot said {merged.stats[label].other.join(', ')}</span>}
+							</div>
+						))}
+						<div class="v2-ocr-review-item">
+							<span class="v2-ocr-review-key">Surface:</span>
+							<CustomSelect value={edits.surface ?? merged.aptitudes.turf.value ?? 'A'} onChange={(v) => edit('surface', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
+						</div>
+						<div class="v2-ocr-review-item">
+							<span class="v2-ocr-review-key">Distance:</span>
+							<CustomSelect value={edits.distance ?? BEST_OF.map((k) => merged.aptitudes[k].value).filter(Boolean).sort((a, b) => GRADES.indexOf(b as Grade) - GRADES.indexOf(a as Grade))[0] ?? 'A'} onChange={(v) => edit('distance', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
+						</div>
+						<div class="v2-ocr-review-item">
+							<span class="v2-ocr-review-key">Strategy:</span>
+							<CustomSelect value={edits.strategy} onChange={(v) => edit('strategy', String(v))} options={STRATEGY_OPTIONS} className="v2-ocr-select-strategy" />
+						</div>
+						<div class="v2-ocr-review-item">
+							<span class="v2-ocr-review-key">Style apt:</span>
+							<CustomSelect value={edits.style ?? merged.aptitudes[STRATEGY_APTITUDE[edits.strategy]].value ?? 'A'} onChange={(v) => edit('style', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
+						</div>
+						<div class="v2-ocr-review-item">
+							<span class="v2-ocr-review-key">Stars:</span>
+							<CustomSelect value={String(edits.starCount)} onChange={(v) => edit('starCount', Number(v))} options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }))} className="v2-ocr-select-small" />
+							<span class="v2-ocr-review-value">the dialog does not show this</span>
+						</div>
+						<div class="v2-ocr-review-item">
+							<span class="v2-ocr-review-key">Unique lv:</span>
+							<CustomSelect value={String(edits.uniqueLv !== 1 ? edits.uniqueLv : (merged.uniqueLevel.value ?? 1))} onChange={(v) => edit('uniqueLv', Number(v))} options={[1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: String(n) }))} className="v2-ocr-select-small" />
+						</div>
+						<div class="v2-ocr-review-item v2-ocr-review-skills">
+							<span class="v2-ocr-review-key">Skills ({merged.skills.length}):</span>
+							<div class="v2-ocr-skill-list">
+								{merged.skills.map((s) => {
+									const key = skillKey(s);
+									const picked = edits.skillPicks[key] ?? s.match.id ?? s.match.ids[0];
+									return (
+										<div class="v2-ocr-review-item" key={key} style={{ width: '100%' }}>
+											<label class="v2-ocr-checkbox">
+												<input type="checkbox" checked={!edits.skillOff[key]} onChange={(e) => edit('skillOff', { ...edits.skillOff, [key]: !(e.target as HTMLInputElement).checked })} />
+											</label>
+											{s.box && <Crop url={shotOf(pairs, s)} box={s.box} />}
+											{skillOptions(s).length > 1 ? (
+												<CustomSelect value={picked} onChange={(v) => edit('skillPicks', { ...edits.skillPicks, [key]: String(v) })} options={skillOptions(s)} className="v2-ocr-select-small" />
+											) : (
+												<span class="v2-ocr-review-value">{NAME_OF.get(picked) ?? picked}</span>
+											)}
+											{s.match.id === null && <span class="v2-ocr-review-value">{s.match.id === null ? `which one? (${s.match.why ?? 'level'})` : ''}</span>}
+											{s.level !== null && <span class="v2-ocr-review-value">Lvl {s.level}</span>}
+										</div>
+									);
+								})}
+							</div>
+						</div>
+						{missing.length > 0 && <div class="v2-ocr-review-item"><span class="v2-ocr-review-value">Not read, set them in the panel after importing: {missing.join(', ')}</span></div>}
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/** A crop of the screenshot, cut with CSS so nothing is copied or re-encoded. */
+function Crop({ url, box, width = 170 }: { url: string; box: Box; width?: number }) {
+	const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+	useEffect(() => {
+		const img = new Image();
+		img.onload = () => setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+		img.src = url;
+	}, [url]);
+	if (!natural) return null;
+	const k = width / box.w;
+	return (
+		<span style={{ display: 'inline-block', width: `${width}px`, height: `${Math.max(14, Math.round(box.h * k))}px`, overflow: 'hidden', verticalAlign: 'middle', marginRight: '6px' }}>
+			<img src={url} alt="" style={{ display: 'block', position: 'relative', width: `${Math.round(natural.w * k)}px`, marginLeft: `${-Math.round(box.x * k)}px`, marginTop: `${-Math.round(box.y * k)}px` }} />
+		</span>
 	);
 }
