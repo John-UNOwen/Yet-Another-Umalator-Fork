@@ -7,7 +7,8 @@
 import test from 'tape';
 import skillnames from '../../umalator-global/skillnames.json';
 import notInGame from '../../umalator-global/not-in-game.json';
-import { DEFAULT_MATCH, hasLevel, markerOf, matchName, normalizeName, similarity, splitMarker, type NameEntry } from './matcher';
+import { DEFAULT_MATCH, hasLevel, levelOf, markerOf, matchName, normalizeName, similarity, skillReads, splitMarker, type NameEntry } from './matcher';
+import { levelBeside } from './layout';
 
 const OFFERED: NameEntry[] = Object.entries(skillnames as Record<string, string | string[]>)
 	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v[0] : v }))
@@ -107,5 +108,56 @@ test('the accept line sits in an empty band', (t) => {
 		const m = matchName(read, OFFERED);
 		t.ok(m && m.score >= DEFAULT_MATCH.minScore, `${read} accepted at ${m?.score.toFixed(3)}`);
 	}
+	t.end();
+});
+
+test('the level badge is read even when the reader cannot spell it', (t) => {
+	t.equal(levelOf('Lvl 4'), 4);
+	t.equal(levelOf('Lv| 3'), 3, 'the reader confused the letter i with a bar');
+	t.equal(levelOf('Fantastical Circle Lvl 5'), 5, 'glued onto the name it follows');
+	t.equal(levelOf('Right-Handed ○'), null, 'an inherited copy shows nothing');
+	t.equal(levelOf('U 1321'), null, 'a stat number is not a level');
+	t.ok(hasLevel('Lv| 3'), 'the level still decides the owned copy');
+	t.end();
+});
+
+test('the skills on a screen are the lines that answer to offered names', (t) => {
+	const lines = [
+		{ text: 'Triumphant Pulse', score: 0.96, box: { x: 179, y: 744, w: 200, h: 30 } },
+		{ text: '院', score: 0.28, box: { x: 527, y: 744, w: 20, h: 30 } },
+		{ text: 'Lvl 4', score: 0.83, box: { x: 430, y: 745, w: 50, h: 26 } },
+		{ text: 'Right-Handed O', score: 0.92, box: { x: 580, y: 832, w: 220, h: 30 } },
+		{ text: 'Speed', score: 1, box: { x: 161, y: 366, w: 60, h: 24 } },
+		{ text: '1321', score: 1, box: { x: 150, y: 401, w: 90, h: 30 } },
+	];
+	const reads = skillReads(lines, OFFERED, {}, levelBeside);
+	t.deepEqual(reads.map((r) => r.text), ['Triumphant Pulse', 'Right-Handed O'], 'icons, level chips and stat labels answer to no name');
+	t.ok(reads[0].box, 'the line box comes back with the read, for the review screen to crop');
+	t.ok(reads[0].match.id!.startsWith('1'), `${reads[0].match.id} is the character's own copy, because the chip on its row says so`);
+	t.equal(reads[0].level, 4);
+	t.equal(reads[1].match.id, null, 'a marker read as the letter O stays a choice');
+	t.equal(reads[1].level, null);
+
+	const blind = skillReads([lines[0]], OFFERED);
+	t.ok(blind[0].match.id!.startsWith('9'), 'without the row the name is taken as the inherited copy');
+	t.equal(blind[0].level, null);
+	t.end();
+});
+
+test('a name wrapped onto a second line is one skill', (t) => {
+	const reads = skillReads([
+		{ text: 'Pace Chaser', score: 1, box: { x: 867, y: 1108, w: 190, h: 25 } },
+		{ text: 'Straightaways ©', score: 0.98, box: { x: 866, y: 1130, w: 210, h: 25 } },
+		{ text: 'Pace Chaser Corners ©', score: 0.96, box: { x: 1244, y: 1117, w: 260, h: 25 } },
+	], OFFERED);
+	t.deepEqual(reads.map((r) => r.text), ['Pace Chaser Straightaways ©', 'Pace Chaser Corners ©'], 'neither half is a name, the wrap is');
+	t.deepEqual(reads[0].box, { x: 866, y: 1108, w: 210, h: 47 }, 'the crop the review screen shows covers both lines');
+	t.notEqual(reads[0].match.id, reads[1].match.id, 'the wrapped name is not the corner skill beside it');
+
+	const stacked = skillReads([
+		{ text: 'Standard Distance ©', score: 1, box: { x: 179, y: 920, w: 210, h: 30 } },
+		{ text: 'Corner Recovery O', score: 0.95, box: { x: 179, y: 942, w: 200, h: 30 } },
+	], OFFERED);
+	t.deepEqual(stacked.map((r) => r.text), ['Standard Distance ©', 'Corner Recovery O'], 'a row that is already a name keeps it instead of being swallowed by the row above');
 	t.end();
 });

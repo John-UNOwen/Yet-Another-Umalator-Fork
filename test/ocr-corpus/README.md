@@ -40,7 +40,7 @@ A 25°, B 340°, C 107°, D 205°, E 287°, F 247°. G carries no colour at all,
 apart from the rest. Over the 90 aptitude cells in the nine files the colour answered every one: 49
 from a letter the detector had boxed on its own, 8 from the strip just past the value word, and 33
 from inside the word's own box. In none of them did the colour disagree with the letter the text
-reader saw, and none needed a guess. That agreement is what the reader can check on its own; the
+reader saw, and none needed a guess. That agreement is what the reader can check on its own. The
 goldens below are still what pins the letters themselves.
 
 The five stat numbers sit in a row under the labels Speed, Stamina, Power, Guts and Wit, and the
@@ -59,3 +59,25 @@ glyphs glued to its front ("yGuts", ". Power"), so a label is matched on the end
 a number sits under its own label rather than inside its region: on two of these files the next
 column's wider box reaches back into the region, and only distance to the label middle refuses it.
 
+
+The skill list is the lines that answer to a name the fork offers, so nothing has to know where the
+table sits. Every line of every capture was tried against the 1340 offered names: 144 lines answered,
+13 to 19 per capture. The icons, the `Lvl 4` chips, the stat labels and the stat numbers answer to no
+name, so no line of the screen other than a skill name was ever accepted. Three to seven rows per
+capture stay a choice for the user, all of them acquisition markers read as a letter or lost. Only oguri
+and the taiki Steam shot have their skills written down above, so only those two carry the claim that
+nothing was accepted that should not have been: oguri came out at its 17 names and taiki Steam top at its
+14, with nothing missing and nothing extra.
+
+Four things this row only shows on these files. Long names wrap onto a second line, and seven of nine
+captures needed the join: `Pace Chaser Straightaways` arrived as `Pace Chaser` over `Straightaways`, and
+neither half answers on its own. The join only happens when the line above answers to no name, because
+two rows stacked in one column otherwise merge into one and hide a skill. The epithet and the trained
+name under it were found in all nine, and one of them lost its closing bracket (`[Archer by Moonlightd`),
+so an opening bracket is enough and the epithet goes to fuzzy matching. The unique skill's level was found
+on seven of nine, the two scrolled Steam shots showing no chip, and it sits 72 px past its name at height
+29 on the phone capture and 88 px at height 30 on the 3440 wide one, so which name a chip belongs to is
+settled by nothing intruding between them rather than by a fixed reach. That level is what tells the
+character's own skill from the copy another character inherits under the same name: Triumphant Pulse
+`100061` rather than `900061`, Joyful Voyage! `110101` rather than `910101`, Red Ace `10091` rather than
+`90091`.

@@ -1,11 +1,9 @@
-// Names the OCR read against names the app actually offers. Only this fork's own database is a
-// candidate, so a misread can never invent a skill, and a fast-forwarded JP-only name is not a
-// candidate either because the player cannot have it.
-//
-// Two names can be identical apart from how the skill was acquired, and those are different skills
-// with different effects, so a marker the reader cannot see is never guessed: it comes back as a
-// choice for the user. The same goes for a name that one character learns at its own level and
-// another inherits, which the database stores under two ids.
+// Names the OCR read against the names this fork offers, so a misread cannot invent a skill and a
+// fast-forwarded JP-only name is no candidate. Names differing only by acquisition marker or by owned
+// versus inherited copy are different skills, so an unseen marker or level is a choice, never a guess.
+
+import { boxBottom, boxRight } from './contract';
+import type { Box, OcrLine } from './contract';
 
 export interface NameEntry {
 	id: string;
@@ -81,9 +79,19 @@ export function splitMarker(name: string): { base: string; marker: '○' | '◎'
 	return { base: normalizeName(marker ? trimmed.slice(0, -1) : trimmed), marker };
 }
 
+/**
+ * The level a skill the character owns outright carries after its name, which an inherited copy of the
+ * same skill does not. The reader confuses the letter i, so the badge can arrive as "Lv| 4".
+ */
+export function levelOf(line: string): number | null {
+	const text = line.toLowerCase().replace(/[|!¡]/g, 'l');
+	const m = text.match(/(?:^|\s)(?:lvl|level|lgl|lva)\s*\.?\s*(\d{1,2})(?!\d)/);
+	return m ? +m[1] : null;
+}
+
 /** The game prints a level after a skill the character owns outright, and nothing after an inherited one. */
 export function hasLevel(line: string): boolean {
-	return /(?:^|\s)(?:lvl|level|lgl|lva)\s*\.?\s*\d/.test(line.toLowerCase());
+	return levelOf(line) !== null;
 }
 
 /** Levenshtein ratio of two strings, 1 for equal, 0 for nothing in common. */
@@ -104,14 +112,22 @@ export function similarity(a: string, b: string): number {
 	return 1 - previous[b.length] / Math.max(a.length, b.length);
 }
 
+/** What a second look at the screen knows that the line's own text does not say. */
+export interface Seen {
+	/** The row carried a level chip, even though its text landed on a line of its own. */
+	level?: boolean;
+	/** A marker the reader saw beside the name rather than after it. */
+	marker?: ReadMarker;
+}
+
 /** The best candidate for one read line, or nothing when the closest name is too far away. */
-export function matchName(line: string, entries: readonly NameEntry[], options: Partial<MatchOptions> = {}): Match | null {
+export function matchName(line: string, entries: readonly NameEntry[], options: Partial<MatchOptions> = {}, saw: Seen = {}): Match | null {
 	const o = { ...DEFAULT_MATCH, ...options };
 	const groups = scoreGroups(line, entries, o);
 	const top = groups[0];
 	if (!top || top.score < o.minScore) return null;
 
-	const marker = markerOf(line);
+	const marker = saw.marker ?? markerOf(line);
 	let pool = top.entries;
 	let why: Match['why'];
 	if (marker.glyph) {
@@ -124,7 +140,7 @@ export function matchName(line: string, entries: readonly NameEntry[], options: 
 
 	if (pool.length > 1) {
 		// A level means the character's own skill, no level an inherited one. Both are the same name.
-		const wanted = hasLevel(line) ? '1' : '9';
+		const wanted = (saw.level ?? hasLevel(line)) ? '1' : '9';
 		const tiered = pool.filter((e) => e.id.startsWith(wanted));
 		if (tiered.length) pool = tiered;
 		else why = why ?? 'level';
@@ -200,4 +216,72 @@ function scoreGroups(line: string, entries: readonly NameEntry[], o: MatchOption
 		}
 	}
 	return [...groups.values()].sort((a, b) => b.score - a.score);
+}
+
+/** A skill line, what the matcher made of it, and where on the screen it was read. */
+export interface SkillRead {
+	/** What the screen printed, kept for the review screen to show beside the answer. */
+	text: string;
+	/** The name the matcher settled on, for display. */
+	name: string;
+	match: Match;
+	/** The unique skill's level, where this line carried it. */
+	level: number | null;
+	box?: Box;
+}
+
+/** A name the game wrapped onto a second line continues the line above it: same column, just below. */
+function aboveInColumn(line: OcrLine, lines: readonly OcrLine[]): OcrLine | undefined {
+	let best: OcrLine | undefined;
+	for (const other of lines) {
+		if (other === line) continue;
+		const shared = Math.min(boxRight(other.box), boxRight(line.box)) - Math.max(other.box.x, line.box.x);
+		if (shared < Math.min(other.box.w, line.box.w) * 0.5) continue;
+		const gap = line.box.y - boxBottom(other.box);
+		if (gap < -other.box.h * 0.3 || gap > other.box.h * 1.2) continue;
+		if (!best || other.box.y > best.box.y) best = other;
+	}
+	return best;
+}
+
+/**
+ * The skills a screen shows. Every line is tried against the pool of names this fork offers and the
+ * lines that answer are the list: the table also carries icons, hint badges and level chips, and none
+ * of those answer, so the list is found without knowing where the table sits. `levelOnRow` looks along
+ * the line's row for a level chip the detector boxed on its own, which is how the dialog prints the
+ * unique skill's level.
+ */
+export function skillReads(lines: readonly OcrLine[], entries: readonly NameEntry[], options: Partial<MatchOptions> = {}, levelOnRow?: (line: OcrLine, lines: readonly OcrLine[]) => number | null): SkillRead[] {
+	const o = { ...DEFAULT_MATCH, ...options };
+	const rowLevel = (line: OcrLine) => levelOf(line.text) ?? levelOnRow?.(line, lines) ?? null;
+	const tried = (text: string, level: number | null) => matchName(text, entries, options, { level: level !== null || undefined });
+	const alone = new Map<OcrLine, Match | null>();
+	for (const line of lines) alone.set(line, tried(line.text, rowLevel(line)));
+
+	// A name wrapped over two lines only reads as a name once joined: each half alone is nothing, or the
+	// line above is already a confident name of its own and keeps it rather than being swallowed.
+	const tailOf = new Map<OcrLine, OcrLine>();
+	for (const line of lines) {
+		const upper = aboveInColumn(line, lines);
+		if (!upper) continue;
+		const joined = tried(`${upper.text} ${line.text}`, rowLevel(upper));
+		if (!joined || joined.score < o.minScore) continue;
+		if (joined.score <= (alone.get(line)?.score ?? 0) || joined.score <= (alone.get(upper)?.score ?? 0)) continue;
+		tailOf.set(line, upper);
+	}
+
+	const reads: SkillRead[] = [];
+	for (const line of lines) {
+		if (tailOf.has(line)) continue;
+		const tail = lines.find((l) => tailOf.get(l) === line);
+		const text = tail ? `${line.text} ${tail.text}` : line.text;
+		const box = tail
+			? { x: Math.min(line.box.x, tail.box.x), y: line.box.y, w: Math.max(boxRight(line.box), boxRight(tail.box)) - Math.min(line.box.x, tail.box.x), h: boxBottom(tail.box) - line.box.y }
+			: line.box;
+		const level = rowLevel(line) ?? (tail ? rowLevel(tail) : null);
+		const match = tail ? tried(text, level) : alone.get(line) ?? null;
+		if (!match) continue;
+		reads.push({ text, name: match.name, match, level, box });
+	}
+	return reads;
 }

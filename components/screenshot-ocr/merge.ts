@@ -6,18 +6,9 @@ import type { Grade } from './aptitudes';
 import { APTITUDE_WORDS, STAT_LABELS } from './layout';
 import type { AptitudeKey, StatKey } from './layout';
 import { normalizeName, similarity } from './matcher';
-import type { Match } from './matcher';
+import type { SkillRead } from './matcher';
 
-/** A skill line and what the matcher made of it. */
-export interface SkillRead {
-	/** What the screen printed, kept for the review screen to show next to the answer. */
-	text: string;
-	/** The name the matcher settled on, for display. */
-	name: string;
-	match: Match;
-	/** The unique skill's `Lvl N`, where the screen showed one. */
-	level?: number | null;
-}
+export type { SkillRead } from './matcher';
 
 /** What one screenshot read. A missing field means that screen did not show it. */
 export interface Read {

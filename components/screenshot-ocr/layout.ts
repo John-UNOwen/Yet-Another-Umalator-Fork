@@ -1,8 +1,11 @@
-// The aptitude block of the details dialog, found by the words it is built from. Their positions
-// vary with screen size and how the game was scrolled, so nothing here is a fixed coordinate.
+// The regions of the details dialog, found by the English words they are built from: the aptitude
+// block, the stat row, the header and the unique level. Nothing here is a fixed coordinate, because
+// screen size and how far the game was scrolled both move everything.
 
+import { boxRight } from './contract';
 import type { Box, OcrLine } from './contract';
 import type { LetterProbe } from './aptitudes';
+import { levelOf } from './matcher';
 
 export type AptitudeKey = 'turf' | 'dirt' | 'short' | 'mile' | 'medium' | 'long' | 'nige' | 'senkou' | 'sashi' | 'oikomi';
 
@@ -180,4 +183,56 @@ export function statNumberLine(lines: readonly OcrLine[], column: StatColumn): O
 	});
 	if (!found.length) return null;
 	return found.sort((a, b) => Math.abs(a.box.x + a.box.w / 2 - column.centre) - Math.abs(b.box.x + b.box.w / 2 - column.centre))[0];
+}
+
+/**
+ * The header of the details dialog. The outfit is named by its epithet in brackets, and the trained
+ * name is printed under it, so the name is whatever line sits under the brackets and overlaps them
+ * rather than the rank badge that often sits beside them.
+ */
+export function header(lines: readonly OcrLine[]): { epithet: string | null; name: string | null } {
+	// The reader can lose the closing bracket, so an opening one is enough to call a line the epithet.
+	const opens = (l: OcrLine) => /^\[/.test(l.text.trim());
+	const closes = (l: OcrLine) => (/\]$/.test(l.text.trim()) ? 1 : 0);
+	const bracketed = lines.filter(opens).sort((a, b) => closes(b) - closes(a) || b.box.h - a.box.h)[0];
+	if (!bracketed) return { epithet: null, name: null };
+	const bottom = bracketed.box.y + bracketed.box.h;
+	const below = lines
+		.filter((l) => {
+			if (l === bracketed || opens(l)) return false;
+			if (l.box.y < bottom - l.box.h * 0.4 || l.box.y > bottom + l.box.h * 1.6) return false;
+			const overlap = Math.min(l.box.x + l.box.w, bracketed.box.x + bracketed.box.w) - Math.max(l.box.x, bracketed.box.x);
+			return overlap >= Math.min(l.box.w, bracketed.box.w) * 0.3;
+		})
+		.sort((a, b) => a.box.y - b.box.y)[0];
+	return { epithet: bracketed.text.trim(), name: below ? below.text.trim() : null };
+}
+
+/**
+ * The unique skill's level. The dialog prints it once, beside the unique skill's own name, and an
+ * inherited skill has none, so a screen showing no level chip says nothing rather than zero.
+ */
+export function uniqueLevel(lines: readonly OcrLine[]): number | null {
+	for (const line of lines) {
+		const level = levelOf(line.text);
+		if (level !== null) return level;
+	}
+	return null;
+}
+
+/**
+ * The level chip that shares a name's row. The detector usually boxes it as a line of its own, so the
+ * name's own text does not say that the skill is the character's rather than an inherited copy. The
+ * chip can sit well clear of its name, so what makes it that name's is that no other line intrudes.
+ */
+export function levelBeside(name: OcrLine, lines: readonly OcrLine[]): number | null {
+	const sameRow = (l: OcrLine) => Math.abs(l.box.y + l.box.h / 2 - (name.box.y + name.box.h / 2)) < name.box.h * 0.6;
+	for (const line of lines) {
+		if (line === name || !sameRow(line) || line.box.x < boxRight(name.box)) continue;
+		const level = levelOf(line.text);
+		if (level === null) continue;
+		const between = lines.some((l) => sameRow(l) && l !== name && l !== line && boxRight(l.box) > boxRight(name.box) && l.box.x < line.box.x);
+		if (!between) return level;
+	}
+	return null;
 }

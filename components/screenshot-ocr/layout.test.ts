@@ -5,7 +5,7 @@
  * Run via: npm run test:ocr
  */
 import test from 'tape';
-import { APTITUDE_WORDS, aptitudeCells, cellBox, letterProbes, statColumns, statNumberLine } from './layout';
+import { APTITUDE_WORDS, aptitudeCells, cellBox, header, letterProbes, levelBeside, statColumns, statNumberLine, uniqueLevel } from './layout';
 import type { OcrLine } from './contract';
 
 const line = (text: string, x: number, y: number, w: number, h = 24, score = 0.99): OcrLine => ({ text, score, box: { x, y, w, h } });
@@ -134,5 +134,43 @@ test('a label with a glyph glued to its front is still found', (t) => {
 		line('4Wit', 751, 259, 40, 20),
 	]);
 	t.deepEqual(noisy.map((c) => c.label), ['Speed', 'Stamina', 'Power', 'Guts', 'Wit'], 'the noise sits in front of the word, so the end of the word still matches');
+	t.end();
+});
+
+test('the header names the outfit by its epithet and the name under it', (t) => {
+	const lines = [
+		line('[Bubblegum☆Memories]', 1169, 127, 210, 34),
+		line('U(e', 1067, 154, 40, 26),
+		line('Taiki Shuttle', 1227, 166, 150, 30),
+		line('RANK', 1042, 179, 60, 24),
+	];
+	t.deepEqual(header(lines), { epithet: '[Bubblegum☆Memories]', name: 'Taiki Shuttle' }, 'the rank badge beside the brackets is not the name');
+	t.deepEqual(header([line('Oguri Cap', 575, 176, 150, 30)]), { epithet: null, name: null }, 'no brackets is no header, not a guess');
+	t.deepEqual(
+		header([line('[Archer by Moonlightd', 508, 133, 230, 34), line('Symboli Rudolf', 520, 170, 180, 30)]),
+		{ epithet: '[Archer by Moonlightd', name: 'Symboli Rudolf' },
+		'the reader lost the closing bracket, so the epithet is kept as read and matched fuzzily',
+	);
+	t.deepEqual(header([]), { epithet: null, name: null });
+	t.end();
+});
+
+test('the unique level is read once and its absence is silence', (t) => {
+	t.equal(uniqueLevel([line('Right-Handed O', 580, 832, 220, 30), line('Lv| 3', 406, 889, 60, 26)]), 3);
+	t.equal(uniqueLevel([line('Right-Handed O', 580, 832, 220, 30)]), null, 'a screen scrolled past the unique skill says nothing');
+	t.end();
+});
+
+test('a level chip belongs to the name it sits clear of', (t) => {
+	const name = line('Triumphant Pulse', 179, 744, 178, 29);
+	const chip = line('Lvl 4', 430, 745, 70, 33);
+	const right = line('Shooting for Victory!', 578, 744, 213, 30);
+	t.equal(levelBeside(name, [name, chip, right]), 4, 'the chip sits a clear distance past its name, and the other column is past that');
+	t.equal(levelBeside(name, [name, line('Lvl 4', 430, 890, 70, 33)]), null, 'a chip on the row below is not this one’s');
+
+	const wide = line('Pace Chaser Straightaways', 578, 1117, 572, 29);
+	const far = line('Lvl 3', 1200, 1117, 64, 29);
+	t.equal(levelBeside(name, [name, wide, far]), null, 'another name reaches into the gap, so the chip is not this one’s');
+	t.equal(levelBeside(wide, [name, wide, far]), 3, 'and it is the one it sits clear of');
 	t.end();
 });
