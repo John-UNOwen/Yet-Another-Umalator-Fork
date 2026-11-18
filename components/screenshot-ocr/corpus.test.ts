@@ -67,8 +67,8 @@ const HAND: Record<string, Hand> = {
 	},
 };
 
-// Every skill row on the five screens has an offered name now. Rows whose marker the OCR read as the letter O
-// stay a choice between the tiers, and the build takes the first of them, so `Muddy ◎` lands on 202342.
+// The hand-written lists name each skill as a person reads it, without the tier marker the screen prints after
+// it, so the comparison below drops the marker from both sides.
 
 for (const capture of Object.keys(HAND)) {
 	test(`${capture} builds the frozen uma`, (t) => {

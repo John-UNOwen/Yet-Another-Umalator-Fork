@@ -110,17 +110,14 @@
 				"text": "Right-Handed O",
 				"name": "Right-Handed ◎",
 				"match": {
-					"id": null,
+					"id": "200012",
 					"ids": [
-						"200011",
-						"200012",
-						"200013"
+						"200012"
 					],
 					"name": "Right-Handed ◎",
 					"score": 1,
 					"margin": 0.25,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -344,16 +341,14 @@
 				"text": "Late Surger Savvy O",
 				"name": "Late Surger Savvy ◎",
 				"match": {
-					"id": null,
+					"id": "201542",
 					"ids": [
-						"201541",
 						"201542"
 					],
 					"name": "Late Surger Savvy ◎",
 					"score": 1,
 					"margin": 0.3933333333333333,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {

@@ -7,8 +7,9 @@ import { GRADES, readLetter } from './aptitudes';
 import type { Grade } from './aptitudes';
 import { aptitudeCells, header, letterProbes, levelBeside, statColumns, statNumberLine, uniqueLevel } from './layout';
 import type { AptitudeKey, StatKey } from './layout';
-import { skillReads } from './matcher';
-import type { NameEntry } from './matcher';
+import { skillReads, markerOf } from './matcher';
+import type { NameEntry, ReadMarker } from './matcher';
+import { markerShape } from './markers';
 import type { Read, SkillRead } from './merge';
 import { maskedAgrees, numberFromText, readNumber } from './stats';
 
@@ -75,7 +76,13 @@ export async function scanScreen(engine: OcrEngine, image: Preprocessed, names: 
 		if (reading.grade !== null) aptitudes[cell.key] = reading.grade;
 	}
 
-	const skills: SkillRead[] = skillReads(lines, names, {}, levelBeside).map((s) => ({ ...s, box: s.box ? at(s.box, image.scale) : undefined }));
+	// The reader draws `◎` and `○` alike, so a marker whose letter could be either is measured as a glyph.
+	const markerOnRow = (line: OcrLine): ReadMarker | null => {
+		if (!markerOf(line.text).uncertain) return null;
+		const glyph = markerShape(image.rgba, image.width, line.box);
+		return glyph ? { glyph, uncertain: false } : null;
+	};
+	const skills: SkillRead[] = skillReads(lines, names, {}, levelBeside, markerOnRow).map((s) => ({ ...s, box: s.box ? at(s.box, image.scale) : undefined }));
 	const head = header(lines);
 	const level = uniqueLevel(lines);
 

@@ -89,17 +89,14 @@
 				"text": "Standard Distance O",
 				"name": "Standard Distance ◎",
 				"match": {
-					"id": null,
+					"id": "200132",
 					"ids": [
-						"200131",
-						"200132",
-						"200133"
+						"200132"
 					],
 					"name": "Standard Distance ◎",
 					"score": 1,
 					"margin": 0.1578947368421053,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -113,17 +110,14 @@
 				"text": "Wet Conditions O",
 				"name": "Wet Conditions ◎",
 				"match": {
-					"id": null,
+					"id": "200162",
 					"ids": [
-						"200161",
-						"200162",
-						"200163"
+						"200162"
 					],
 					"name": "Wet Conditions ◎",
 					"score": 1,
 					"margin": 0.2857142857142857,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -137,17 +131,14 @@
 				"text": "Winter Runner O",
 				"name": "Winter Runner ◎",
 				"match": {
-					"id": null,
+					"id": "200202",
 					"ids": [
-						"200201",
-						"200202",
-						"200203"
+						"200202"
 					],
 					"name": "Winter Runner ◎",
 					"score": 1,
 					"margin": 0.33333333333333326,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -266,16 +257,14 @@
 				"text": "Front Runner Savvy O",
 				"name": "Front Runner Savvy ◎",
 				"match": {
-					"id": null,
+					"id": "201522",
 					"ids": [
-						"201521",
 						"201522"
 					],
 					"name": "Front Runner Savvy ◎",
 					"score": 1,
 					"margin": 0.3633333333333333,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -415,17 +404,14 @@
 				"text": "Muddy O",
 				"name": "Muddy ◎",
 				"match": {
-					"id": null,
+					"id": "202343",
 					"ids": [
-						"202342",
-						"202343",
-						"202344"
+						"202343"
 					],
 					"name": "Muddy ◎",
 					"score": 1,
 					"margin": 0.5714285714285714,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {

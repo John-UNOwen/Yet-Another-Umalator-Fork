@@ -131,17 +131,14 @@
 				"text": "Tokyo Racecourse O",
 				"name": "Tokyo Racecourse ◎",
 				"match": {
-					"id": null,
+					"id": "200032",
 					"ids": [
-						"200031",
-						"200032",
-						"200033"
+						"200032"
 					],
 					"name": "Tokyo Racecourse ◎",
 					"score": 1,
 					"margin": 0.1875,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -239,16 +236,14 @@
 				"text": "Pace Chaser Straightaways 0",
 				"name": "Pace Chaser Straightaways ◎",
 				"match": {
-					"id": null,
+					"id": "201311",
 					"ids": [
-						"201311",
-						"201312"
+						"201311"
 					],
 					"name": "Pace Chaser Straightaways ◎",
 					"score": 1,
 					"margin": 0.2572727272727273,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {

@@ -68,17 +68,14 @@
 				"text": "Tokyo Racecourse O",
 				"name": "Tokyo Racecourse ◎",
 				"match": {
-					"id": null,
+					"id": "200032",
 					"ids": [
-						"200031",
-						"200032",
-						"200033"
+						"200032"
 					],
 					"name": "Tokyo Racecourse ◎",
 					"score": 1,
 					"margin": 0.1875,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -116,16 +113,14 @@
 				"text": "Corner Adept O",
 				"name": "Corner Adept ○",
 				"match": {
-					"id": null,
+					"id": "200332",
 					"ids": [
-						"200332",
-						"200333"
+						"200332"
 					],
 					"name": "Corner Adept ○",
 					"score": 1,
 					"margin": 0.4444444444444444,
-					"trims": 0,
-					"why": "marker"
+					"trims": 0
 				},
 				"level": null,
 				"box": {

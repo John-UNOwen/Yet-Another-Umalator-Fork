@@ -249,14 +249,16 @@ function aboveInColumn(line: OcrLine, lines: readonly OcrLine[]): OcrLine | unde
  * lines that answer are the list: the table also carries icons, hint badges and level chips, and none
  * of those answer, so the list is found without knowing where the table sits. `levelOnRow` looks along
  * the line's row for a level chip the detector boxed on its own, which is how the dialog prints the
- * unique skill's level.
+ * unique skill's level. `markerOnRow` asks the pixels what shape the marker at a line's end is, which
+ * is the only way to tell `◎` from `○` once the reader has drawn both as a letter.
  */
-export function skillReads(lines: readonly OcrLine[], entries: readonly NameEntry[], options: Partial<MatchOptions> = {}, levelOnRow?: (line: OcrLine, lines: readonly OcrLine[]) => number | null): SkillRead[] {
+export function skillReads(lines: readonly OcrLine[], entries: readonly NameEntry[], options: Partial<MatchOptions> = {}, levelOnRow?: (line: OcrLine, lines: readonly OcrLine[]) => number | null, markerOnRow?: (line: OcrLine) => ReadMarker | null): SkillRead[] {
 	const o = { ...DEFAULT_MATCH, ...options };
 	const rowLevel = (line: OcrLine) => levelOf(line.text) ?? levelOnRow?.(line, lines) ?? null;
-	const tried = (text: string, level: number | null) => matchName(text, entries, options, { level: level !== null || undefined });
+	const markerOn = (line: OcrLine) => markerOnRow?.(line) ?? null;
+	const tried = (text: string, level: number | null, marker: ReadMarker | null) => matchName(text, entries, options, { level: level !== null || undefined, marker: marker ?? undefined });
 	const alone = new Map<OcrLine, Match | null>();
-	for (const line of lines) alone.set(line, tried(line.text, rowLevel(line)));
+	for (const line of lines) alone.set(line, tried(line.text, rowLevel(line), markerOn(line)));
 
 	// A name wrapped over two lines only reads as a name once joined: each half alone is nothing, or the
 	// line above is already a confident name of its own and keeps it rather than being swallowed.
@@ -264,7 +266,7 @@ export function skillReads(lines: readonly OcrLine[], entries: readonly NameEntr
 	for (const line of lines) {
 		const upper = aboveInColumn(line, lines);
 		if (!upper) continue;
-		const joined = tried(`${upper.text} ${line.text}`, rowLevel(upper));
+		const joined = tried(`${upper.text} ${line.text}`, rowLevel(upper), markerOn(line) ?? markerOn(upper));
 		if (!joined || joined.score < o.minScore) continue;
 		if (joined.score <= (alone.get(line)?.score ?? 0) || joined.score <= (alone.get(upper)?.score ?? 0)) continue;
 		tailOf.set(line, upper);
@@ -279,7 +281,7 @@ export function skillReads(lines: readonly OcrLine[], entries: readonly NameEntr
 			? { x: Math.min(line.box.x, tail.box.x), y: line.box.y, w: Math.max(boxRight(line.box), boxRight(tail.box)) - Math.min(line.box.x, tail.box.x), h: boxBottom(tail.box) - line.box.y }
 			: line.box;
 		const level = rowLevel(line) ?? (tail ? rowLevel(tail) : null);
-		const match = tail ? tried(text, level) : alone.get(line) ?? null;
+		const match = tail ? tried(text, level, markerOn(tail) ?? markerOn(line)) : alone.get(line) ?? null;
 		if (!match) continue;
 		reads.push({ text, name: match.name, match, level, box });
 	}

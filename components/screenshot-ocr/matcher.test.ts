@@ -145,6 +145,15 @@ test('the skills on a screen are the lines that answer to offered names', (t) =>
 	t.end();
 });
 
+test('a marker the reader cannot spell is settled by the shape of its glyph', (t) => {
+	const lines = [{ text: 'Right-Handed O', score: 0.92, box: { x: 580, y: 832, w: 220, h: 30 } }];
+	t.equal(skillReads(lines, OFFERED)[0].match.id, null, 'without the pixels it stays a choice between the tiers');
+	t.equal(skillReads(lines, OFFERED, {}, undefined, () => ({ glyph: '◎', uncertain: false }))[0].match.id, '200011', 'the double ring is Right-Handed ◎');
+	t.equal(skillReads(lines, OFFERED, {}, undefined, () => ({ glyph: '○', uncertain: false }))[0].match.id, '200012', 'a ring on its own is Right-Handed ○');
+	t.equal(skillReads(lines, OFFERED, {}, undefined, () => null)[0].match.id, null, 'pixels that do not answer leave the choice');
+	t.end();
+});
+
 test('a name wrapped onto a second line is one skill', (t) => {
 	const reads = skillReads([
 		{ text: 'Pace Chaser', score: 1, box: { x: 867, y: 1108, w: 190, h: 25 } },
