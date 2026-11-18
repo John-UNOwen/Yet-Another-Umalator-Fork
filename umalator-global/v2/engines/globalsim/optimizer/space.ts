@@ -257,13 +257,15 @@ export function assertOnePerGroup(space: BuildSpace, selection: Iterable<string>
 	}
 }
 
-/** Every affordable single-option add to a selection (ordered cheap-first). */
+/** Every affordable single-option add to a selection (ordered cheap-first).
+ *  Locked skills are never offered: every build already carries them, and
+ *  costOf charges them through forcedCost. */
 export function affordableAdds(space: BuildSpace, selection: Iterable<string>): OptOption[] {
 	const sel = new Set(selection);
 	const usedGroups = new Set([...sel].map(id => space.byId.get(id)?.groupId));
 	const free = space.budget - costOf(space, selection, true);
 	return space.options
-		.filter(o => !sel.has(o.id) && !usedGroups.has(o.groupId) && o.cost <= free)
+		.filter(o => !o.forced && !sel.has(o.id) && !usedGroups.has(o.groupId) && o.cost <= free)
 		.sort((a, b) => a.cost - b.cost);
 }
 

@@ -98,6 +98,9 @@ test('locks: include reserves budget and forces presence; exclude removes; infea
 	});
 	t.ok(withLock.byId.get(a)!.forced, 'locked option marked forced');
 	t.equal(withLock.forcedCost, withLock.byId.get(a)!.cost, 'forced cost reserved');
+	// A shake-up draws its refills from affordableAdds. A locked skill offered
+	// there was charged twice (forcedCost and again as an add).
+	t.deepEqual(affordableAdds(withLock, []).map(o => o.id), [b], 'affordableAdds never offers a locked skill');
 	const excl = buildSpace({
 		purchasable: [a, b], ownedByGroup: new Map(), fixedIds: [], hints: new Map(), budget: 10000, exclude: [b],
 	});
