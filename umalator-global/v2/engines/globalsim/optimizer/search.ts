@@ -7,9 +7,9 @@
  * progress events make the run anytime (P5); all inputs are deterministic (P6).
  */
 
-import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf } from './bandit';
+import { banditVsIncumbent, BanditOpts, BanditOutcome, betaOf, raceWave } from './bandit';
 import {
-	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_WAVE,
+	BANDIT_CHUNK_SIZE, BANDIT_MAX_ALIVE, BANDIT_RUNG_MIN_SEEDS, BANDIT_START_SEEDS, CLIMB_NMAX_FACTOR, CLIMB_PATIENCE, CLIMB_POLISH_LEVELS, CLIMB_POLISH_SHARE, CLIMB_STAGE_D_SHARE, CLIMB_TARGET_SEEDS, CLIMB_WAVE,
 	CONTRIB_SEEDS, DEAD_SKILL_MIN_SEEDS,
 	EffortConfig, KAPPA, KICKS_PER_VISIT, kickLevelOf, kickSizeRange, LAMBDA_MAXIMIN, PRUNE_KAPPA, SEQ_ADOPT_Z,
 	SURROGATE_MIN_FIT, SURROGATE_MIN_R2, SURROGATE_PAIR_CAP, SURROGATE_PAIR_MIN_COOC, SURROGATE_REFIT_EVERY,
@@ -200,6 +200,21 @@ export interface SearchInput {
 	wideSearch?: boolean;
 	/** Seeds the shuffled starts (the run seed), so a wide run repeats. */
 	wideSearchSeed?: number;
+	/**
+	 * The §C climb's round (default 'race').
+	 *  - 'race': bandit.ts raceWave. The first move that passes the sequential
+	 *    test and then a confirm test on positions it has not raced is
+	 *    adopted, and moves are set aside under a target gain g that starts
+	 *    where a no-gain move falls after ~400 seeds at the measured noise and
+	 *    halves while the climb has room, down to δ_min. A climb that cannot
+	 *    afford the rest of its neighbourhood stops after CLIMB_PATIENCE empty
+	 *    waves and kicks from there. With a time limit the restarts share most
+	 *    of it and the rest polishes the best restart end.
+	 *  - 'certify': the certified climb as it was. Every wave ladders until
+	 *    each move is ruled out under δ_min or reaches the ceiling, and kicks
+	 *    follow only a certified peak. Kept as the A/B arm.
+	 */
+	climb?: 'race' | 'certify';
 }
 
 export interface SearchController {
@@ -408,6 +423,12 @@ async function runSingleScenario(
 	let skillsGuess = 0; // skills in the latest provisional best: Stage G races a drop per skill
 	let verifyRacesLeft: (() => number) | null = null; // Stage G's own count, once it runs
 	const endless = !Number.isFinite(cfg.timeBudgetMs) && !Number.isFinite(cfg.kicks); // Until stopped
+	const race = (input.climb ?? 'race') === 'race';
+	// The climb's record over the run (OptimizerResult.climbStats).
+	const climbStats = { targetL: 0, waves: 0, adoptions: 0, stalls: 0 };
+	// A race climb's restart ends its climb here: the time left shared by the
+	// restarts still to run (set per restart, Infinity otherwise).
+	let restartDeadline = Infinity;
 	const contribSeeds = cfg.contribSeeds ?? CONTRIB_SEEDS;
 	/** Search time left, capped by the time limit, or undefined with nothing to go on. */
 	const searchMsLeft = (now: number, msPerRace: number): { ms: number; capped: boolean } | undefined => {
@@ -657,6 +678,7 @@ async function runSingleScenario(
 			contributions,
 			reference,
 			rankedByLead: byLead || undefined,
+			climbStats: { mode: race ? 'race' : 'certify', ...climbStats, targetL: race ? climbStats.targetL : cfg.deltaMinL },
 		};
 	};
 
@@ -793,12 +815,46 @@ async function runSingleScenario(
 	const passOf: number[] = startBuilds.map(() => 0);
 	const passEnds: BuildRefLite[] = [];
 	let passRaces0 = ev.racesRun();
-	const tagOf = (s: number): string =>
-		`restart ${s + 1}/${startBuilds.length}${passOf[s] ? ` (pass ${passOf[s] + 1})` : ''}`;
+	// Race climb with a time limit (and a finite kick count, so no passes):
+	// the restarts share the first 1 − CLIMB_POLISH_SHARE of the limit at the
+	// first target gain, and the rest, plus whatever they leave, polishes the
+	// best restart end at finer targets. The deep look is paid for once, for
+	// the build most likely to be recommended. Without a time limit each
+	// restart has its own race budget, so each polishes its own peak instead.
+	const finalPolish = race && Number.isFinite(cfg.timeBudgetMs) && Number.isFinite(cfg.kicks);
+	const searchEnd = t0 + cfg.timeBudgetMs;
+	const restartsEnd = finalPolish ? t0 + cfg.timeBudgetMs * (1 - CLIMB_POLISH_SHARE) : searchEnd;
+	let polishIdx = -1; // the final polish's slot in startBuilds, once queued
+	/** The restart end with the best mean search value on its seeds. */
+	const bestEnd = (): BuildRefLite | undefined => {
+		let best: BuildRefLite | undefined, bestV = -Infinity;
+		for (const b of restartEnds) {
+			let sum = 0, n = 0;
+			for (const v of ev.slots(NS_SEARCH, si, b.id)) {
+				if (v == null || v === 'err') continue;
+				const x = searchPick(v);
+				if (x != null) { sum += x; n++; }
+			}
+			if (n && sum / n > bestV) { bestV = sum / n; best = b; }
+		}
+		return best;
+	};
+	const tagOf = (s: number): string => s === polishIdx ? 'final polish'
+		: `restart ${s + 1}/${polishIdx >= 0 ? polishIdx : startBuilds.length}${passOf[s] ? ` (pass ${passOf[s] + 1})` : ''}`;
 	for (let s = 0; s < startBuilds.length; s++) {
 		if (ctrl.stopped()) break;
 		if (Date.now() - t0 > cfg.timeBudgetMs) { dbg('time budget hit at restart', s); break; }
+		const isPolish = s === polishIdx;
 		restartAt = Date.now(); // §K time left
+		// A budget for each restart (race climb): the time left, shared by the
+		// restarts still to run, so the first climb cannot spend the whole run.
+		// Whatever a restart leaves unused carries over to the next one.
+		restartDeadline = !(race && Number.isFinite(cfg.timeBudgetMs)) ? Infinity
+			: isPolish ? searchEnd
+				: restartAt + Math.max(0, restartsEnd - restartAt) / Math.max(1, startBuilds.length - s);
+		// Stage D gets the first CLIMB_STAGE_D_SHARE of that slice, so the
+		// climb always gets the rest (Infinity off the race climb's time limit).
+		const dDeadline = Number.isFinite(restartDeadline) ? restartAt + CLIMB_STAGE_D_SHARE * (restartDeadline - restartAt) : Infinity;
 		let X = startBuilds[s];
 		const value = new Map<string, number>();   // in-context option values (ℓ deltas)
 		const valueN = new Map<string, number>();  // …and the seed count each was measured at
@@ -849,8 +905,8 @@ async function runSingleScenario(
 				if (!value.has(add.pairWith)) { value.set(add.pairWith, half); valueN.set(add.pairWith, out.diff.n); }
 			}
 		};
-		for (let it = 0; it < cfg.dMaxIters; it++) {
-			if (Date.now() - t0 > cfg.timeBudgetMs) break;
+		for (let it = 0; it < (isPolish ? 0 : cfg.dMaxIters); it++) {
+			if (Date.now() - t0 > cfg.timeBudgetMs || Date.now() > dDeadline) break;
 			// §E: sell known-dead skills before weighing the round (free).
 			X = sellDead(X);
 			pinSearch(X); // §K: the incumbent of this round's ladders is pinned
@@ -966,7 +1022,7 @@ async function runSingleScenario(
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
 				candidates: cands.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
 				prior: diffPrior(surrogate, X), // the raw fit, not the r2-gated one (see diffPrior)
-				stopped: () => ctrl.stopped() || overTime(),
+				stopped: () => ctrl.stopped() || overTime() || Date.now() > dDeadline,
 			});
 			if (bres.priorCut) dbg('  prior-cut', bres.priorCut, 'of', cands.length, 'candidates (Δ-SE bound under δ_min)');
 			const outcomes = bres.measured; // eliminated candidates' numbers feed the re-solve too (§8D)
@@ -1099,8 +1155,16 @@ async function runSingleScenario(
 		// every round was cut mid-screen and the peak could never certify. The
 		// preset time budget still bounds the run.
 		let climbBudget = cfg.climbRaces;
-		const climbOut = (): boolean => ctrl.stopped() || overTime()
+		const climbOut = (): boolean => ctrl.stopped() || overTime() || Date.now() > restartDeadline
 			|| ev.racesRun() - climbRaces0 >= climbBudget;
+		/** Races this restart's climb may still run: its race budget, and the
+		 *  time left in its slice at the run's race rate so far. */
+		const climbRoom = (): number => {
+			const byRaces = climbBudget - (ev.racesRun() - climbRaces0);
+			if (!Number.isFinite(restartDeadline)) return byRaces;
+			const rate = ev.racesRun() / Math.max(1, Date.now() - t0);
+			return Math.min(byRaces, Math.max(0, restartDeadline - Date.now()) * rate);
+		};
 		// Ladder ceiling (§D.4 sizing): past ~4× the measured-σΔ δ-resolve
 		// count ((2·1.96·σΔ/δ_min)²) growth cannot flip a δ-zone verdict, so a
 		// candidate at the ceiling with UCB ≥ δ_min is reported unresolved
@@ -1170,6 +1234,21 @@ async function runSingleScenario(
 			assertFeasible(space, b.selection); // affordableAdds/applyMove keep budget + one-per-group
 			return b;
 		};
+		/** What each move of a wave sold and bought, for applyMeasured. */
+		const moveMaps = (wave: FMove[]) => {
+			const dropOf = new Map<string, string>();
+			const addedOf = new Map<string, { opt: string; replaced?: string; extraDrop?: string; pairWith?: string }>();
+			for (const mv of wave) {
+				if (mv.adds.length === 0 && mv.drops.length === 1) dropOf.set(mv.b.id, mv.drops[0]);
+				else if (mv.adds.length === 1) addedOf.set(mv.b.id,
+					mv.drops.length >= 2 ? { opt: mv.adds[0], replaced: mv.drops[0], extraDrop: mv.drops[1] }
+						: mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
+				else if (mv.adds.length === 2) addedOf.set(mv.b.id, mv.drops.length === 1
+					? { opt: mv.adds[0], pairWith: mv.adds[1], replaced: mv.drops[0] }
+					: { opt: mv.adds[0], pairWith: mv.adds[1] });
+			}
+			return { dropOf, addedOf };
+		};
 		const screenWaves = async (inc: BuildRefLite, moves: FMove[], tag: string): Promise<{ best: BanditOutcome | null; unresolved: number }> => {
 			let best: BanditOutcome | null = null;
 			let unresolved = 0;
@@ -1184,17 +1263,8 @@ async function runSingleScenario(
 				const rungCeil = Number.isFinite(remain)
 					? Math.min(climbRungCeil, Math.max(BANDIT_CHUNK_SIZE * 5, Math.floor(remain / (wave.length + 1))))
 					: climbRungCeil;
-				const dropOf = new Map<string, string>();
-				const addedOf = new Map<string, { opt: string; replaced?: string; extraDrop?: string; pairWith?: string }>();
-				for (const mv of wave) {
-					if (mv.adds.length === 0 && mv.drops.length === 1) dropOf.set(mv.b.id, mv.drops[0]);
-					else if (mv.adds.length === 1) addedOf.set(mv.b.id,
-						mv.drops.length >= 2 ? { opt: mv.adds[0], replaced: mv.drops[0], extraDrop: mv.drops[1] }
-							: mv.drops.length === 1 ? { opt: mv.adds[0], replaced: mv.drops[0] } : { opt: mv.adds[0] });
-					else if (mv.adds.length === 2) addedOf.set(mv.b.id, mv.drops.length === 1
-						? { opt: mv.adds[0], pairWith: mv.adds[1], replaced: mv.drops[0] }
-						: { opt: mv.adds[0], pairWith: mv.adds[1] });
-				}
+				const { dropOf, addedOf } = moveMaps(wave);
+				climbStats.waves++;
 				emit('local', `${tag} · ${Math.min(w0 + CLIMB_WAVE, moves.length)}/${moves.length} moves screened`, provisional(inc));
 				const bres = await banditVsIncumbent(ev, {
 					ns: NS_SEARCH, scenarioIdx: si, incumbent: inc,
@@ -1235,10 +1305,95 @@ async function runSingleScenario(
 			surrRefit();
 			return { best, unresolved };
 		};
-		const climbToPeak = async (startX: BuildRefLite, tag: string): Promise<{ X: BuildRefLite; p1: boolean; p2: boolean }> => {
+		/** The race wave's target gain and seed cap at a refinement level: g is
+		 *  the gain a no-gain move is set aside under after CLIMB_TARGET_SEEDS
+		 *  seeds at the noise this wave measured, halved per level and never
+		 *  below δ_min. A move gets CLIMB_NMAX_FACTOR times the seeds that show
+		 *  a gain of g, within the seed list and the restart's room. */
+		const targetOf = (waveLen: number, level: number) => (sigma: number) => {
+			const g = Number.isFinite(sigma)
+				? Math.max(cfg.deltaMinL, (SEQ_ADOPT_Z * sigma) / Math.sqrt(CLIMB_TARGET_SEEDS) / 2 ** level)
+				: cfg.deltaMinL;
+			const byNoise = Number.isFinite(sigma) ? Math.ceil(CLIMB_NMAX_FACTOR * Math.pow((SEQ_ADOPT_Z * sigma) / g, 2)) : cfg.batchCap;
+			const room = climbRoom();
+			const byRoom = Number.isFinite(room) ? Math.max(BANDIT_CHUNK_SIZE * 5, Math.floor(room / (waveLen + 1))) : Infinity;
+			return { g, nMax: Math.min(SEED_LIST_SIZE, byNoise, byRoom) };
+		};
+		/**
+		 * The race climb's round (`climb: 'race'`): one raceWave per wave, the
+		 * first confirmed improver adopted. A climb that cannot afford the rest
+		 * of its neighbourhood (the empty waves' average cost times the waves
+		 * left, against climbRoom less what is held back for the polish) stops
+		 * after CLIMB_PATIENCE empty waves in a row and is settled at its
+		 * target gain: the move order put the likely
+		 * improvers first. One that can afford it screens every wave, so a small
+		 * pool or an unbounded run can still certify its peak.
+		 */
+		const raceWaves = async (inc: BuildRefLite, movesIn: FMove[], tag: string, level: number, reserve = 0): Promise<{ best: BanditOutcome | null; unresolved: number; cut: boolean; g: number }> => {
+			let unresolved = 0, empties = 0, emptyRaces = 0, g = cfg.deltaMinL;
+			let cut = false;
+			let best: BanditOutcome | null = null;
+			// A finer level is a second look at a neighbourhood already raced: the
+			// moves with the best optimistic Δ on the seeds they have go first
+			// (unraced ones keep their order, after them), and the waves halve
+			// per level, so the room goes to the near misses of the coarser pass.
+			let moves = movesIn;
+			if (level > 0) {
+				const keyOf = (m: FMove): number => {
+					const d = ev.paired(NS_SEARCH, si, m.b, inc, searchPick);
+					return d && d.n >= 2 && Number.isFinite(d.sem) ? d.mean + SEQ_ADOPT_Z * d.sem : -Infinity;
+				};
+				const keyed = movesIn.map((m, i) => ({ m, i, k: keyOf(m) }));
+				keyed.sort((a, b) => (b.k - a.k) || (a.i - b.i));
+				moves = keyed.map(x => x.m);
+			}
+			const waveLen = Math.max(16, CLIMB_WAVE >> level);
+			for (let w0 = 0; w0 < moves.length; w0 += waveLen) {
+				if (w0 > 0 && climbOut()) { cut = true; unresolved += moves.length - w0; break; }
+				const wave = moves.slice(w0, w0 + waveLen);
+				const { dropOf, addedOf } = moveMaps(wave);
+				emit('local', `${tag} · ${Math.min(w0 + waveLen, moves.length)}/${moves.length} moves screened`, provisional(inc));
+				const r = await raceWave(ev, {
+					ns: NS_SEARCH, scenarioIdx: si, incumbent: inc,
+					candidates: wave.map(m => m.b), pick: searchPick, cfg,
+					targetOf: targetOf(wave.length, level),
+					prior: diffPrior(surrogate, inc), // §I.5, as the certify climb
+					stopped: climbOut,
+				});
+				climbStats.waves++;
+				climbStats.targetL = Math.max(climbStats.targetL, r.g);
+				g = Math.max(g, r.g);
+				applyMeasured(r.measured, dropOf, addedOf);
+				for (const out of r.measured) surrHarvest(out.build);
+				if (r.adopted) { best = r.adopted; break; }
+				unresolved += r.unresolved;
+				const left = moves.length - w0 - wave.length;
+				if (r.cut) { cut = true; unresolved += left; break; }
+				empties++;
+				emptyRaces += r.races;
+				if (left > 0 && empties >= CLIMB_PATIENCE) {
+					const need = (emptyRaces / empties) * Math.ceil(left / waveLen);
+					if (need > climbRoom() - reserve) {
+						dbg(`  ${tag}: ${empties} empty waves, the other ${left} moves need ~${Math.round(need)} races, settled at g = ${r.g.toFixed(3)} L`);
+						climbStats.stalls++;
+						unresolved += left;
+						break;
+					}
+				}
+			}
+			surrHarvest(inc);
+			surrRefit();
+			return { best, unresolved, cut, g };
+		};
+		/** Climb from startX. A race climb starts at refinement level levelMin
+		 *  and, settled there, halves its target gain (level + 1) while it can go
+		 *  lower, up to levelMax; an adoption starts it over at levelMin. */
+		const climbToPeak = async (startX: BuildRefLite, tag: string, levelMin = 0, levelMax = 0, reserve = 0): Promise<{ X: BuildRefLite; p1: boolean; p2: boolean; settled?: boolean; g?: number }> => {
 			let Xc = startX;
+			let level = levelMin;
 			const adopt = (out: BanditOutcome): void => {
 				Xc = remember(out.build);
+				climbStats.adoptions++;
 				assertFeasible(space, Xc.selection); // §3.B.1: X stays affordable at every adoption
 				for (const id of Xc.selection) histAdopted.add(id);
 				traceAdopt(Xc, 'climb');
@@ -1265,28 +1420,46 @@ async function runSingleScenario(
 					climbBudget = Math.max(climbBudget, ev.racesRun() - climbRaces0 + 2 * screen);
 				}
 				firstRound = false;
-				const r = await screenWaves(Xc, moves, tag);
-				if (r.best) { adopt(r.best); continue; }
+				const r: { best: BanditOutcome | null; unresolved: number; cut?: boolean; g?: number } = race
+					? await raceWaves(Xc, moves, level ? `${tag} · finer ×${2 ** level}` : tag, level, reserve)
+					: await screenWaves(Xc, moves, tag);
+				if (r.best) { adopt(r.best); level = levelMin; continue; }
 				if (r.unresolved > 0) {
-					dbg(`  ${tag}: ${r.unresolved} N1 candidate(s) unresolved at the ${climbRungCeil}-seed ceiling — the zone stopped separating; kept uncertified`);
-					return { X: Xc, p1: false, p2: false };
+					// A race climb settled at a target above δ_min refines while
+					// it has room: the same neighbourhood at half the target.
+					if (race && !r.cut && level < levelMax && (r.g ?? 0) > cfg.deltaMinL && !climbOut()) { level++; continue; }
+					dbg(`  ${tag}: ${r.unresolved} N1 candidate(s) unresolved, kept uncertified`);
+					// A race climb is settled here (patience, or moves set aside
+					// above δ_min) unless the budget cut it, so its kicks run.
+					return { X: Xc, p1: false, p2: false, settled: race && !r.cut, g: r.g };
 				}
 				// Certified N1 peak (§C). Screen the recommendation against N2.
 				const n2 = n2Moves(space, Xc, ctxVal, cfg.deltaMinL, histAdopted, addDead);
 				if (!n2.length) return { X: Xc, p1: true, p2: true };
 				if (climbOut()) return { X: Xc, p1: true, p2: false };
-				const r2 = await screenWaves(Xc, n2, `${tag} N2`);
-				if (r2.best) { adopt(r2.best); continue; } // a 2-for-2 improves: re-climb from there
+				const r2 = race ? await raceWaves(Xc, n2, `${tag} N2`, level, reserve) : await screenWaves(Xc, n2, `${tag} N2`);
+				if (r2.best) { adopt(r2.best); level = levelMin; continue; } // a 2-for-2 improves: re-climb from there
 				return { X: Xc, p1: true, p2: r2.unresolved === 0 };
 			}
 		};
-		let peak = await climbToPeak(X, `${tagOf(s)} climb`);
+		// Race climb: with kicks to run, the climb and every kick climb stay at
+		// the first target and the end of the restart refines the final peak.
+		// Without kicks the climb refines right away. With no limit at all
+		// (Until stopped), a visit refines CLIMB_POLISH_LEVELS halvings per
+		// pass it has had, so the other starts still get their turn.
+		const room0 = climbRoom();
+		const levelCap = Number.isFinite(room0) ? Infinity : CLIMB_POLISH_LEVELS * (passOf[s] + 1);
+		const polishLater = race && !finalPolish && kicksPerVisit > 0;
+		const polishReserve = polishLater && Number.isFinite(room0) ? CLIMB_POLISH_SHARE * room0 : 0;
+		let peak = isPolish
+			? await climbToPeak(X, tagOf(s), 1, levelCap)
+			: await climbToPeak(X, `${tagOf(s)} climb`, 0, race && !polishLater && !finalPolish ? levelCap : 0, polishReserve);
 		let kickIdx = 0;
 		let failedKicks = 0; // in a row; a wide search grows the kick with it
 		const wide = !!input.wideSearch;
 		// A wide search also kicks a peak the climb could not certify: that peak
 		// is where the search would otherwise stop looking.
-		while ((peak.p1 || wide) && kickIdx < kicksPerVisit && !climbOut()) {
+		while (!isPolish && (peak.p1 || wide || !!peak.settled) && kickIdx < kicksPerVisit && !climbOut() && (!race || climbRoom() > polishReserve)) {
 			const level = wide ? kickLevelOf(failedKicks, cfg.kickGrowAfter) : 0;
 			const Xk = makeKick(peak.X, kickIdx, level);
 			kickIdx++;
@@ -1301,12 +1474,12 @@ async function runSingleScenario(
 			}
 			const size = wide ? ` · ${kickSizeRange(level).join('-')} swaps` : '';
 			emit('local', `${tagOf(s)} ILS kick ${kickIdx}/${kicksPerVisit}${size}`, provisional(Xk));
-			const r = await climbToPeak(Xk, `restart ${s + 1} kick ${kickIdx} climb`);
+			const r = await climbToPeak(Xk, `restart ${s + 1} kick ${kickIdx} climb`, 0, 0, polishReserve);
 			// Accept only a certified peak that beats the current one
 			// significantly (§C); anything else falls back to the old peak. A
 			// wide search kicks uncertified peaks too, so it takes an uncertified
 			// one on the same significance test.
-			if ((r.p1 || wide) && (await significantBetter(r.X, peak.X))) {
+			if ((r.p1 || wide || !!r.settled) && (await significantBetter(r.X, peak.X))) {
 				dbg('  ILS kick accepted', r.X.id || '(base)');
 				peak = r;
 				failedKicks = 0;
@@ -1314,6 +1487,12 @@ async function runSingleScenario(
 				dbg('  ILS kick rejected');
 				failedKicks++;
 			}
+		}
+		// The race climb's polish: the final peak at finer targets, with the
+		// room the kicks left. It only moves on tested adoptions, so its end is
+		// never a step back from the peak it starts at.
+		if (polishLater && (peak.g ?? 0) > cfg.deltaMinL && !climbOut()) {
+			peak = await climbToPeak(peak.X, `${tagOf(s)} polish`, 1, levelCap);
 		}
 		X = peak.X;
 		remember(X);
@@ -1338,6 +1517,17 @@ async function runSingleScenario(
 			passEnds.length = 0;
 			startCount = startBuilds.length;
 			dbg('pass', next + 1, 'queued', startBuilds.length - s - 1, 'peaks');
+		}
+		// The restarts are done: queue the final polish of the best end.
+		if (finalPolish && polishIdx < 0 && s === startBuilds.length - 1 && !ctrl.stopped() && Date.now() < searchEnd) {
+			const b = bestEnd();
+			if (b) {
+				polishIdx = startBuilds.length;
+				startBuilds.push(b);
+				passOf.push(0);
+				startCount = startBuilds.length;
+				dbg('final polish queued from', b.id || '(base)');
+			}
 		}
 	}
 	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, stopK, space, fillSkip, cfg.shortlistSize != null), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);

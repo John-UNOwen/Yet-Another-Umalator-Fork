@@ -644,6 +644,71 @@ test('time budget: past it the checking stage races only its floor', async t => 
 	t.end();
 });
 
+// The race climb under a time limit. The harness sleeps in proportion to the
+// races it runs (120 per ms), so a 6 s limit behaves like a real one. The
+// certify climb lets its first restart's waves run into the limit (the career
+// dump: one wave took 86% of a Standard run and restarts 2 and 3 ran no
+// races), so the later restarts are starved. The race climb gives each restart
+// its share of the time left, its settled peaks kick, and the room the kicks
+// leave polishes the final peak.
+class TimedEval extends OracleEval {
+	async ensure(reqs: Parameters<SearchEvaluator['ensure']>[0]) {
+		const pre = this.racesRun();
+		const r = await super.ensure(reqs);
+		const n = this.racesRun() - pre;
+		if (n > 0) await new Promise(res => setTimeout(res, n / 120));
+		return r;
+	}
+}
+
+test('race climb: every restart gets its share of the time limit, settled peaks kick, the end polishes', async t => {
+	const inst = genInstance(555131, 30, 41);
+	// Two more starting builds, from the cheapest options up and from the
+	// dearest down, so the run has three restarts to share the time.
+	const greedy = (opts: OptOption[]): string[] => {
+		const sel: string[] = [];
+		for (const o of opts) {
+			if (o.forced || sel.some(x => inst.space.byId.get(x)?.groupId === o.groupId)) continue;
+			if (affordable(inst.space, [...sel, o.id])) sel.push(o.id);
+		}
+		return sel;
+	};
+	const byCost = inst.space.options.filter(o => !o.forced).sort((a, b) => a.cost - b.cost || (a.id < b.id ? -1 : 1));
+	const bookStarts = [greedy(byCost), greedy([...byCost].reverse())];
+	const run = async (climb: 'race' | 'certify') => {
+		const ev = new TimedEval(inst);
+		const firstAt = new Map<number, number>(); // restart → races when it first showed up
+		let starts = 0, kicked = false, polished = false;
+		const t0 = Date.now();
+		const res = await runOptimizer(ev, {
+			space: inst.space, scenarioIdx: 0, objective: 'meanLead', aggregation: 'mean', climb, bookStarts,
+			effort: { ...TEST_CFG, restarts: 3, dMaxIters: 1, kicks: 2, climbRaces: Infinity, timeBudgetMs: 6000, gSeedsMin: 300, gSeedsCap: 600, contribSeeds: 50 },
+		}, createController(), (x: OptimizerProgress) => {
+			const m = /restart (\d+)\/(\d+)/.exec(x.note ?? '');
+			if (m) { starts = Number(m[2]); if (!firstAt.has(Number(m[1]))) firstAt.set(Number(m[1]), x.racesRun); }
+			if (/ILS kick/.test(x.note ?? '')) kicked = true;
+			if (/polish/.test(x.note ?? '')) polished = true;
+		});
+		const ms = Date.now() - t0;
+		ev.dispose();
+		return { res, firstAt, starts, kicked, polished, ms };
+	};
+	const race = await run('race');
+	const cert = await run('certify');
+	t.comment(`race: ${race.firstAt.size}/${race.starts} restarts ran · kicked ${race.kicked} · polished ${race.polished} · ${race.ms} ms · best true μ ${inst.mu(race.res.best.build.id).toFixed(3)} · climb ${JSON.stringify(race.res.climbStats)}`);
+	t.comment(`certify: ${cert.firstAt.size}/${cert.starts} restarts ran · kicked ${cert.kicked} · ${cert.ms} ms · best true μ ${inst.mu(cert.res.best.build.id).toFixed(3)} · climb ${JSON.stringify(cert.res.climbStats)}`);
+	t.ok(race.starts >= 2, `the instance has several starting builds (${race.starts})`);
+	t.equal(race.firstAt.size, race.starts, 'race climb: every restart ran');
+	t.ok(race.kicked, 'race climb: a settled peak kicks');
+	t.ok(race.polished, 'race climb: the end of a restart polishes its peak');
+	t.equal(race.res.climbStats?.mode, 'race', 'the result names the climb');
+	t.ok((race.res.climbStats?.targetL ?? 0) > TEST_CFG.deltaMinL, `the first target gain sits above δ_min at this noise (${race.res.climbStats?.targetL.toFixed(3)} L)`);
+	t.ok(race.res.shortlist.every(r => affordable(inst.space, r.build.selection)), 'every reported build is affordable');
+	const muR = inst.mu(race.res.best.build.id), muC = inst.mu(cert.res.best.build.id);
+	t.ok(muR >= muC - 0.15, `the race climb's build is within 0.15 L of the certify climb's (${muR.toFixed(3)} vs ${muC.toFixed(3)})`);
+	t.end();
+});
+
 // Until stopped (kicks and climbRaces both unbounded) caps each visit to a
 // starting build at KICKS_PER_VISIT, so every start runs before any of them is
 // kicked again. Before the cap, restart 1 kicked until Stop and restarts 2..n

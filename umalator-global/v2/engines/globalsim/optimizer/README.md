@@ -37,13 +37,30 @@ seeds are disjoint (P3), ties are reported honestly (P4), and the run is anytime
   so a uma that never wins still has a lead to climb. When every verified
   build's rate is 0, Stage G orders, ties and resolves them by ℓ and the result
   sets `rankedByLead`),
-  Stage F = §C certified local search: every round enumerates the full feasible
+  Stage F = §C local search: every round enumerates the full feasible
   N1 (drop, add, swap/tier-move, 2-for-1 incl. upgrade-and-sell, 1-for-2, with no
-  caps and no estimate pruning) and screens the waves with the bandit's
-  indifference zone (rival cut off, alive cap raised to the wave, the ladder
-  capped at the measured σΔ's δ-resolve count). A round adopts one significant
-  improver, certifies the peak (every UCB < δ_min) or reports the zone
-  stopped resolving. After a certified peak, ILS kicks in (Quick 0, Standard 4,
+  caps and no estimate pruning) and screens it in waves of 128 in the move
+  order. Two climbs share that frame (`SearchInput.climb`):
+  - `race` (the default, `bandit.ts` raceWave): a move whose sequential lower
+    bound clears 0 is re-tested on positions it has not raced, and the first
+    one that passes again is adopted on the spot. A move is set aside under a
+    target gain g (the gain a no-gain move falls under after ~400 seeds at the
+    noise the wave measured, never below δ_min) or at a seed cap. A climb that
+    cannot afford the rest of its neighbourhood stops after 2 empty waves in a
+    row, settled at g, and kicks from there. A settled climb with room left
+    halves g and looks again, the near misses of the coarser pass first, in
+    waves that halve with g, down to δ_min, where an empty full pass is the
+    same certificate as before. With a time limit the restarts share 75% of
+    it (the time left over the restarts left, so unused time carries over),
+    each restart's Stage D stops at half of its slice so its climb gets the
+    other half, and the rest polishes the best restart end at finer targets. The result
+    carries `climbStats`. Measured design record below ("Race climb").
+  - `certify` (the previous climb, kept as the A/B arm): the waves run the
+    bandit's indifference zone (rival cut off, alive cap raised to the wave,
+    the ladder capped at the measured σΔ's δ-resolve count). A round adopts the
+    best significant improver after the whole wave, certifies the peak (every
+    UCB < δ_min) or reports the zone stopped resolving.
+  After a certified (or, on the race climb, settled) peak, ILS kicks in (Quick 0, Standard 4,
   Thorough 10, untilStopped unbounded, k = 2–4 random feasible swaps biased to
   low in-build value), the re-climbs are accepted only on a significantly better
   paired Δ, and the final peak is screened against N2 (2-for-2, 8 lowest-value
@@ -73,6 +90,58 @@ Optimize tab (its pane carries the scenario/robustness + aggregation controls,
 the opening-book toggle, the recommended build's in-build skill list, and an
 "Open in Compare" button that loads the build onto a copy of the current uma as
 Uma 2).
+
+## Race climb (measured 2026-11-17)
+
+Setup: a real career dump (Hachimi-Edge, 22 skills bought by the climb, 2,941
+SP, 54 options) on CM 22 (course 10611, Tokyo dirt 1600, soft, snowy,
+winter), Standard, objective Margin vs winner, full default field. Every race
+the certify climb asked for was logged, then 128 of its moves in its own order
+and 128 drawn uniformly from its N1 (9,743 moves) were raced on the same
+2,000 search seeds each. A replay resampled those per-seed leads with the seed
+index shared by every build, and ran each round policy 200 to 300 times.
+
+| Number | Value |
+|---|---|
+| paired σΔ(ℓ) at the climb's build (median) | 2.5 L (startup calibration on single adds: 0.80 L) |
+| seed correlation of a move with the incumbent (median) | 0.76 |
+| significant improvers in the climb's first wave | 52 of 128, best +0.76 L, 15 above +0.3 L |
+| improvers among random N1 moves | 7 of 128, best +0.24 L |
+| share of Δ > 0 in the first 32 moves of the order / random | 69% / 12% |
+| the certify climb's one wave | 285,689 races (86% of the run), 1 adoption, cut by the time limit at 2,915 seeds a move |
+
+Why the certify wave could not end: with the rival cut off, a wave stops only
+when its leader's lower bound clears every rival's upper bound, and with dozens
+of close improvers that never happens, so every move ladders to the ceiling
+(686k races for the wave in the replay, uncut).
+
+Replay, races per wave and the true gain adopted per 100k races:
+
+| Wave | certify | first improvement | race (first improvement + confirm) |
+|---|---|---|---|
+| the climb's own first wave | 686k · 0.11 L | 10k · 5.4 L | 10k · 5.8 L |
+| random N1 moves | 166k · 0.14 L | 26k · 0.68 L | 16k · 1.10 L |
+| nothing to gain (every Δ ≤ 0) | 177k, 9% no-gain adoptions | 115k, 37% no-gain adoptions | 20k, 2% no-gain adoptions |
+
+The confirm step is what makes first improvement safe: testing 128 moves at
+every rung picks up noise.
+
+Engine A/B, same dump, Standard (5 min), Margin vs winner, four run seeds per
+climb, each recommendation scored on 4,000 held-out seeds from another base
+seed (paired race − certify, 95% interval):
+
+| Run seed | certify ℓ | race ℓ | race − certify |
+|---|---|---|---|
+| 20261118 | −6.14 L | −5.00 L | +1.14 [1.04, 1.25] |
+| 20261119 | −4.85 L | −5.01 L | −0.16 [−0.24, −0.08] |
+| 20261120 | −5.38 L | −5.19 L | +0.19 [0.12, 0.25] |
+| 20261121 | −5.25 L | −4.84 L | +0.41 [0.32, 0.50] |
+| mean, spread | −5.40, 1.29 L | −5.01, 0.35 L | +0.40 |
+
+The certify runs took 306–362 s (its wave overran the limit) and climbed in one
+restart. The race runs took 301–304 s and climbed in all three. Before Stage D
+was held to half of each slice, three Stage Ds took 266 s of one race run and
+that seed lost by 0.54 L.
 
 ## Noise calibration record (§7.3, measured 2026-11-15)
 

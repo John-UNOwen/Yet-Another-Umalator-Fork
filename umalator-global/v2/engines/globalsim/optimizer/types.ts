@@ -213,6 +213,10 @@ export interface OptimizerResult {
 	 *  every verified build, so the rows were ordered and tied by the lead
 	 *  instead. The row scores still show the objective. */
 	rankedByLead?: boolean;
+	/** The §C climb over the run: its mode (SearchInput.climb), the largest
+	 *  target gain a race wave used (δ_min on the certify climb), and how many
+	 *  waves, adoptions and patience stops it had. */
+	climbStats?: { mode: 'race' | 'certify'; targetL: number; waves: number; adoptions: number; stalls: number };
 }
 
 /** §7.3 noise calibration output. */
