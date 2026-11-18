@@ -9,6 +9,7 @@
 import { UmaState, defaultUmaState } from './uma-panel';
 import umas from '../umas.json'; // Use global version for English names
 import skilldata from '../skill_data.json'; // Use Global version
+import courseData from '../course_data.json';
 import { tryParseImportText } from '../../components/gameExportParser';
 
 // LocalStorage keys
@@ -504,6 +505,13 @@ export function saveSession(state: SessionState): boolean {
 	}
 }
 
+/** The course to load: a stored or shared id only when the app has that course.
+ *  Any other number (a hand-edited session, a crafted link) reaches RaceTrack's
+ *  course lookup and blanks the page, so it falls back to the default course. */
+export function knownCourseId(id: unknown, fallback = 10506): number {
+	return typeof id === 'number' && Object.prototype.hasOwnProperty.call(courseData, String(id)) ? id : fallback;
+}
+
 /**
  * Load session state from localStorage
  */
@@ -516,7 +524,7 @@ export function loadSession(): SessionState | null {
 
 		// Validate and return with defaults for missing fields
 		return {
-			courseId: typeof json.courseId === 'number' ? json.courseId : 10506,
+			courseId: knownCourseId(json.courseId),
 			selectedPresetId: json.selectedPresetId ?? null,
 			ground: typeof json.ground === 'number' ? json.ground : 1,
 			weather: typeof json.weather === 'number' ? json.weather : 1,
@@ -699,7 +707,7 @@ export async function deserializeStateFromHash(hash: string): Promise<ShareableS
 		if (!uma1 || !uma2) return null;
 
 		return {
-			courseId: typeof parsed.courseId === 'number' ? parsed.courseId : 10506,
+			courseId: knownCourseId(parsed.courseId),
 			ground: typeof parsed.ground === 'number' ? parsed.ground : 1,
 			weather: typeof parsed.weather === 'number' ? parsed.weather : 1,
 			season: typeof parsed.season === 'number' ? parsed.season : 4,
