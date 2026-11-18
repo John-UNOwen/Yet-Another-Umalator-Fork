@@ -603,10 +603,14 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			setMessage(msg);
 			runningRef.current = false; setRunning(false);
 		};
-		if (space.error) return fail(space.error);
+		// Before space.error: buildSpace reports the same case as "locked skills
+		// cost N SP > budget B", where B is already the budget less the reserve.
 		if (space.forcedCost > budgetUse) {
-			return fail(`The must-have skills cost ${space.forcedCost} SP, more than the ${budgetUse} SP left after the reserve.`);
+			return fail(reserveUse
+				? `The must-have skills cost ${space.forcedCost} SP, more than the ${budgetUse} SP left after the ${reserveUse} SP reserve.`
+				: `The must-have skills cost ${space.forcedCost} SP, more than the ${budgetUse} SP budget.`);
 		}
+		if (space.error) return fail(space.error);
 		if (space.options.length === 0 && !runMust.length) {
 			return fail('No skill in the pool can be bought (already owned, purple, or outside the active table), so there is nothing to search.');
 		}
