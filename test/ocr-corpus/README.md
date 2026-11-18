@@ -51,8 +51,10 @@ panel. Splitting the crop on ink gaps failed too, because the gap between two di
 reach 11 px while the badge sits 16 px away. What works is reading the row whole: the badge is drawn as
 a letter, so the unmasked reading keeps it apart from the digits ("U 1321"), and a run too long to be a
 stat says which side the extra digit came from ("U81230" is 1230). The digit-masked ladder runs over the
-same box as a second reader and agrees on 34 of the 45 cells. Against the 30 cells whose value was read
-off the screenshot by hand, every one came out right, with none wrong and none unanswered.
+same box as a second reader, and counting the line's own text among its readings the two agree on 34 of
+the 45 cells. The flag the app shows compares the ladder's own readings, which is the stricter of the
+two. Against the 30 cells whose value was read off the screenshot by hand, every one came out right, with
+none wrong and none unanswered.
 
 Two things about this row are only true of these files. A short label often arrives with one or two
 glyphs glued to its front ("yGuts", ". Power"), so a label is matched on the end of its last word. And
