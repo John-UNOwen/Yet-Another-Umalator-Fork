@@ -868,6 +868,17 @@ body {
   font-size: var(--font-sm);
   padding: var(--space-xs) var(--space-sm);
 }
+/* The dropped-skills note: the count only grows across imports, so it can be
+   dismissed (resets it to 0). */
+.v2-globalsim-note-dismissible {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.v2-globalsim-note-dismissible > span {
+  flex: 1;
+  min-width: 0;
+}
 
 /* Persistent failure notice: GlobalSim skill table never loaded (retries
    exhausted) — runs are refused until the page is reloaded. Doubles as the

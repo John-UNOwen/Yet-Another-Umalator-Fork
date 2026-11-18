@@ -242,8 +242,12 @@ function App() {
   const [courseId, setCourseId] = useState(
     savedSession.current?.courseId ?? DEFAULT_PRESET.courseId,
   );
+  // A saved null is Custom (no preset), kept as null: `??` turned it into the
+  // current Champions Meeting, whose course was not the one loaded.
   const [selectedPresetId, setSelectedPresetId] = useState<number | null>(
-    savedSession.current?.selectedPresetId ?? DEFAULT_PRESET.id,
+    savedSession.current
+      ? savedSession.current.selectedPresetId
+      : DEFAULT_PRESET.id,
   );
   const [ground, setGround] = useState(
     savedSession.current?.ground ?? DEFAULT_PRESET.ground,
@@ -2188,10 +2192,20 @@ function App() {
 
                 <div class="v2-drawer-content">
                   {globalsimDropped > 0 && (
-                    <div class="v2-globalsim-note">
-                      Dropped {globalsimDropped} uncovered skill
-                      {globalsimDropped === 1 ? "" : "s"} on import (not yet supported
-                      by GlobalSim)
+                    <div class="v2-globalsim-note v2-globalsim-note-dismissible">
+                      <span>
+                        Dropped {globalsimDropped} uncovered skill
+                        {globalsimDropped === 1 ? "" : "s"} on import (not yet
+                        supported by GlobalSim)
+                      </span>
+                      <button
+                        type="button"
+                        class="v2-globalsim-error-dismiss"
+                        aria-label="Dismiss note"
+                        onClick={() => setGlobalsimDropped(0)}
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
                   )}
                   {activeUmaTab === 1 && (
