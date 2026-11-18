@@ -7,35 +7,26 @@ once with the real engine and frozen into `fixtures/<name>.json`, which holds wh
 `npm run test:ocr`, replays the fixtures through `merge.ts` and `build.ts` and compares against it, as
 [docs/ocr-import-plan.md](../../docs/ocr-import-plan.md) describes.
 
-A group is one uma: the two Steam shots of one dialog together, or a single capture. The Steam pairs are
+A group is one uma: the two shots of one dialog together, or a single capture. Two shots of one dialog are
 the case `merge.ts` has to join, so they are frozen as one build.
 
 A fixture is one `scanScreen` run over the decoded image with the offered skill names as the pool. The
-reader is not in git, so re-freezing means running `node tools/fetch-ocr-assets.mjs` first, and a Steam
-JPEG needs a decoded PNG twin outside the repo.
+reader is not in git, so re-freezing means running `node tools/fetch-ocr-assets.mjs` first, and a JPEG
+capture needs a decoded PNG twin outside the repo, since the decoder reads PNG.
 
-| File | Where it came from | Screen |
-|---|---|---|
-| `taiki-shuttle-bubblegum-ug9.png` | stitched rolling capture | details, skills tab, scrolled |
-| `taiki-shuttle-bubblegum-ug7.png` | stitched rolling capture | details, skills tab, top |
-| `taiki-shuttle-bubblegum-ss.png` | stitched rolling capture | details, skills tab, dialog |
-| `oguri-cap-starlight-beat.png` | stitched rolling capture | details, skills tab, dialog |
-| `symboli-rudolf-archer-by-moonlight.png` | stitched rolling capture | details, skills tab, dialog |
-| `taiki-shuttle-bubblegum-steam-top.png` / `-scrolled.png` | Steam client, 3440x1440 | same horse, two scroll positions |
-| `daiwa-scarlet-peak-blue-steam-top.png` / `-scrolled.png` | Steam client, 1920x1080 | same horse, two scroll positions |
+`images/` is where the captures go. The scans frozen in `fixtures/` are what the measurements below came
+from, and a fixture is replayable without its image.
 
-The stitched captures come from a rolling screenshot implementation and from
-[receipt_factor](https://lt900ed.github.io/receipt_factor/). They already merge several viewports
-into one tall image, so they carry more skill rows than one screen shows. The Steam pairs are plain
-screenshots with a real overlap between them, which is the case `merge.ts` has to join.
+Two capture kinds matter, because they exercise different code. A stitched rolling capture already merges
+several viewports into one tall image, so it carries more skill rows than one screen shows. The rolling
+implementation is at [receipt_factor](https://lt900ed.github.io/receipt_factor/). A pair of plain
+screenshots of one dialog, taken at two scroll positions, has a real overlap, which is the case `merge.ts`
+has to join.
 
-The four Steam files are kept as the JPEG the client produced. Tests read PNG, so a decoded twin
-goes outside the repo when a run needs one.
+Naming is `<character>-<outfit epithet>[-<device or rank>]`. Two files of the same horse differ by rank or
+scroll position, never by crop.
 
-Naming is `<character>-<outfit epithet>[-<device or rank>]`. Two files of the same horse differ by
-rank or scroll position, never by crop.
-
-## What these files have settled so far
+## What the corpus captures settled so far
 
 Timings, single-thread WASM on one desktop machine: a stitched capture around 594x1040 reads in about
 1.3 s (detect 0.6 s), a 3440x1440 Steam capture in about 2.1 s (detect 1.4 s).
