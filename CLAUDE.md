@@ -812,7 +812,10 @@ The old v1 scheme (hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js`,
   is hidden.
 
 `ci.yml` runs on push and pull request: the engine's own `cargo test`, the wasm-vs-native byte
-parity check, and the GlobalSim suites. `sync-upstream-data.yml` runs daily, pulls the upstream
+parity check, the GlobalSim suites (compact-record parity and the full-spurt judge included),
+`test:optimizer`, and the career import, skill hints, skill drift, mechanics and base-path suites.
+It does not run `test:optimizer:slow`, `test:roster` or `uma-skill-tools`' own `npm test`.
+`sync-upstream-data.yml` runs daily, pulls the upstream
 game data, and opens a PR against `master`. Merging is what deploys it.
 
 `build-all.sh`, `_redirects` and `functions/` are upstream Cloudflare Pages machinery. GitHub
