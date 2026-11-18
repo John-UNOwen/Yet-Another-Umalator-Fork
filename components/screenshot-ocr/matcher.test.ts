@@ -11,7 +11,7 @@ import { DEFAULT_MATCH, hasLevel, levelOf, markerOf, matchName, normalizeName, s
 import { levelBeside } from './layout';
 
 const OFFERED: NameEntry[] = Object.entries(skillnames as Record<string, string | string[]>)
-	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v[0] : v }))
+	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v.slice(-1)[0] : v }))
 	.filter((e) => !(notInGame as { skills: string[] }).skills.includes(e.id) && /[a-z]/i.test(e.name));
 
 const idOf = (name: string) => OFFERED.filter((e) => e.name === name).map((e) => e.id);

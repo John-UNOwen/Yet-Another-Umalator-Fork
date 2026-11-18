@@ -63,9 +63,10 @@ column's wider box reaches back into the region, and only distance to the label 
 
 
 The skill list is the lines that answer to a name the fork offers, so nothing has to know where the
-table sits. Every line of every capture was tried against the 1340 offered names: 144 lines answered,
-13 to 19 per capture. The icons, the `Lvl 4` chips, the stat labels and the stat numbers answer to no
-name, so no line of the screen other than a skill name was ever accepted. Three to seven rows per
+table sits. Every line of every capture was tried against the 1340 offered names, each entry's display
+name: 143 lines answered, 13 to 19 per capture. The icons, the `Lvl 4` chips, the stat labels and the
+stat numbers answer to no name, so no line of the screen other than a skill name was ever accepted. Two
+to seven rows per
 capture stay a choice for the user, all of them acquisition markers read as a letter or lost. Only oguri
 and the taiki Steam shot have their skills written down above, so only those two carry the claim that
 nothing was accepted that should not have been: oguri came out at its 17 names and taiki Steam top at its
