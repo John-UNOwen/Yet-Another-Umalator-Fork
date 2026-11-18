@@ -252,7 +252,7 @@ v2/
 **Horse Configuration:**
 - `HorseDefTypes.ts`: HorseState Record class (Immutable.js) with regional defaults
 - `UmaCard.ts`: PNG export/import with embedded JSON metadata
-- `OCRModal.tsx` + `GeminiOCR.ts`: Screenshot import using Google Gemini AI
+- `GeminiOCR.ts`: the cloud OCR call kept behind the screenshot import's fallback button
 - `Dropdown.tsx`: Reusable dropdown menu component
 
 **Race Visualization:**
@@ -279,10 +279,14 @@ v2/
 - Extraction reads PNG chunks, parses JSON, validates and loads
 
 **OCR Screenshot Import:**
-- Uses Google Gemini AI to extract horse data from screenshots
+- `v2/ocr-modal.tsx` recognises screenshots on the device: `components/screenshot-ocr/ocr.worker.ts`
+  runs PP-OCRv6 tiny det+rec, and the modules beside it turn the lines into a build
+- Several screenshots of one Details dialog are combined, so a skill list taller than the screen imports whole
 - Supports drag & drop, paste, or file upload
-- Review screen allows editing before loading
-- API key stored in localStorage (optional)
+- The review screen allows editing before loading, and the merged build goes through `validateAndParseUmaJson`
+- Google Gemini stays behind the "Use cloud OCR" button, which needs the user's own API key
+- The OCR binaries are not in git: `tools/fetch-ocr-assets.mjs` fetches them from pinned revisions and
+  checks each SHA-256 against `ocr/MANIFEST.json`, and `pages.yml` does the same before deploying
 
 ### OCR Pipeline (screenshot to uma)
 
