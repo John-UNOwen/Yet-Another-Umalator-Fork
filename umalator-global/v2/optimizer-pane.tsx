@@ -526,17 +526,20 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const bk = bookKeyNow();
 	const savedBuilds = useMemo(() => (bk ? bookCount(bk) : 0), [bk, bookTick]);
 
-	// ── career dump import ────────────────────────────────────────────────────
+	// ── career import ─────────────────────────────────────────────────────────
 	/** The offer pool from an imported Hachimi career dump, kept as a set so the
 	 *  selection is re-cut whenever `candidates` changes (the imported uma
 	 *  re-derives that list, and it lands after this handler returns). */
 	const [poolFilter, setPoolFilter] = useState<Set<string> | null>(null);
+	/** What an imported career cannot learn, subtracted from the pool either way. */
+	const [poolBlock, setPoolBlock] = useState<Set<string>>(() => new Set());
 	const [career, setCareer] = useState<CareerImport | null>(null);
 	useEffect(() => {
-		if (!poolFilter || !candidates.length) return;
-		setChosen(new Set(candidates.filter((id) => poolFilter.has(id) && !mustHave.has(id))));
-		setMustHave((prev) => new Set([...prev].filter((id) => poolFilter.has(id))));
-	}, [poolFilter, candidates]);
+		if (!candidates.length || (!poolFilter && !poolBlock.size)) return;
+		const keep = (id: string) => (!poolFilter || poolFilter.has(id)) && !poolBlock.has(id);
+		setChosen(new Set(candidates.filter((id) => keep(id) && !mustHave.has(id))));
+		setMustHave((prev) => new Set([...prev].filter(keep)));
+	}, [poolFilter, poolBlock, candidates]);
 
 	const importCareer = async () => {
 		if (runningRef.current) return;
@@ -545,6 +548,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		props.onImportCareer?.(imp); // outfit, stats, aptitudes, learned skills, hint levels
 		if (imp.budget != null) setBudget(imp.budget);
 		setPoolFilter(imp.offered.length ? new Set(imp.offered) : null);
+		setPoolBlock(new Set(imp.blocked));
 		setCareer(imp);
 	};
 
@@ -893,8 +897,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<Input value={filter} placeholder="Filter skills…" iconLeft={<Search size={14} />} disabled={running}
 						className="v2-opt-filter" onInput={setFilter} />
 					<Button size="sm" variant="secondary" icon={<Upload size={14} />} disabled={running} onClick={importCareer}
-						title="Load a Hachimi career dump: sets the uma from that career (outfit, stats, aptitudes, mood, learned skills), takes its SP budget and hint levels, and limits the pool to the skills the game was offering">
-						Import career dump
+						title="Load a Hachimi career dump or a umadump career snapshot: sets the uma from that career (outfit, stats, aptitudes, mood, learned skills) and takes its SP budget and hint levels. A Hachimi dump also limits the pool to what that career was offering, while a snapshot removes only the skills it cannot learn">
+						Import career
 					</Button>
 					<Button size="sm" variant="ghost" disabled={running}
 						onClick={() => setChosen((prev) => new Set([...prev, ...filtered.filter((id) => !mustHave.has(id))]))}>Allow all</Button>
@@ -913,6 +917,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<div class="v2-opt-career">
 						<span>{career.summary}</span>
 						{poolFilter && <span class="v2-opt-muted"> · pool limited to what that career was offering</span>}
+						{poolBlock.size > 0 && <span class="v2-opt-muted"> · {poolBlock.size} skill(s) that career cannot learn are out of the pool</span>}
 						{career.warnings.length > 0 && (
 							<details class="v2-opt-inline-details">
 								<summary>{career.warnings.length} import note{career.warnings.length > 1 ? 's' : ''}</summary>

@@ -81,7 +81,7 @@ npm run test:globalsim-compact    # wasm compact telemetry vs the JS extraction 
 npm run test:globalsim-simserver  # local sim server: token gate, HTTP parity, child crash
 npm run test:optimizer            # search space, knapsack costs, cache, evaluator, surrogate, book, bandit, oracle and realistic suites
 npm run test:optimizer:slow       # exhaustive search cross-check, several minutes
-npm run test:career-import        # Hachimi career dump reader
+npm run test:career-import        # career import reader (Hachimi dump, umadump snapshot)
 npm run test:roster               # roster decoder and storage
 npm run test:mechanics            # mechanics-explorer formulas
 npm run test:skill-drift          # the drift checker's own tests

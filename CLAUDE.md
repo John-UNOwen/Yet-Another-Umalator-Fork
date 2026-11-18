@@ -344,36 +344,53 @@ test pair (sitekey `1x00000000000000000000AA`, secret `1x00000000000000000000000
 **To change the model:** edit the `MODEL` constant in the two files above (and confirm
 the new model has a free tier if you rely on the proxy).
 
-### Career dump import (Skill Optimizer)
+### Career import (Skill Optimizer)
 
-The Optimizer pane's **Import career dump…** button reads a Hachimi-Edge career dump
-(`career_<charaId>_<epoch>.json`, `"kind": "hachimi-career-dump"`, `"version": 1`) that
-Hachimi writes from the running game (menu "Dump career data", which lands in
-`<exe dir>\hachimi\`). Reader: `umalator-global/v2/career-import.ts`. Tests:
-`npm run test:career-import`.
+The Optimizer pane's **Import career** button reads either file a running career produces.
+Reader: `umalator-global/v2/career-import.ts`, tests: `npm run test:career-import`.
 
-What it applies: outfit (`character.cardId`), star level (`limitBreakCount + 1`), unique level
-(the `Level` of the owned row for the outfit's own unique, as `uniqueSkillForUma()` names it), the five stats (`wiz` becomes wisdom), aptitudes (distance =
+| Format | Where it comes from | Recognised by |
+|---|---|---|
+| Hachimi-Edge career dump | `career_<charaId>_<epoch>.json` in `<exe dir>\hachimi\`, written by the "Dump career data" menu | `"kind": "hachimi-career-dump"` |
+| umadump career snapshot | `career_data/<identity>/turns/turn_<turn>_<revision>.json`, written by the umadump daemon while the career runs | `single_mode_load_common.chara_info` |
+
+Both apply: outfit, star level, unique level (the level of the outfit's own unique, as
+`uniqueSkillForUma()` names it), the five stats (`wiz` becomes wisdom), aptitudes (distance =
 best of the four, surface = turf, strategy aptitude = the *actual* running style's own grade),
-strategy (`runningStyle` 1-4), mood (`motivation - 3`, game 0-5 to app -2..2), learned skills
-(rows with `IsGet=1`), hint levels, the SP budget (`skillPoint`), and the candidate pool (rows
-with `IsGet≠1`, intersected with what the app can actually offer). Aptitude numbers are the
-game's `ProperGrade` enum, 1=G to 8=S. The merged uma goes back through
-`validateAndParseUmaJson`, so a bad value cannot reach the sim.
+strategy, mood (`motivation - 3`, game 0-5 to app -2..2), learned skills, hint levels, and the
+SP budget. Aptitude numbers are the game's `ProperGrade` enum, 1=G to 8=S. The merged uma goes
+back through `validateAndParseUmaJson`, so a bad value cannot reach the sim.
 
-Hint levels are read **per skill**: `skillTipsObserved[id].tipsDiscount` first (it is the discount
-the game applies to that skill, and this door is not subject to the writer's list cap), the rows'
-`HintLv` second. The two ladders are identical (`scaleBaseCost()`), so imported levels reproduce
-in-game prices and the app still charges its own group-chain costs. The `skillHints` table is keyed
-per (group, rarity) and its walk caps at 48 items, so it is only used to report truncation:
-spreading one entry over a whole group would invent levels for the other rarity tier (which the
-game tracks separately) and for skills that career cannot buy.
+The keys differ per format. The dump reads `character.cardId`, `character.limitBreakCount`,
+`stats`, `aptitudes.runningStyle` with its `style*` grades, and `skillPoint`. The snapshot is
+the game's own state object, so it reads `card_id`, `rarity` (the limit-break count), `wiz`,
+`race_running_style` with the `proper_running_style_*` grades, `skill_point`, and owned skills
+from `skill_array`. The dump's `character.charaId` names the character, while a snapshot's
+`single_mode_chara_id` is the career's own row id, so the snapshot takes the character from the
+outfit id.
+
+Hint levels follow what each writer can see:
+
+- **Dump, per skill**: `skillTipsObserved[id].tipsDiscount` first (the discount the game applies
+  to that skill, and this door is not subject to the writer's list cap), the rows' `HintLv`
+  second. Its `skillHints` table is keyed per (group, rarity) and its walk caps at 48 items, so
+  it is only used to report truncation: spreading one entry over a whole group would invent
+  levels for the other rarity tier, which the game tracks separately.
+- **Snapshot, per tier**: `skill_tips_array` is `[{group_id, rarity, level}]`, the game's own
+  hint table, and a tier is the unit the game prices, so its level goes onto every skill of that
+  group and rarity (`skill_meta.json` names the group, `skill_data.json` the rarity). A tier at
+  level 0 is written too, which clears a level an earlier import left behind.
+
+The candidate pool differs for the same reason. A dump limits it to its `IsGet≠1` rows that the
+app can offer. A snapshot carries no offer list, so the pool stays the app's own set and only
+its `disable_skill_id_array` is subtracted. Either way the pane notes what it could not read.
 
 Ignored on purpose: `acquiredSkills.items` (the writer's walk of that runtime class yields empty
 objects, and `IsGet=1` rows are the real list), `raceEvaluations` (per-NPC bond entries whose
 `ObscuredBool` fields serialize as `"<obscured …>"`), `skillMasterNames` (only filled by a
-different capture door), and `scenarioId`/`routeId`/`entryProgramId` (career context with no
-verified mapping onto an app course).
+different capture door), `scenarioId`/`routeId`/`entryProgramId` (career context with no
+verified mapping onto an app course), and in a snapshot the race history, the support-card and
+fan-club state, the training levels and `live_data_set`.
 
 ### URL State Features (V2)
 

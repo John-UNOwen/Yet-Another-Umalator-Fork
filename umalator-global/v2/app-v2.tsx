@@ -730,11 +730,12 @@ function App() {
     if (mode !== "compare" && activeUmaTab === 2) setActiveUmaTab(1);
   }, [mode, activeUmaTab]);
 
-  // A Hachimi career dump imported from the Skill Optimizer. The dump describes a
-  // trained uma that exists, so it replaces the fields it carries (outfit, star and
-  // unique level, stats, aptitudes, running style, mood, learned skills) and merges
-  // its hint levels into the shared hint state the chart and optimizer both cost with.
-  // The merged build goes back through the app's own validator, so a dump with a
+  // A career file imported from the Skill Optimizer, a Hachimi dump or a umadump
+  // snapshot. It describes a trained uma that exists, so it replaces the fields it
+  // carries (outfit, star and unique level, stats, aptitudes, running style, mood,
+  // learned skills) and merges its hint levels into the shared hint state the chart
+  // and optimizer both cost with.
+  // The merged build goes back through the app's own validator, so a file with a
   // bad value in it cannot push a stat out of range; if validation rejects it, the
   // previous uma is left alone.
   const handleImportCareer = useCallback((imp: CareerImport) => {

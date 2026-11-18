@@ -1,12 +1,17 @@
 /**
- * Hachimi career-dump import (Skill Optimizer).
+ * Career import (Skill Optimizer). Two file formats, one result.
  *
- * Reads the JSON that Hachimi-Edge writes from the running game (menu "Dump career
- * data" → `career_<charaId>_<epoch>.json`, tagged `"kind": "hachimi-career-dump"`,
- * `"version": 1`) and turns it into app state: the trained uma (outfit, stats,
- * aptitudes, running style, mood, learned skills) plus what the Optimizer needs to
- * answer "what should I buy with the SP I have" (hint levels, SP budget, and the
- * skill list the game was actually offering).
+ * 1. The JSON Hachimi-Edge writes from the running game (menu "Dump career
+ *    data" → `career_<charaId>_<epoch>.json`, tagged `"kind": "hachimi-career-dump"`,
+ *    `"version": 1`).
+ * 2. A umadump career snapshot: `turns/turn_<turn>_<revision>.json` inside the
+ *    `career_data/<identity>/` archive its daemon keeps while a career runs (the
+ *    `single_mode_load` response, under `single_mode_load_common.chara_info`).
+ *
+ * Both turn into app state: the trained uma (outfit, stats, aptitudes, running style,
+ * mood, learned skills) plus what the Optimizer needs to answer "what should I buy
+ * with the SP I have" (hint levels, SP budget, and the skill list the game was
+ * actually offering, which only the Hachimi dump carries).
  *
  * Field semantics were read off the writer itself, not guessed:
  *   - `CareerDataDump.rs` (dump body, aptitude/style/stat getters, the 48-item list
@@ -31,20 +36,42 @@
  *     rarity tier (which the game tracks separately) and for skills the career
  *     cannot buy at all.
  *
+ * The snapshot is the game's own state object rather than a probe of it, so it
+ * answers the same questions through different keys (see `convertUmadumpTurn`):
+ *   - `card_id` is the outfit. `rarity` is the limit-break count, which is what
+ *     `starCount` counts, and stats are the career's live stats with wisdom under
+ *     `wiz`, aptitudes as the same `ProperGrade` numbers and `race_running_style`
+ *     as the style being run. `single_mode_chara_id` is the career's own row id
+ *     (4845 for a card 101002 career) and says nothing about the character, which
+ *     has to come from the first four digits of `card_id`.
+ *   - `skill_tips_array` is the hint table itself: `[{group_id, rarity, level}]`,
+ *     one entry per (group, rarity tier) the career has hints on. Here the tier
+ *     entry is all the game reports, so it is spread over every skill id of that
+ *     tier, which is what the tier means (the Hachimi path refuses to spread only
+ *     because it has the per-skill discount to go on instead).
+ *   - `skill_point` is the SP left, `disable_skill_id_array` what that career
+ *     cannot learn. There is no offer list in a snapshot, so the pool stays the
+ *     app's own set of learnable skills.
+ *
  * Deliberately NOT imported: `raceEvaluations` (bond entries, `ObscuredBool` fields
  * serialized as "<obscured …>"), `acquiredSkills` (contentless), `skillMasterNames`
  * (only filled by a different capture door), `scenarioId`/`routeId`/`entryProgramId`
- * (career context with no verified mapping onto an app course).
+ * (career context with no verified mapping onto an app course), and in a snapshot the
+ * race history, the fan club and support-card state, the training levels and
+ * `live_data_set` (nothing in the app reads them).
  */
 
 import umas from '../../umas.json';
 import skilldata from '../skill_data.json';
+import skillmeta from '../../skill_meta.json';
 import type { UmaState } from './uma-panel';
 import { uniqueSkillForUma } from '../../components/HorseDefTypes';
 
-/** The dump's tag. `version` is a literal 1 with no versioning logic behind it. */
+/** The Hachimi dump's tag. `version` is a literal 1 with no versioning logic behind it. */
 export const CAREER_DUMP_KIND = 'hachimi-career-dump';
 export const CAREER_DUMP_VERSION = 1;
+/** `manifest.json` of a umadump career archive, kept so the picker can explain it. */
+export const UMADUMP_ARCHIVE_TYPE = 'umadump-career';
 
 const APT_LETTER: Record<number, 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'> = {
 	1: 'G', 2: 'F', 3: 'E', 4: 'D', 5: 'C', 6: 'B', 7: 'A', 8: 'S',
@@ -84,12 +111,15 @@ export interface CareerImport {
 	uma: Partial<UmaState>;
 	/** skillId → hint level (0-5), the same map the Skill chart hint buttons edit. */
 	hints: Map<string, number>;
-	/** Skill points left in the career, when the dump could read them. */
+	/** Skill points left in the career, when the file could read them. */
 	budget: number | null;
-	/** Skill ids the trainee already has (`IsGet=1`). */
+	/** Skill ids the trainee already has (`IsGet=1`, or the snapshot's `skill_array`). */
 	owned: string[];
-	/** Skill ids the game was offering at dump time (`IsGet` not 1). */
+	/** Skill ids the game was offering at dump time (`IsGet` not 1). Empty for a
+	 *  umadump snapshot, which carries no offer list, so the pool is left alone. */
 	offered: string[];
+	/** Skill ids that career cannot learn (`disable_skill_id_array`), kept out of the pool. */
+	blocked: string[];
 	/** One line for the pane: who this is and what came in. */
 	summary: string;
 	warnings: string[];
@@ -98,6 +128,19 @@ export interface CareerImport {
 /** Cheap "is this the format" test, used before any field access. */
 export function isCareerDump(obj: any): boolean {
 	return !!obj && typeof obj === 'object' && obj.kind === CAREER_DUMP_KIND;
+}
+
+/** The other format: a umadump `career_data/<identity>/turns/turn_*.json` snapshot. */
+export function isUmadumpCareer(obj: any): boolean {
+	return !!obj && typeof obj === 'object'
+		&& !!obj.single_mode_load_common && typeof obj.single_mode_load_common === 'object'
+		&& !!obj.single_mode_load_common.chara_info
+		&& typeof obj.single_mode_load_common.chara_info === 'object';
+}
+
+/** The `manifest.json` of a umadump career archive: it names the career but holds no state. */
+export function isUmadumpManifest(obj: any): boolean {
+	return !!obj && typeof obj === 'object' && obj.archive_type === UMADUMP_ARCHIVE_TYPE;
 }
 
 /** Merge every row source the dump carries, keyed by skill id, newest list last. */
@@ -171,64 +214,48 @@ function collectHints(rows: CareerRow[], tips: Record<string, any> | undefined, 
 	return { hints, sourced };
 }
 
-function displayName(dump: any): string {
-	const charaId = String(dump.character?.charaId ?? '');
-	const cardId = String(dump.character?.cardId ?? '');
+function displayName(cardId: string, charaId = ''): string {
+	const entry = outfitEntry(cardId);
+	if (entry) return entry.epithet ? `${entry.name} ${entry.epithet}` : entry.name;
 	const uma = (umas as Record<string, any>)[charaId];
 	if (!uma) return cardId || charaId || 'unknown uma';
-	const outfit = uma.outfits?.[cardId];
-	const epithet = typeof outfit === 'string' ? outfit : outfit?.epithet;
-	return epithet ? `${uma.name?.[1] ?? charaId} ${epithet}` : `${uma.name?.[1] ?? charaId}`;
+	return Array.isArray(uma.name) ? (uma.name[1] ?? charaId) : charaId;
 }
 
-/**
- * Convert a parsed dump into app state. Returns null only when the object is not a
- * career dump at all; a dump with holes in it converts with warnings instead.
- */
-export function convertCareerDump(obj: any, file = 'career dump'): CareerImport | null {
-	if (!isCareerDump(obj)) return null;
-	const warnings: string[] = [];
-	if (isNum(obj.version) && obj.version !== CAREER_DUMP_VERSION) {
-		warnings.push(`Dump format version ${obj.version}; this reader knows version ${CAREER_DUMP_VERSION}.`);
+/** The outfit's entry in the local uma data, found by card id (`101002` is outfit 02 of 1010). */
+function outfitEntry(cardId: string): { charaId: string; name: string; epithet?: string } | null {
+	for (const [charaId, u] of Object.entries(umas as Record<string, any>)) {
+		const outfit = u?.outfits?.[cardId];
+		if (!outfit) continue;
+		const name = Array.isArray(u.name) ? (u.name[1] ?? charaId) : charaId;
+		return { charaId, name, epithet: typeof outfit === 'string' ? outfit : outfit.epithet };
 	}
+	return null;
+}
 
-	const uma: Partial<UmaState> = {};
-	const c = obj.character ?? {};
-	const apt = obj.aptitudes ?? {};
-	const stats = obj.stats ?? {};
-
-	// ── Outfit + card level ───────────────────────────────────────────────────
-	let outfitKnown = false;
-	if (isNum(c.cardId)) {
-		const outfitId = String(c.cardId);
-		uma.outfitId = outfitId;
-		outfitKnown = !!(umas as Record<string, any>)[String(c.charaId ?? '')]?.outfits?.[outfitId];
-		if (!outfitKnown) {
-			warnings.push(`Outfit ${outfitId} is not in the local uma data; the build was imported without a portrait.`);
-		}
-	} else {
-		warnings.push('No character.cardId in the dump, so the outfit was left as it was.');
-	}
-	if (isNum(c.limitBreakCount)) {
-		// 0..4 limit breaks is ★1..★5, and the star level picks which unique skill the app uses.
-		uma.starCount = clamp(Math.round(c.limitBreakCount) + 1, 1, 5);
-	}
-
-	// ── Stats (the dump's `wiz` is the app's wisdom) ──────────────────────────
+/** The five stats, read from whichever object carries them. Returns how many came in. */
+function applyStats(uma: Partial<UmaState>, src: Record<string, any>, warnings: string[]): number {
 	const statMap: [string, string][] = [
 		['speed', 'speed'], ['stamina', 'stamina'], ['power', 'power'],
 		['guts', 'guts'], ['wisdom', 'wiz'],
 	];
 	let statsIn = 0;
-	for (const [dest, src] of statMap) {
-		if (isNum(stats[src])) {
-			(uma as Record<string, number>)[dest] = Math.round(stats[src]);
+	for (const [dest, key] of statMap) {
+		if (isNum(src[key])) {
+			(uma as Record<string, number>)[dest] = Math.round(src[key]);
 			statsIn++;
 		}
 	}
-	if (statsIn < statMap.length) warnings.push(`Only ${statsIn} of 5 stats were readable in the dump.`);
+	if (statsIn < statMap.length) warnings.push(`Only ${statsIn} of 5 stats were readable.`);
+	return statsIn;
+}
 
-	// ── Aptitudes + running style ────────────────────────────────────────────
+/**
+ * Aptitudes and the running style, both read as the game's `ProperGrade` numbers
+ * (1=G … 8=S) under the Hachimi names: `distanceShort` … `distanceLong`,
+ * `groundTurf`, `runningStyle`, `styleNige`/`styleSenko`/`styleSashi`/`styleOikomi`.
+ */
+function applyAptitudes(uma: Partial<UmaState>, apt: Record<string, any>, warnings: string[]): void {
 	const distGrades = ['distanceShort', 'distanceMile', 'distanceMiddle', 'distanceLong']
 		.map((k) => (isNum(apt[k]) ? Math.round(apt[k]) : 0))
 		.filter((v) => v >= 1 && v <= 8);
@@ -255,14 +282,65 @@ export function convertCareerDump(obj: any, file = 'career dump'): CareerImport 
 	}
 	if (strategy) uma.strategy = strategy;
 	if (gradeKey && isNum(apt[gradeKey])) uma.strategyAptitude = APT_LETTER[clamp(Math.round(apt[gradeKey]), 1, 8)];
+}
 
-	// Game motivation 0..5 (None…Max) → app mood -2..2.
-	if (isNum(c.motivation)) {
-		uma.mood = clamp(Math.round(c.motivation) - 3, -2, 2) as UmaState['mood'];
+/** Game motivation 0..5 (None…Max) → app mood -2..2. */
+function applyMood(uma: Partial<UmaState>, motivation: unknown): void {
+	if (isNum(motivation)) {
+		uma.mood = clamp(Math.round(motivation) - 3, -2, 2) as UmaState['mood'];
+	}
+}
+
+/** The outfit's own unique skill id at either star tier (1-2 stars and 3+ stars use different ids). */
+function uniqueIdsFor(cardId: unknown): Set<string> {
+	if (!isNum(cardId)) return new Set();
+	return new Set([uniqueSkillForUma(String(cardId), 1), uniqueSkillForUma(String(cardId), 3)].filter(Boolean));
+}
+
+/**
+ * Convert a parsed career file of either format into app state. Returns null only
+ * when the object is neither format. A file with holes in it converts with warnings.
+ */
+export function convertCareerDump(obj: any, file = 'career dump'): CareerImport | null {
+	if (isCareerDump(obj)) return convertHachimiDump(obj, file);
+	if (isUmadumpCareer(obj)) return convertUmadumpCareer(obj, file);
+	return null;
+}
+
+function convertHachimiDump(dump: any, file: string): CareerImport {
+	const warnings: string[] = [];
+	if (isNum(dump.version) && dump.version !== CAREER_DUMP_VERSION) {
+		warnings.push(`Dump format version ${dump.version}; this reader knows version ${CAREER_DUMP_VERSION}.`);
 	}
 
+	const uma: Partial<UmaState> = {};
+	const c = dump.character ?? {};
+	const apt = dump.aptitudes ?? {};
+	const stats = dump.stats ?? {};
+
+	// ── Outfit + card level ───────────────────────────────────────────────────
+	let outfitKnown = false;
+	if (isNum(c.cardId)) {
+		const outfitId = String(c.cardId);
+		uma.outfitId = outfitId;
+		outfitKnown = !!(umas as Record<string, any>)[String(c.charaId ?? '')]?.outfits?.[outfitId];
+		if (!outfitKnown) {
+			warnings.push(`Outfit ${outfitId} is not in the local uma data; the build was imported without a portrait.`);
+		}
+	} else {
+		warnings.push('No character.cardId in the dump, so the outfit was left as it was.');
+	}
+	if (isNum(c.limitBreakCount)) {
+		// 0..4 limit breaks is 1 to 5 stars, and the star level picks which unique skill the app uses.
+		uma.starCount = clamp(Math.round(c.limitBreakCount) + 1, 1, 5);
+	}
+
+	const statsIn = applyStats(uma, stats, warnings);
+	applyAptitudes(uma, apt, warnings);
+	applyMood(uma, c.motivation);
+
 	// ── Skills: owned / offered / unique level ───────────────────────────────
-	const { rows, sources } = collectRows(obj);
+	const { rows, sources } = collectRows(dump);
 	if (!sources.length) {
 		warnings.push('The dump has no skill rows: the skill-learning screen was never opened in that session, so nothing was captured.');
 	}
@@ -271,12 +349,9 @@ export function convertCareerDump(obj: any, file = 'career dump'): CareerImport 
 	const offered: string[] = [];
 	let dropped = 0;
 	let uniqueLv = 0;
-	// The outfit's own unique skill, at either star tier (★1-2 and ★3+ use
-	// different ids). The id pattern depends on the outfit: 100xxx for outfit
-	// 01, 110xxx for 02, 120xxx for 03, so only the outfit can name it.
-	const uniqueIds = new Set(isNum(c.cardId)
-		? [uniqueSkillForUma(String(c.cardId), 1), uniqueSkillForUma(String(c.cardId), 3)].filter(Boolean)
-		: []);
+	// The unique skill id pattern depends on the outfit: 100xxx for outfit 01,
+	// 110xxx for 02, 120xxx for 03, so only the outfit can name it.
+	const uniqueIds = uniqueIdsFor(c.cardId);
 	for (const r of rows) {
 		if (!isNum(r.SkillId)) continue;
 		const id = String(r.SkillId);
@@ -293,12 +368,12 @@ export function convertCareerDump(obj: any, file = 'career dump'): CareerImport 
 	if (uniqueLv) uma.uniqueLv = uniqueLv;
 	if (dropped) warnings.push(`${dropped} skill id(s) in the dump are not in the local skill table and were skipped.`);
 
-	const { hints, sourced } = collectHints(rows, obj.skillTipsObserved, warnings);
+	const { hints, sourced } = collectHints(rows, dump.skillTipsObserved, warnings);
 
 	// The writer caps every list walk at 48 items, so the hint TABLE can arrive short.
 	// Whether that costs anything depends on the per-skill sources: a skill whose own
 	// discount was read needs nothing from the table.
-	const hintsTable = obj.skillHints;
+	const hintsTable = dump.skillHints;
 	if (hintsTable && isNum(hintsTable.count) && isNum(hintsTable.shown) && hintsTable.count > hintsTable.shown) {
 		const blind = [...offered, ...owned].filter((id) => !sourced.has(id));
 		const head = `The dump's hint table arrived truncated (${hintsTable.shown} of ${hintsTable.count} entries; the writer caps its list walks at 48)`;
@@ -308,10 +383,10 @@ export function convertCareerDump(obj: any, file = 'career dump'): CareerImport 
 	}
 
 	// ── SP budget ────────────────────────────────────────────────────────────
-	const budget = isNum(obj.skillPoint) ? Math.max(0, Math.round(obj.skillPoint)) : null;
+	const budget = isNum(dump.skillPoint) ? Math.max(0, Math.round(dump.skillPoint)) : null;
 	if (budget == null) warnings.push('Skill points were not readable, so the SP budget was left as it was.');
 
-	const parts = [displayName(obj)];
+	const parts = [displayName(String(c.cardId ?? ''), String(c.charaId ?? ''))];
 	if (uma.strategy) parts.push(`${uma.strategy} ${uma.strategyAptitude ?? ''}`.trim());
 	if (statsIn) parts.push(`${uma.speed}/${uma.stamina}/${uma.power}/${uma.guts}/${uma.wisdom}`);
 	if (owned.length) parts.push(`${owned.length} skill${owned.length > 1 ? 's' : ''}`);
@@ -320,16 +395,146 @@ export function convertCareerDump(obj: any, file = 'career dump'): CareerImport 
 	if (hints.size) parts.push(`${hints.size} hint levels`);
 
 	return {
-		file, uma, hints, budget, owned, offered,
+		file, uma, hints, budget, owned, offered, blocked: [],
 		summary: parts.join(' · '),
 		warnings,
 	};
 }
 
 /**
- * One-shot file picker. Resolves null when the user cancels, the file is not a
- * career dump, or it does not parse — never rejects, so the caller can just show
- * what came back.
+ * Convert one umadump career snapshot (`career_data/<identity>/turns/turn_<turn>_<revision>.json`)
+ * into app state. A file with holes in it converts with warnings instead.
+ */
+function convertUmadumpCareer(snap: any, file: string): CareerImport {
+	const warnings: string[] = [];
+	const c = snap.single_mode_load_common.chara_info ?? {};
+	const uma: Partial<UmaState> = {};
+
+	// ── Outfit + card level ───────────────────────────────────────────────────
+	let outfitKnown = false;
+	if (isNum(c.card_id)) {
+		const outfitId = String(c.card_id);
+		uma.outfitId = outfitId;
+		outfitKnown = !!outfitEntry(outfitId);
+		if (!outfitKnown) {
+			warnings.push(`Outfit ${outfitId} is not in the local uma data; the build was imported without a portrait.`);
+		}
+	} else {
+		warnings.push('No card_id in the snapshot, so the outfit was left as it was.');
+	}
+	if (isNum(c.rarity)) {
+		// umadump copies the limit-break count here, so 0..4 is 1 to 5 stars.
+		uma.starCount = clamp(Math.round(c.rarity) + 1, 1, 5);
+	}
+
+	const statsIn = applyStats(uma, c, warnings);
+	applyAptitudes(uma, snapshotAptitudes(c), warnings);
+	applyMood(uma, c.motivation);
+
+	// ── Skills: owned, unique level, and what that career cannot learn ───────
+	const known = (id: string) => !!(skilldata as Record<string, any>)[id];
+	const owned: string[] = [];
+	let dropped = 0;
+	let uniqueLv = 0;
+	const uniqueIds = uniqueIdsFor(c.card_id);
+	for (const s of Array.isArray(c.skill_array) ? c.skill_array : []) {
+		if (!isNum(s?.skill_id)) continue;
+		const id = String(s.skill_id);
+		if (!known(id)) { dropped++; continue; }
+		owned.push(id);
+		if (uniqueIds.has(id) && isNum(s.level)) uniqueLv = Math.max(uniqueLv, clamp(Math.round(s.level), 1, 6));
+	}
+	if (owned.length) uma.skills = owned;
+	if (uniqueLv) uma.uniqueLv = uniqueLv;
+	if (dropped) warnings.push(`${dropped} skill id(s) in the snapshot are not in the local skill table and were skipped.`);
+
+	const blocked: string[] = [];
+	for (const id of Array.isArray(c.disable_skill_id_array) ? c.disable_skill_id_array : []) {
+		if (isNum(id) && known(String(id))) blocked.push(String(id));
+	}
+
+	const hints = snapshotHints(c.skill_tips_array, warnings);
+	warnings.push('A snapshot has no skill offer list, so the Optimizer pool was left as it is. It shows every skill the app can offer, not only what this career could buy.');
+
+	const budget = isNum(c.skill_point) ? Math.max(0, Math.round(c.skill_point)) : null;
+	if (budget == null) warnings.push('Skill points were not readable, so the SP budget was left as it was.');
+
+	const parts = [displayName(String(c.card_id ?? ''))];
+	if (isNum(c.turn)) parts.push(`turn ${Math.round(c.turn)}`);
+	if (uma.strategy) parts.push(`${uma.strategy} ${uma.strategyAptitude ?? ''}`.trim());
+	if (statsIn) parts.push(`${uma.speed}/${uma.stamina}/${uma.power}/${uma.guts}/${uma.wisdom}`);
+	if (owned.length) parts.push(`${owned.length} skill${owned.length > 1 ? 's' : ''}`);
+	if (budget != null) parts.push(`${budget} SP`);
+	if (hints.size) parts.push(`${hints.size} hint levels`);
+
+	return {
+		file, uma, hints, budget, owned, offered: [], blocked,
+		summary: parts.join(' · '),
+		warnings,
+	};
+}
+
+/** The snapshot's `proper_*` grades under the names `applyAptitudes` reads. */
+function snapshotAptitudes(c: Record<string, any>): Record<string, any> {
+	return {
+		distanceShort: c.proper_distance_short,
+		distanceMile: c.proper_distance_mile,
+		distanceMiddle: c.proper_distance_middle,
+		distanceLong: c.proper_distance_long,
+		groundTurf: c.proper_ground_turf,
+		runningStyle: c.race_running_style,
+		styleNige: c.proper_running_style_nige,
+		styleSenko: c.proper_running_style_senko,
+		styleSashi: c.proper_running_style_sashi,
+		styleOikomi: c.proper_running_style_oikomi,
+	};
+}
+
+/** Every local skill id in one (group, rarity) hint tier, built once per tier. */
+const tierCache = new Map<string, string[]>();
+function tierSkills(groupId: number, rarity: number): string[] {
+	const key = `${groupId}|${rarity}`;
+	let ids = tierCache.get(key);
+	if (!ids) {
+		const group = String(groupId);
+		ids = Object.keys(skilldata).filter((id) =>
+			String((skillmeta as Record<string, any>)[id]?.groupId ?? '') === group
+			&& (skilldata as Record<string, any>)[id]?.rarity === rarity);
+		tierCache.set(key, ids);
+	}
+	return ids;
+}
+
+/**
+ * Hint levels from `skill_tips_array`: one entry per (group, rarity) tier the career
+ * has hints on, and that tier is the unit the game tracks, so its level is set on
+ * every local skill id inside it. A tier at level 0 is written too, which clears a
+ * level a previous import left behind.
+ */
+function snapshotHints(tips: unknown, warnings: string[]): Map<string, number> {
+	const hints = new Map<string, number>();
+	if (!Array.isArray(tips)) {
+		warnings.push('The snapshot has no skill_tips_array, so no hint levels were imported.');
+		return hints;
+	}
+	let unknownTiers = 0;
+	for (const t of tips) {
+		if (!isNum(t?.group_id) || !isNum(t?.rarity) || !isNum(t?.level)) continue;
+		const ids = tierSkills(Math.round(t.group_id), Math.round(t.rarity));
+		if (!ids.length) { unknownTiers++; continue; }
+		const level = clamp(Math.round(t.level), 0, HINT_DISCOUNT.length - 1);
+		for (const id of ids) hints.set(id, level);
+	}
+	if (unknownTiers) {
+		warnings.push(`${unknownTiers} hint tier(s) in the snapshot match no skill in the local skill table.`);
+	}
+	return hints;
+}
+
+/**
+ * One-shot file picker. Resolves null when the user cancels, the file is neither
+ * career format, or it does not parse. It never rejects, so the caller can just
+ * show what came back.
  */
 export function pickCareerDump(): Promise<CareerImport | null> {
 	return new Promise((resolve) => {
@@ -342,14 +547,19 @@ export function pickCareerDump(): Promise<CareerImport | null> {
 			const file = (input.files && input.files[0]) || null;
 			if (!file) { resolve(null); return; }
 			let imp: CareerImport | null = null;
+			let why = '';
 			try {
-				imp = convertCareerDump(JSON.parse(await file.text()), file.name);
-				if (!imp) {
-					alert(`${file.name} is not a Hachimi career dump (it needs "kind": "${CAREER_DUMP_KIND}").`);
+				const parsed = JSON.parse(await file.text());
+				imp = convertCareerDump(parsed, file.name);
+				if (!imp && isUmadumpManifest(parsed)) {
+					why = `${file.name} is the manifest of a umadump career archive. Pick one of its turns/turn_*.json files instead.`;
+				} else if (!imp) {
+					why = `${file.name} is neither a Hachimi career dump (it needs "kind": "${CAREER_DUMP_KIND}") nor a umadump career snapshot (it needs "single_mode_load_common").`;
 				}
 			} catch (e) {
-				alert(`${file.name} could not be read: ${e instanceof Error ? e.message : String(e)}`);
+				why = `${file.name} could not be read: ${e instanceof Error ? e.message : String(e)}`;
 			}
+			if (why) alert(why);
 			resolve(imp);
 		};
 		input.click();

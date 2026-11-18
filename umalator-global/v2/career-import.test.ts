@@ -12,7 +12,11 @@
 
 import test from 'tape';
 import skilldata from '../skill_data.json';
-import { isCareerDump, convertCareerDump, CAREER_DUMP_KIND } from './career-import';
+import skillmeta from '../../skill_meta.json';
+import {
+	isCareerDump, isUmadumpCareer, isUmadumpManifest, convertCareerDump,
+	CAREER_DUMP_KIND, UMADUMP_ARCHIVE_TYPE,
+} from './career-import';
 
 /** A real outfit so the outfit-lookup warning stays quiet in the base fixture. */
 const OUTFIT = '101002';
@@ -198,5 +202,157 @@ test('falls back to the learning-screen window when the union is missing', (t) =
 	}))!;
 	t.same(imp.owned, [GOLD], 'the window still says what is owned');
 	t.same(imp.offered, [SILVER], 'and what is offered');
+	t.end();
+});
+
+// ── umadump career snapshots ────────────────────────────────────────────────
+
+const TIER_GOLD = '200331';     // group 20033, rarity 2
+const TIER_SILVER = '200332';   // group 20033, rarity 1
+const TIER_SILVER_2 = '200333'; // group 20033, rarity 1
+const TIER_PAIR_A = '200131';   // group 20013, rarity 1
+const TIER_PAIR_B = '200132';   // group 20013, rarity 1
+for (const [id, group, rarity] of [
+	[TIER_GOLD, '20033', 2], [TIER_SILVER, '20033', 1], [TIER_SILVER_2, '20033', 1],
+	[TIER_PAIR_A, '20013', 1], [TIER_PAIR_B, '20013', 1],
+] as [string, string, number][]) {
+	const d = (skilldata as Record<string, any>)[id];
+	if (!d || d.rarity !== rarity || String((skillmeta as Record<string, any>)[id]?.groupId) !== group) {
+		throw new Error(`test fixture bug: ${id} is not group ${group} rarity ${rarity} in the local skill table`);
+	}
+}
+
+/**
+ * One turn of a career as umadump records it. The keys and the values around them
+ * come from a real `turn_078_001.json` of a card 101002 URA Finals career.
+ */
+function snapshot(charaOver: Record<string, unknown> = {}) {
+	return {
+		single_mode_load_common: {
+			chara_info: {
+				single_mode_chara_id: 4845, card_id: Number(OUTFIT), rarity: 4,
+				speed: 1597, stamina: 570, power: 1235, wiz: 955, guts: 551,
+				motivation: 5, fans: 231291, race_running_style: 2,
+				proper_ground_turf: 7, proper_ground_dirt: 7,
+				proper_running_style_nige: 5, proper_running_style_senko: 7,
+				proper_running_style_sashi: 3, proper_running_style_oikomi: 1,
+				proper_distance_short: 7, proper_distance_mile: 8,
+				proper_distance_middle: 3, proper_distance_long: 2,
+				turn: 78, skill_point: 2941, scenario_id: 3, route_id: 4,
+				skill_array: [{ skill_id: Number(UNIQUE), level: 4 }],
+				skill_tips_array: [
+					{ group_id: 20033, rarity: 2, level: 3 },
+					{ group_id: 20033, rarity: 1, level: 1 },
+					{ group_id: 20013, rarity: 1, level: 5 },
+				],
+				disable_skill_id_array: [],
+				support_card_array: [{ position: 1, support_card_id: 30028, limit_break_count: 4 }],
+				race_history: [{ race_program_id: 2218, race_result: 1 }],
+				...charaOver,
+			},
+		},
+		live_data_set: { live_performance_info: { vocal: 14 } },
+	};
+}
+
+test('a umadump snapshot is the other accepted format', (t) => {
+	const snap = snapshot();
+	t.ok(isUmadumpCareer(snap), 'chara_info marks the format');
+	t.notOk(isCareerDump(snap), 'and it is not a Hachimi dump');
+	t.ok(convertCareerDump(snap), 'the shared entry point converts it');
+	t.notOk(isUmadumpCareer({ single_mode_load_common: {} }), 'an empty payload is not a career');
+	t.equal(convertCareerDump({ single_mode_load_common: {} }), null, 'and converts to nothing');
+	t.equal(convertCareerDump({ trained_chara_id: 10833, card_id: 101002, skill_array: [] }), null,
+		'a finished veteran row is not a career snapshot');
+
+	const manifest = { archive_type: UMADUMP_ARCHIVE_TYPE, identity: { card_id: 101002 } };
+	t.ok(isUmadumpManifest(manifest), 'an archive manifest is recognised for what it is');
+	t.equal(convertCareerDump(manifest), null, 'and carries no career state');
+	t.end();
+});
+
+test('maps a snapshot: outfit, stars, stats, aptitudes, style, mood, unique level', (t) => {
+	const imp = convertCareerDump(snapshot())!;
+	t.equal(imp.uma.outfitId, OUTFIT, 'outfitId is the snapshot card_id');
+	t.equal(imp.uma.starCount, 5, 'rarity 4 is 5 stars');
+	t.equal(imp.uma.speed, 1597, 'speed');
+	t.equal(imp.uma.wisdom, 955, 'wiz maps to wisdom');
+	t.equal(imp.uma.distanceAptitude, 'S', 'best of the four distances (mile 8 = S)');
+	t.equal(imp.uma.surfaceAptitude, 'A', 'turf 7 = A');
+	t.equal(imp.uma.strategy, 'Senkou', 'race_running_style 2 = Senkou');
+	t.equal(imp.uma.strategyAptitude, 'A', 'that style’s own grade (senko 7 = A)');
+	t.equal(imp.uma.mood, 2, 'motivation 5 (Max) = mood 2');
+	t.same(imp.owned, [UNIQUE], 'skill_array is what the trainee has');
+	t.same(imp.uma.skills, [UNIQUE], 'and becomes the uma’s skill list');
+	t.equal(imp.uma.uniqueLv, 4, 'the unique skill’s level is uniqueLv');
+	t.equal(imp.budget, 2941, 'skill_point is the SP budget');
+	t.same(imp.offered, [], 'a snapshot carries no offer list');
+	t.same(imp.blocked, [], 'and blocks nothing here');
+	t.ok(imp.summary.includes('turn 78') && imp.summary.includes('2941 SP'), 'the summary names the turn and the SP');
+	t.notOk(imp.warnings.filter((w) => !/offer list/.test(w)).length,
+		`the one note is the offer list one: ${imp.warnings.join(' | ')}`);
+	t.end();
+});
+
+test('a snapshot hint tier covers every skill of that group and rarity', (t) => {
+	const imp = convertCareerDump(snapshot())!;
+	t.equal(imp.hints.get(TIER_GOLD), 3, 'the gold tier entry');
+	t.equal(imp.hints.get(TIER_SILVER), 1, 'the silver tier of the same group, tracked apart');
+	t.equal(imp.hints.get(TIER_SILVER_2), 1, 'including the tier’s other id');
+	t.equal(imp.hints.get(TIER_PAIR_A), 5, 'and every id of the other group');
+	t.equal(imp.hints.get(TIER_PAIR_B), 5, 'both of a ◎/○ pair');
+	t.notOk(imp.hints.has(UNIQUE), 'a skill no tier covers gets no level');
+
+	const clamped = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: 20033, rarity: 2, level: 9 }],
+	}))!;
+	t.equal(clamped.hints.get(TIER_GOLD), 5, 'a level past the top of the ladder is clamped');
+
+	const cleared = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: 20033, rarity: 2, level: 0 }],
+	}))!;
+	t.equal(cleared.hints.get(TIER_GOLD), 0, 'a tier reported unhinted clears a level left by an earlier import');
+	t.end();
+});
+
+test('reports what a snapshot cannot give', (t) => {
+	const base = convertCareerDump(snapshot())!;
+	t.ok(base.warnings.some((w) => /no skill offer list/.test(w)), 'the missing offer list is a note, not a failure');
+
+	const blocked = convertCareerDump(snapshot({
+		disable_skill_id_array: [Number(TIER_SILVER), 999999],
+	}))!;
+	t.same(blocked.blocked, [TIER_SILVER], 'skills that career cannot learn, local ids only');
+
+	const unknownTier = convertCareerDump(snapshot({
+		skill_tips_array: [{ group_id: 999999, rarity: 1, level: 4 }],
+	}))!;
+	t.equal(unknownTier.hints.size, 0, 'a tier with no local skill sets nothing');
+	t.ok(unknownTier.warnings.some((w) => /match no skill/.test(w)), 'and says so');
+
+	const noTips = convertCareerDump(snapshot({ skill_tips_array: undefined }))!;
+	t.equal(noTips.hints.size, 0, 'no hint table means no levels');
+	t.ok(noTips.warnings.some((w) => /no skill_tips_array/.test(w)), 'and is reported');
+
+	const noSp = convertCareerDump(snapshot({ skill_point: '<unreadable>' }))!;
+	t.equal(noSp.budget, null, 'unreadable SP leaves the budget alone');
+	t.ok(noSp.warnings.some((w) => /Skill points/.test(w)), 'and says so');
+
+	const noWiz = convertCareerDump(snapshot({ wiz: undefined }))!;
+	t.ok(noWiz.warnings.some((w) => /Only 4 of 5 stats/.test(w)), 'a missing stat is reported');
+
+	const noDist = convertCareerDump(snapshot({ proper_distance_long: undefined }))!;
+	t.ok(noDist.warnings.some((w) => /Distance aptitudes incomplete/.test(w)), 'a missing distance grade is reported');
+
+	const badOutfit = convertCareerDump(snapshot({ card_id: 99999900 }))!;
+	t.ok(badOutfit.warnings.some((w) => /not in the local uma data/.test(w)), 'unknown outfit reported');
+	t.equal(badOutfit.uma.outfitId, '99999900', 'and imported anyway');
+	t.notOk(badOutfit.uma.uniqueLv, 'with no unique skill of its own to read');
+
+	const unknownSkill = convertCareerDump(snapshot({
+		skill_array: [{ skill_id: 999999, level: 1 }],
+	}))!;
+	t.same(unknownSkill.owned, [], 'unknown skill ids dropped');
+	t.ok(unknownSkill.warnings.some((w) => /not in the local skill table/.test(w)), 'and reported');
 	t.end();
 });
