@@ -22,7 +22,8 @@
  *     tab and `components/gameExportParser.ts` use).
  *   - `runningStyle` is `RaceDefine.RunningStyle`: 1=Nige, 2=Senkou, 3=Sashi,
  *     4=Oikomi (5=Ōonige is race-only).
- *   - `motivation` is 0..5 (None…Max); the app's mood is -2..2, so mood = motivation-3.
+ *   - `motivation` is 0..5 (None…Max); the app's mood is -2..2, so mood = motivation-3
+ *     for 1..5. 0 (None) has no mood and leaves the app's as it was.
  *   - A row with `IsGet=1` is a skill the trainee has; the rest are what the
  *     skill-learning screen was offering. `HintLv` is the hint count (0-5) and its
  *     discount ladder 10/20/30/35/40% is exactly `scaleBaseCost()` in
@@ -297,11 +298,19 @@ function applyAptitudes(uma: Partial<UmaState>, apt: Record<string, any>, warnin
 	}
 }
 
-/** Game motivation 0..5 (None…Max) → app mood -2..2. */
-function applyMood(uma: Partial<UmaState>, motivation: unknown): void {
-	if (isNum(motivation)) {
-		uma.mood = clamp(Math.round(motivation) - 3, -2, 2) as UmaState['mood'];
-	}
+/** Game motivation 1..5 (Awful…Great) → app mood -2..2. 0 is the game's
+ *  None, which has no mood, so it is left as it was with a warning, as is
+ *  anything off the scale (both used to land on the lowest mood). */
+function applyMood(uma: Partial<UmaState>, motivation: unknown, warnings: string[]): void {
+	if (!isNum(motivation)) return;
+	const m = Math.round(motivation);
+	if (m >= 1 && m <= 5) uma.mood = (m - 3) as UmaState['mood'];
+	else warnings.push(`Motivation ${motivation} is not a mood (1 to 5), so the mood was left as it was.`);
+}
+
+/** "speed/stamina/power/guts/wisdom" for the summary, ? for one not read. */
+function statLine(uma: Partial<UmaState>): string {
+	return [uma.speed, uma.stamina, uma.power, uma.guts, uma.wisdom].map(v => v ?? '?').join('/');
 }
 
 /** The outfit's own unique skill id at either star tier (1-2 stars and 3+ stars use different ids). */
@@ -357,7 +366,7 @@ function convertHachimiDump(dump: any, file: string): CareerImport {
 
 	const statsIn = applyStats(uma, stats, warnings);
 	applyAptitudes(uma, apt, warnings);
-	applyMood(uma, c.motivation);
+	applyMood(uma, c.motivation, warnings);
 
 	// ── Skills: owned / offered / unique level ───────────────────────────────
 	const { rows, sources, short } = collectRows(dump);
@@ -413,7 +422,7 @@ function convertHachimiDump(dump: any, file: string): CareerImport {
 
 	const parts = [displayName(String(c.cardId ?? ''), String(c.charaId ?? ''))];
 	if (uma.strategy) parts.push(`${uma.strategy} ${uma.strategyAptitude ?? ''}`.trim());
-	if (statsIn) parts.push(`${uma.speed}/${uma.stamina}/${uma.power}/${uma.guts}/${uma.wisdom}`);
+	if (statsIn) parts.push(statLine(uma));
 	if (owned.length) parts.push(`${owned.length} skill${owned.length > 1 ? 's' : ''}`);
 	if (offered.length) parts.push(`${offered.length} offered`);
 	if (budget != null) parts.push(`${budget} SP`);
@@ -455,7 +464,7 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 
 	const statsIn = applyStats(uma, c, warnings);
 	applyAptitudes(uma, snapshotAptitudes(c), warnings);
-	applyMood(uma, c.motivation);
+	applyMood(uma, c.motivation, warnings);
 
 	// ── Skills: owned, unique level, and what that career cannot learn ───────
 	const known = (id: string) => !!(skilldata as Record<string, any>)[id];
@@ -488,7 +497,7 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 	const parts = [displayName(String(c.card_id ?? ''))];
 	if (isNum(c.turn)) parts.push(`turn ${Math.round(c.turn)}`);
 	if (uma.strategy) parts.push(`${uma.strategy} ${uma.strategyAptitude ?? ''}`.trim());
-	if (statsIn) parts.push(`${uma.speed}/${uma.stamina}/${uma.power}/${uma.guts}/${uma.wisdom}`);
+	if (statsIn) parts.push(statLine(uma));
 	if (owned.length) parts.push(`${owned.length} skill${owned.length > 1 ? 's' : ''}`);
 	if (budget != null) parts.push(`${budget} SP`);
 	const hinted = hintNote(hints);

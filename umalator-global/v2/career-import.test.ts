@@ -86,6 +86,27 @@ test('maps the uma: outfit, stars, stats, aptitudes, style, mood', (t) => {
 	t.end();
 });
 
+// Checkup 50: motivation 0 (None) and 1 both became the lowest mood.
+test('mood: 1 to 5 map to -2 to 2, 0 and off-scale values leave it with a warning', (t) => {
+	const moodOf = (motivation: number) => convertCareerDump(dump({ character: { charaId: 1010, cardId: Number(OUTFIT), motivation, limitBreakCount: 4 } }))!;
+	t.equal(moodOf(1).uma.mood, -2, 'motivation 1 = mood -2');
+	t.equal(moodOf(3).uma.mood, 0, 'motivation 3 = mood 0');
+	for (const m of [0, 7]) {
+		const imp = moodOf(m);
+		t.equal(imp.uma.mood, undefined, `motivation ${m}: the mood is left as it was`);
+		t.ok(imp.warnings.some(w => w.includes(`Motivation ${m}`)), `motivation ${m}: and a warning says so`);
+	}
+	t.end();
+});
+
+// Checkup 49: a stats object with holes printed "undefined" in the summary.
+test('a partly readable stats object shows ? for the missing stats', (t) => {
+	const imp = convertCareerDump(dump({ stats: { speed: 1200 } }))!;
+	t.ok(imp.summary.includes('1200/?/?/?/?'), `summary: ${imp.summary}`);
+	t.notOk(imp.summary.includes('undefined'), 'never the word undefined');
+	t.end();
+});
+
 // Checkup finding 48: a cut row list replaced the build's skills with no word.
 test('a truncated skill row list is reported', (t) => {
 	const base = dump();
