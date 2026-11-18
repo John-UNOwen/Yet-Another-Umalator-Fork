@@ -203,6 +203,52 @@ function generateCareerUnbuyable() {
 
 generateCareerUnbuyable();
 
+// The skill list each outfit brings to a career: master.mdb pairs card_data.available_skill_set_id
+// with available_skill_set. The game offers these without a hint, gated on the uma's rank.
+function generateCareerCardSkills() {
+	const outPath = path.join(dirname, 'career-card-skills.json');
+	const masterDb = path.join(root, 'docs', 'master.mdb');
+
+	if (!fs.existsSync(masterDb)) {
+		const exists = fs.existsSync(outPath);
+		console.log(
+			`career-card-skills.json: master.mdb not present, ${exists
+				? 'leaving the committed file alone'
+				: 'no committed file either, writing empty list'}`
+		);
+		if (!exists) {
+			fs.writeFileSync(outPath, JSON.stringify({}));
+		}
+		return;
+	}
+
+	try {
+		const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+		const db = new DatabaseSync(masterDb, { readOnly: true });
+		let byCard;
+		try {
+			const rows = db.prepare(
+				`SELECT cd.id AS card, a.skill_id AS skill
+				 FROM card_data cd JOIN available_skill_set a ON a.available_skill_set_id = cd.available_skill_set_id
+				 ORDER BY cd.id, a.need_rank, a.id`
+			).all();
+			byCard = {};
+			for (const r of rows) {
+				const card = String(r.card);
+				(byCard[card] ??= []).push(String(r.skill));
+			}
+		} finally {
+			db.close();
+		}
+		fs.writeFileSync(outPath, JSON.stringify(byCard));
+		console.log(`career-card-skills.json (master.mdb): ${Object.keys(byCard).length} outfits`);
+	} catch (e) {
+		console.warn(`Failed to regenerate career-card-skills.json: ${e.message}. Leaving existing file in place.`);
+	}
+}
+
+generateCareerCardSkills();
+
 // Sync character/outfit names in umas.json from Global master.mdb.
 // Outfits/charas not yet in the Global DB keep their existing (JP) strings;
 // once they release on Global, the localized epithet replaces the JP one on

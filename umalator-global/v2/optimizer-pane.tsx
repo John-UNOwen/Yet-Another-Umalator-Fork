@@ -402,7 +402,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [bookTick, setBookTick] = useState(0);
 
 	/** How an imported career narrows the pool: the skills that career could buy, and the
-	 *  skills it cannot learn. A Hachimi dump reports its offer list, a snapshot its hint tiers. */
+	 *  skills it cannot learn. A Hachimi dump reports its offer list, a snapshot rebuilds one. */
 	const [poolFilter, setPoolFilter] = useState<Set<string> | null>(null);
 	const [poolBlock, setPoolBlock] = useState<Set<string>>(() => new Set());
 
@@ -548,11 +548,6 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [career, setCareer] = useState<CareerImport | null>(null);
 	/** Of the skills the app would offer, how many that career cannot learn. */
 	const blockedOut = useMemo(() => withBack.filter((id) => poolBlock.has(id)).length, [withBack, poolBlock]);
-	/** Of the pool, the ids a snapshot guessed at from a sibling hint tier. */
-	const softInPool = useMemo(
-		() => (career ? career.softOffered.filter((id) => candidates.includes(id)).length : 0),
-		[career, candidates],
-	);
 
 	const importCareer = async () => {
 		if (runningRef.current) return;
@@ -562,14 +557,6 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		if (imp.budget != null) setBudget(imp.budget);
 		setPoolFilter(imp.offered.length ? new Set(imp.offered) : null);
 		setPoolBlock(new Set(imp.blocked));
-		// A soft offer is only a guess from a sibling hint tier, so it stays listed but off.
-		if (imp.softOffered.length) {
-			const soft = new Set(imp.softOffered);
-			setChosen((prev) => {
-				const next = new Set([...prev].filter((id) => !soft.has(id)));
-				return next.size === prev.size ? prev : next;
-			});
-		}
 		setCareer(imp);
 	};
 
@@ -926,7 +913,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<Input value={filter} placeholder="Filter skills…" iconLeft={<Search size={14} />} disabled={running}
 						className="v2-opt-filter" onInput={setFilter} />
 					<Button size="sm" variant="secondary" icon={<Upload size={14} />} disabled={running} onClick={importCareer}
-						title="Load a Hachimi career dump or a umadump career snapshot: sets the uma from that career (outfit, stats, aptitudes, mood, learned skills) and takes its SP budget and hint levels. A Hachimi dump also limits the pool to what that career was offering, a snapshot to the skill families its hint tiers name">
+						title="Load a Hachimi career dump or a umadump career snapshot: sets the uma from that career (outfit, stats, aptitudes, mood, learned skills) and takes its SP budget and hint levels. A Hachimi dump also limits the pool to what that career was offering, a snapshot to what it could buy: the hint tiers it has and the skills its outfit brings">
 						Import career
 					</Button>
 					<Button size="sm" variant="ghost" disabled={running}
@@ -945,10 +932,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				{career && (
 					<div class="v2-opt-career">
 						<span>{career.summary}</span>
-						{poolFilter && <span class="v2-opt-muted"> · pool limited to {career.format === 'snapshot' ? "that career's hint tiers" : 'what that career was offering'}</span>}
-						{poolFilter && softInPool > 0 && (
-							<span class="v2-opt-muted"> · {softInPool} of them are in only because their family was hinted, so they are switched off</span>
-						)}
+						{poolFilter && <span class="v2-opt-muted"> · pool limited to {career.format === 'snapshot' ? "what that career could buy" : 'what that career was offering'}</span>}
 						{blockedOut > 0 && <span class="v2-opt-muted"> · {blockedOut} skill(s) that career cannot learn are out of the pool</span>}
 						{career.warnings.length > 0 && (
 							<details class="v2-opt-inline-details">

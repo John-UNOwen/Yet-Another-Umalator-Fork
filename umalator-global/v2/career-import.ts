@@ -51,12 +51,11 @@
  *     tier, which is what the tier means (the Hachimi path refuses to spread only
  *     because it has the per-skill discount to go on instead).
  *   - `skill_point` is the SP left, `disable_skill_id_array` what that career
- *     cannot learn. A snapshot carries no offer list, so its pool is the families its
- *     hint tiers name, less what the career has and what the game never sells
- *     (`career-unbuyable.json`). A hinted tier also puts every tier under it in that
- *     family on sale, since the upgrade takes the lower ones with it, so only a tier
- *     *above* the hinted one is a guess: those go into `softOffered`, which the pane
- *     lists switched off.
+ *     cannot learn. A snapshot carries no offer list, so the pool is rebuilt from what
+ *     the game offers this career: every skill family its hint tiers name (a hinted tier
+ *     also puts the tiers under it on sale, since the upgrade takes the lower ones with
+ *     it), plus the skills the outfit itself brings (`career-card-skills.json`), less
+ *     what the career has and what the game never sells (`career-unbuyable.json`).
  *
  * Deliberately NOT imported: `raceEvaluations` (bond entries, `ObscuredBool` fields
  * serialized as "<obscured …>"), `acquiredSkills` (contentless), `skillMasterNames`
@@ -70,6 +69,7 @@ import umas from '../../umas.json';
 import skilldata from '../skill_data.json';
 import skillmeta from '../../skill_meta.json';
 import careerUnbuyable from '../career-unbuyable.json';
+import careerCardSkillsRaw from '../career-card-skills.json';
 import type { UmaState } from './uma-panel';
 import { uniqueSkillForUma } from '../../components/HorseDefTypes';
 
@@ -124,13 +124,9 @@ export interface CareerImport {
 	/** Skill ids the trainee already has (`IsGet=1`, or the snapshot's `skill_array`). */
 	owned: string[];
 	/** Skill ids the game was offering at dump time (`IsGet` not 1). A snapshot has no
-	 *  offer list, so these are its hint tiers' families, less what that career has and
-	 *  what the game never sells. */
+	 *  offer list, so these are rebuilt from its hint tiers and the outfit's own skill
+	 *  list, less what that career has and what the game never sells. */
 	offered: string[];
-	/** The ids of `offered` that sit above every hint tier of their family, so the file
-	 *  only says the family is on sale, not that tier. The pane lists them switched off.
-	 *  Empty for a Hachimi dump. */
-	softOffered: string[];
 	/** Skill ids that career cannot learn (`disable_skill_id_array`), kept out of the pool. */
 	blocked: string[];
 	/** One line for the pane: who this is and what came in. */
@@ -442,7 +438,7 @@ function convertHachimiDump(dump: any, file: string): CareerImport {
 	if (hinted) parts.push(hinted);
 
 	return {
-		file, format: 'dump', uma, hints, budget, owned, offered, softOffered: [], blocked: [],
+		file, format: 'dump', uma, hints, budget, owned, offered, blocked: [],
 		summary: parts.join(' · '),
 		warnings,
 	};
@@ -502,10 +498,10 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 
 	const tiers = parseTiers(c.skill_tips_array, warnings);
 	const hints = snapshotHints(tiers, warnings);
-	const pool = snapshotPool(tiers, owned);
-	warnings.push(pool.offered.length
-		? 'The Optimizer pool comes from the hint tiers in this snapshot, so a skill family the career has no tier on at all stays out of it.'
-		: 'The hint tiers in this snapshot name no skill the Optimizer could offer, so the pool was left as it is.');
+	const offered = snapshotPool(tiers, outfitSkillSets[String(c.card_id ?? '')] ?? [], owned);
+	warnings.push(offered.length
+		? 'The Optimizer pool comes from the hint tiers in this snapshot and the skill list this outfit brings, so a skill outside both stays out of it.'
+		: 'Nothing in this snapshot names a skill the Optimizer could offer, so the pool was left as it is.');
 
 	const budget = isNum(c.skill_point) ? Math.max(0, Math.round(c.skill_point)) : null;
 	if (budget == null) warnings.push('Skill points were not readable, so the SP budget was left as it was.');
@@ -521,7 +517,7 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 
 	return {
 		file, format: 'snapshot', uma, hints, budget, owned,
-		offered: pool.offered, softOffered: pool.soft, blocked,
+		offered, blocked,
 		summary: parts.join(' · '),
 		warnings,
 	};
@@ -560,6 +556,10 @@ function tierSkills(groupId: number, rarity: number): string[] {
 
 /** Skill ids the game's skill screen never sells, so no career pool should offer them. */
 const neverSold = new Set<string>(careerUnbuyable.skills);
+
+/** The skills each outfit brings into a career, master.mdb's card skill sets by outfit id.
+ *  The game holds the higher rungs of that list back until the uma's rank reaches them. */
+const outfitSkillSets = careerCardSkillsRaw as Record<string, string[]>;
 
 /** One readable `skill_tips_array` entry: the hint tier of one family at one rarity. */
 interface HintTier {
@@ -616,29 +616,27 @@ function snapshotHints(tiers: HintTier[], warnings: string[]): Map<string, numbe
 
 /**
  * The pool a snapshot implies, in local skill-table order: every skill of a family the
- * hint tiers name, less what the career has and what the game never sells. A tier names
- * one (family, rarity). The upgrade of a family takes its lower tiers with it, so a hinted
- * tier also puts every tier under it on sale, while a tier above the hinted one stays a
- * guess: those go into `soft`, and the pane lists them switched off.
+ * hint tiers name, every skill the outfit itself brings, less what the career has and
+ * what the game never sells.
  */
-function snapshotPool(tiers: HintTier[], owned: string[]): { offered: string[]; soft: string[] } {
+function snapshotPool(tiers: HintTier[], outfitSkills: string[], owned: string[]): string[] {
 	const hintedTop = new Map<string, number>();
 	for (const t of tiers) {
 		const family = String(t.group);
 		if ((hintedTop.get(family) ?? -1) < t.rarity) hintedTop.set(family, t.rarity);
 	}
 	const have = new Set(owned);
+	const fromOutfit = new Set(outfitSkills);
 	const offered: string[] = [];
-	const soft: string[] = [];
 	for (const id of Object.keys(skilldata)) {
 		if (have.has(id) || neverSold.has(id)) continue;
 		const family = String((skillmeta as Record<string, any>)[id]?.groupId ?? '');
 		const top = hintedTop.get(family);
-		if (top === undefined) continue;
-		offered.push(id);
-		if (Number((skilldata as Record<string, any>)[id]?.rarity) > top) soft.push(id);
+		// A hinted tier also sells the tiers under it, since the upgrade takes them with it.
+		const hinted = top !== undefined && Number((skilldata as Record<string, any>)[id]?.rarity) <= top;
+		if (hinted || fromOutfit.has(id)) offered.push(id);
 	}
-	return { offered, soft };
+	return offered;
 }
 
 /**

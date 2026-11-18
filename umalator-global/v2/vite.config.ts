@@ -145,6 +145,7 @@ export default defineConfig(({ mode }) => {
       'umas.json': path.join(rootDir, 'umas.json'),
       'not-in-game.json': path.join(rootDir, 'not-in-game.json'),
       'career-unbuyable.json': path.join(rootDir, 'career-unbuyable.json'),
+      'career-card-skills.json': path.join(rootDir, 'career-card-skills.json'),
 
       // Node assert mock - point to our local mock
       'node:assert': path.join(__dirname, 'mocks/assert.ts'),
