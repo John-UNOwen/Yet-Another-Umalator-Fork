@@ -10,8 +10,9 @@ import notInGame from '../../umalator-global/not-in-game.json';
 import { DEFAULT_MATCH, hasLevel, levelOf, markerOf, matchName, normalizeName, similarity, skillReads, splitMarker, type NameEntry } from './matcher';
 import { levelBeside } from './layout';
 
+// skillnames.json keeps the live name first, so index 0 is what a screen shows.
 const OFFERED: NameEntry[] = Object.entries(skillnames as Record<string, string | string[]>)
-	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v.slice(-1)[0] : v }))
+	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v[0] : v }))
 	.filter((e) => !(notInGame as { skills: string[] }).skills.includes(e.id) && /[a-z]/i.test(e.name));
 
 const idOf = (name: string) => OFFERED.filter((e) => e.name === name).map((e) => e.id);

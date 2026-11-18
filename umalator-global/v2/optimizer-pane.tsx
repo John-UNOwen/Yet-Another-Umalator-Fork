@@ -46,7 +46,7 @@ import { HorseState } from '../../components/HorseDefTypes';
 import { BASE_PATH } from '../../components/base-path';
 import { Grade } from '../../uma-skill-tools/RaceParameters';
 import { fromJS, Map as ImmMap } from 'immutable';
-import skillnames from '../skillnames.json';
+import { skillDisplayName } from './skill-name';
 import skillmeta from '../../skill_meta.json';
 
 export interface OptimizerPaneProps {
@@ -108,11 +108,7 @@ export interface OptimizerControl {
 
 const meta = skillmeta as Record<string, { iconId?: string | number; groupId?: string }>;
 
-/** skillnames values are arrays like ["JP", "EN"], prefer the last (EN), same as skill-chart-pane. */
-const skillName = (id: string): string => {
-	const names = (skillnames as Record<string, string[]>)[id];
-	return names?.[names.length - 1] || names?.[0] || id;
-};
+const skillName = (id: string): string => skillDisplayName(id);
 
 const skillIcon = (id: string): string => `${BASE_PATH}/icons/${meta[id]?.iconId || 'skill_empty'}.png`;
 

@@ -10,7 +10,7 @@
 import { h, Fragment } from 'preact';
 import { useMemo } from 'preact/hooks';
 import { Clock, Zap, Heart, Shield, Swords, Flag, TrendingUp } from 'lucide-react';
-import skillnames from '../skillnames.json';
+import { skillDisplayName } from './skill-name';
 
 // ============================================
 // TYPES
@@ -409,7 +409,7 @@ function UmaStatsCard({ label, snapshot, umaIndex, staminaStats, allruns, colorC
 								const rollLabel = roll != null ? (roll === 0 ? ' [0% drain]' : ` [-${(roll * 100).toFixed(0)}% HP]`) : '';
 								return (
 								<div key={skillId} class="v2-skill-activation">
-									<span class="skill-id">{((skillnames as Record<string, string[]>)[skillId]?.slice(-1)[0]) ?? skillId}</span>
+									<span class="skill-id">{skillDisplayName(skillId)}</span>
 									<span class="skill-pos">
 										{activations[0]?.[0]?.toFixed(0)}m – {activations[0]?.[1]?.toFixed(0)}m{activations[0]?.[1] !== -1 && activations[0]?.[2] != null && ` (${activations[0][2].toFixed(1)}s)`}{rollLabel}
 									</span>

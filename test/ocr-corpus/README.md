@@ -16,7 +16,7 @@ its image.
 
 | File | Rows | What it is |
 |---|---|---|
-| `copano-rickey-eightfold-fortune.png` | 18 of 19 | Details dialog, skills tab, top of the list |
+| `copano-rickey-eightfold-fortune.png` | 19 of 19 | Details dialog, skills tab, top of the list |
 | `grass-wonder-stone-piercing-blue.png` | 19 of 19 | Details dialog, skills tab, top of the list |
 | `narita-taishin-nevertheless.png` | 19 of 19 | Details dialog, skills tab, top of the list |
 | `oguri-cap-starlight-beat.png` | 21 of 21 | Details dialog, skills tab, top of the list |
@@ -37,17 +37,19 @@ lands in `images/`.
 Timings, single-thread wasm on one desktop machine, one capture each over two runs: 2.8 to 5.0 s at 592 to
 781 px wide.
 
-Skill names are matched only against the 1340 names this fork offers, each entry's display name. The 94 rows
-accepted across the five captures score 0.94 or better. Nothing that was not an accepted skill name scores
-above 0.76, and the strongest of those are halves of wrapped names (`White Lightning Comin'` at 0.73,
-`Straightaways ` at 0.76) and the aptitude label `Late` at 0.67. The accept line at 0.82 sits in that gap.
+Skill names are matched only against the 1340 names this fork offers, each entry's live name, which is index 0
+of its array in `skillnames.json`. The 95 rows read across the five captures score 0.94 or better. Nothing
+that was not an accepted skill name scores above 0.76, and the strongest of those are halves of wrapped names
+(`White Lightning Comin'` at 0.73, `Straightaways ` at 0.76) and the aptitude label `Late` at 0.67. The accept
+line at 0.82 sits in that gap.
 `matcher.test.ts` pins the misreads that are accepted and the screen text that is refused.
 
-Every row on every screen was accepted except one. Copano Rickey's list shows `Muddy ○`, and no entry in
-`umalator-global/skillnames.json` is named `Muddy`, so no offered name can answer to it. That is a data gap
-rather than a failed read: the line itself is read at 0.95.
+One row waited on the data rather than the reader. Copano Rickey's list shows `Muddy ○`, and the pool used to
+take an entry's last name, which for a renamed skill is the retired one: `202342` reads
+`["Muddy ◎", "Mud Play ◎"]`, so `Mud Play` was offered and `Muddy` was not. The line itself read at 0.95 all
+along. The readers now take index 0, and every row on every screen answers to an offered name.
 
-20 rows stay a choice for the user, 13 of them because the acquisition marker arrived as a letter (`○` or `◎`
+21 rows stay a choice for the user, 14 of them because the acquisition marker arrived as a letter (`○` or `◎`
 read as `O`, once as `0`) and 7 because no marker arrived at all. The candidates are the two or three tier
 variants of that name, and the review screen offers them.
 

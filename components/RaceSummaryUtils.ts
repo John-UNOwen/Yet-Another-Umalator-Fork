@@ -135,11 +135,8 @@ export function buildEventTimeline(
 			for (const [startPos, endPos] of activations) {
 				const phase = getPhaseAtPosition(startPos, phaseDistances);
 				const duration = endPos > startPos ? estimateDuration(startPos, endPos, medianrun, umaIndex) : undefined;
-				// Get skill name: prefer EN name, fall back to JP name, then ID
-				const skillEntry = skillnames[skillId];
-				const skillName = skillEntry
-					? (skillEntry[1] || skillEntry[0] || skillId)  // EN name, or JP name, or ID
-					: skillId;
+				// skillnames.json keeps the live name first and any retired name after it.
+				const skillName = skillnames[skillId]?.[0] || skillId;
 				events.push({
 					type: RaceEventType.SkillActivation,
 					position: startPos,

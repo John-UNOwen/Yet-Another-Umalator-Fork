@@ -17,7 +17,7 @@ import {
 
 import type { SkillChartResult } from './skill-chart-types';
 import { calculateSkillCost, isPurpleSkill, umaForUniqueSkill } from './skill-chart-utils';
-import skillnames from '../skillnames.json';
+import { skillDisplayName } from './skill-name';
 import skillmeta from '../../skill_meta.json';
 import umas from '../../umas.json';
 import icons from '../../icons.json';
@@ -84,9 +84,7 @@ function SkillNameCell(props: { id: string; showUmaIcons: boolean }) {
 		return <div class="v2-skill-chart-skill-name"><span>???</span></div>;
 	}
 
-	// skillnames values are arrays like ["Name"] or ["JP", "EN"] — prefer last (EN)
-	const names = skillnames[id];
-	const name = names?.[names.length - 1] || names?.[0] || id;
+	const name = skillDisplayName(id);
 
 	if (showUmaIcons) {
 		const umaId = umaForUniqueSkill(id);
@@ -245,11 +243,9 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 		header: () => <span>Skill name</span>,
 		accessorKey: 'id',
 		cell: (info) => <SkillNameCell id={info.getValue()} showUmaIcons={props.showUmaIcons} />,
-		sortingFn: (a, b, _) => {
-			const nameA = skillnames[a.getValue('id')] || '';
-			const nameB = skillnames[b.getValue('id')] || '';
-			return nameA < nameB ? -1 : 1;
-		}
+		// Sort by the name the cell shows. It sorted by the first entry and
+		// showed the last, and never returned 0 for equal names.
+		sortingFn: (a, b, _) => skillDisplayName(a.getValue('id')).localeCompare(skillDisplayName(b.getValue('id')))
 	}, {
 		header: headerRenderer(radioGroup, selectedType, 'min', 'Minimum', headerClick),
 		accessorKey: 'min',
@@ -480,7 +476,7 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 								</tr>
 							);
 						} else {
-							return <tr key={row.id} data-skillid={id} ref={observeRow}>{((skillnames as any)[id]?.slice(-1)[0]) ?? id}</tr>;
+							return <tr key={row.id} data-skillid={id} ref={observeRow}>{skillDisplayName(id)}</tr>;
 						}
 					})}
 				</tbody>

@@ -5,12 +5,9 @@
  */
 import { h } from 'preact';
 import type { PoolExclusion } from './skill-chart-utils';
-import skillnames from '../skillnames.json';
+import { skillDisplayName } from './skill-name';
 
-const skillName = (id: string): string => {
-	const names = (skillnames as Record<string, string[]>)[id];
-	return names?.[names.length - 1] || names?.[0] || id;
-};
+const skillName = (id: string): string => skillDisplayName(id);
 
 export interface PoolExclusionListProps {
 	excluded: readonly PoolExclusion[];

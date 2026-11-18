@@ -112,6 +112,7 @@ import {
 import courseData from "../course_data.json";
 import skilldata from "../skill_data.json";
 import skillnames from "../skillnames.json";
+import { skillDisplayName } from "./skill-name";
 import skillmeta from "../../skill_meta.json";
 import "./v2.css";
 
@@ -734,11 +735,8 @@ function App() {
     if (mode !== "compare" && activeUmaTab === 2) setActiveUmaTab(1);
   }, [mode, activeUmaTab]);
 
-  // A career file imported from the Skill Optimizer, a Hachimi dump or a umadump
-  // snapshot. It describes a trained uma that exists, so it replaces the fields it
-  // carries (outfit, star and unique level, stats, aptitudes, running style, mood,
-  // learned skills) and merges its hint levels into the shared hint state the chart
-  // and optimizer both cost with.
+  // A career import (a Hachimi dump or a umadump snapshot) describes a real uma, so it
+  // replaces the fields it carries and merges its hint levels into the shared hint state.
   // The merged build goes back through the app's own validator, so a file with a
   // bad value in it cannot push a stat out of range; if validation rejects it, the
   // previous uma is left alone.
@@ -1234,8 +1232,7 @@ function App() {
         const iconId = skillmeta[skillId]?.iconId;
         if (NO_SHOW.includes(iconId)) return;
 
-        // Get skill name (prefer EN name at end of array for bilingual entries)
-        const name = skillnames[skillId]?.slice(-1)[0] ?? skillId;
+        const name = skillDisplayName(skillId);
 
         activations.forEach((ar: number[]) => {
           if (!ar || ar.length < 2) return;
@@ -2409,7 +2406,7 @@ function App() {
                     class="v2-skill-popover-icon"
                   />
                   <span class="v2-skill-popover-name">
-                    {skillnames[popoverSkillId] || popoverSkillId}
+                    {skillDisplayName(popoverSkillId)}
                   </span>
                   <button
                     type="button"

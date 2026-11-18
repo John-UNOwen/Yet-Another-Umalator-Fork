@@ -21,6 +21,7 @@ import { levelScalingCoef } from '../../components/skillLevelScaling';
 import skilldata from '../skill_data.json';
 import skillmeta from '../skill_meta.json';
 import skillnames from '../skillnames.json';
+import { skillDisplayName } from './skill-name';
 import notInGame from '../not-in-game.json';
 import { BASE_PATH } from '../../components/base-path';
 
@@ -95,11 +96,8 @@ Object.keys(skilldata).forEach(id => {
 // SKILL HELPERS
 // ============================================
 
-// Get skill name from skillnames.json (prefer EN name at end of array for bilingual entries)
 export function getSkillName(skillId: string): string {
-	const names = (skillnames as Record<string, string[]>)[skillId];
-	if (!names || names.length === 0) return `Skill ${skillId}`;
-	return names[names.length - 1] || names[0];
+	return skillDisplayName(skillId, `Skill ${skillId}`);
 }
 
 // Get skill icon path from skillmeta
@@ -439,7 +437,7 @@ export function SkillChip({
 	// Global helpers if the skill is missing from that source — keeps the
 	// header rendering rather than blanking out).
 	const nameFromSource = ds.skillnames[skillId];
-	const name = (nameFromSource && (nameFromSource[nameFromSource.length - 1] || nameFromSource[0])) || getSkillName(skillId);
+	const name = nameFromSource?.[0] || getSkillName(skillId);
 	const iconMeta = ds.skillmeta[skillId];
 	const icon = iconMeta?.iconId ? `${BASE_PATH}/icons/${iconMeta.iconId}.png` : getSkillIcon(skillId);
 	const rarityClass = getSkillRarityClass(skillId);

@@ -39,9 +39,10 @@ interface OCRModalProps {
 	onConfirm: (state: UmaState) => void;
 }
 
-/** The pool a skill line can be matched against: this fork's names, minus what the player cannot have. */
+/** The pool a skill line can be matched against: this fork's names, minus what the player cannot have.
+ *  skillnames.json keeps the live name first, so index 0 is what a screen shows. */
 const OFFERED: NameEntry[] = Object.entries(skillnames as Record<string, string | string[]>)
-	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v.slice(-1)[0] : v }))
+	.map(([id, v]) => ({ id, name: Array.isArray(v) ? v[0] : v }))
 	.filter((e) => !(notInGame as { skills: string[] }).skills.includes(e.id) && /[a-z]/i.test(e.name));
 const NAME_OF = new Map(OFFERED.map((e) => [e.id, e.name]));
 

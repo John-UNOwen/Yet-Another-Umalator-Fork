@@ -67,9 +67,8 @@ const HAND: Record<string, Hand> = {
 	},
 };
 
-// The one row on the five screens that no offered name answers to: `Muddy` on Copano Rickey is not in
-// skillnames.json, so it cannot be matched. Everything else on every screen was accepted.
-const NOT_OFFERED: Record<string, string[]> = { 'copano-rickey-eightfold-fortune': ['Muddy'] };
+// Every skill row on the five screens has an offered name now. Rows whose marker the OCR read as the letter O
+// stay a choice between the tiers, and the build takes the first of them, so `Muddy ◎` lands on 202342.
 
 for (const capture of Object.keys(HAND)) {
 	test(`${capture} builds the frozen uma`, (t) => {
@@ -98,14 +97,10 @@ test('the frozen builds are what the screens say', (t) => {
 test('the hand-written skill lists come out whole', (t) => {
 	for (const [capture, hand] of Object.entries(HAND)) {
 		const rows = fixture(capture).skills ?? [];
-		const want = hand.skills.filter((name) => !(NOT_OFFERED[capture] ?? []).includes(name));
-		t.equal(rows.length, want.length, `${capture} accepted ${want.length} rows, every row on the screen that has an offered name`);
-		for (const name of want) {
+		t.equal(rows.length, hand.skills.length, `${capture} read all ${hand.skills.length} rows on the screen, and no others`);
+		for (const name of hand.skills) {
 			const base = splitMarker(name).base;
 			t.ok(rows.some((row) => splitMarker(row.name).base === base), `${capture} has ${name}`);
-		}
-		for (const name of NOT_OFFERED[capture] ?? []) {
-			t.notOk(rows.some((row) => splitMarker(row.name).base === splitMarker(name).base), `${capture} cannot take ${name}, which this fork does not name`);
 		}
 	}
 	t.end();
