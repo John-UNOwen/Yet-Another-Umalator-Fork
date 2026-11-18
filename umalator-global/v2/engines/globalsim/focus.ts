@@ -99,9 +99,15 @@ function alternativeOut(alt: Alternative, facts: RaceFacts): boolean {
 }
 
 function firstContradiction(alts: Alternative[], facts: RaceFacts): string | undefined {
+	// A side that is out has every @-branch out, so the first branch's own
+	// contradiction names it (an OR like ground_condition==2@==3@==4 used to
+	// fall through and read "needs condition").
 	for (const alt of alts) {
-		for (const term of `${alt.precondition ?? ''}&${alt.condition ?? ''}`.split('&')) {
-			if (term.trim() && branchOut(term, facts)) return term.trim()
+		for (const side of [alt.precondition ?? '', alt.condition ?? '']) {
+			if (!conditionOut(side, facts)) continue
+			const first = side.split('@').find(b => b.trim()) ?? ''
+			const term = first.split('&').find(t => t.trim() && branchOut(t, facts))
+			if (term) return term.trim()
 		}
 	}
 	return undefined

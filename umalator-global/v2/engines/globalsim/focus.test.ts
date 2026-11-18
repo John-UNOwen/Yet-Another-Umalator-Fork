@@ -107,6 +107,9 @@ test('OR and alternatives: one usable branch is enough to keep the skill', t => 
 	t.equal(factOut('202401', tokyoDirtMile) !== null, false, 'a short-or-mile condition stays in at a mile race (202401)');
 	t.ok(factOut('202401', raceFacts(courses['10810'], FIRM, 'Senkou')) !== null, 'and is out at a long race, where neither branch holds');
 	t.ok(factOut('200161', tokyoDirtMile) !== null, 'a Good-or-Soft-or-Heavy skill is out at firm (200161)');
+	// An all-OR condition used to come back as the bare word "condition".
+	t.equal(describeOut(factOut('200161', tokyoDirtMile)!), 'needs different going', 'and the reason names the going');
+	t.equal(describeOut(factOut('202242', tokyoDirtMile)!), 'needs a different racecourse', 'a named-courses skill names the racecourse');
 	t.equal(factOut('200161', raceFacts(courses['10611'], { ...FIRM, ground: 3 }, 'Senkou')) !== null, false, 'and kept at Soft');
 	t.ok(factOut('202242', tokyoDirtMile) !== null, 'a skill restricted to six named courses is out at a seventh');
 	t.equal(factOut('202242', raceFacts(courses['10101'], FIRM, 'Senkou')) !== null, false, 'kept on one of its named courses (10101, Sapporo)');
