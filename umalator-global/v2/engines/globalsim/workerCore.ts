@@ -205,7 +205,10 @@ export function createGlobalsimWorkerCore(deps: WorkerCoreDeps) {
 			tail: tail && tail.length ? tail : null,
 		};
 		const plan = frames ? spurtPlanPoint(frames, pi, distance) : null;
-		if (plan) { rec.spurtPlanPos = plan.pos; rec.spurtPlanHp = plan.hp; }
+		if (plan) {
+			rec.spurtPlanPos = plan.pos; rec.spurtPlanHp = plan.hp;
+			if (plan.heals.length) { rec.spurtHeals = plan.heals; rec.spurtMaxHp = plan.maxHp; }
+		}
 		// Lead-margin proxy field (metrics.leadMarginL; optimizer screening):
 		// rival = every field runner except the player. Key presence must match
 		// wasm run_compact exactly (compact-parity pins the two paths).

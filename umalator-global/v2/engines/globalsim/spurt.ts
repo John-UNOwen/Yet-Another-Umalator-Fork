@@ -13,6 +13,9 @@
  *     (metrics.ts spurtPlanPoint, globalsim-wasm spurt_plan_point).
  *   - Speed and guts are rebuilt from the runner spec the request carried,
  *     plus the green stat skills the player activated in that race.
+ *   - A heal after the final leg starts makes the engine plan again
+ *     (race_solver_retail.rs, pending HP). The frames show each one as an HP
+ *     rise (spurtHeals), and the race is full when any plan is.
  *
  * Each step names the engine function it ports. The constants are the
  * values of vendor/GlobalSim/data/global_parameters.json.
@@ -62,7 +65,10 @@ const STRATEGY: Record<string, number> = { nige: 1, senkou: 2, sasi: 3, sashi: 3
 const GROUND: Record<string, number> = { good: 1, yielding: 2, soft: 3, heavy: 4 };
 
 /** Effect types (race_solver_builder.rs valid_skill_type). */
-const SPEED_UP = 1, GUTS_UP = 4, ALL_STATUS_UP = 32, RUNAWAY = 6;
+const SPEED_UP = 1, GUTS_UP = 4, RECOVERY = 9, ALL_STATUS_UP = 32, RUNAWAY = 6;
+/** How far (HP) a heal estimate may sit from a skill's exact heal and still be it.
+ *  One tick's drain changes by far less; the smallest heal is tens of HP. */
+const HEAL_MATCH_HP = 2;
 
 /** The course fields the spurt plan reads (course_data.json, identical to the engine's table). */
 export interface SpurtCourse {
@@ -75,6 +81,8 @@ export interface SpurtCourse {
 export interface SpurtRecord {
 	spurtPlanPos?: number;
 	spurtPlanHp?: number;
+	spurtHeals?: Array<[number, number, number, number]>;
+	spurtMaxHp?: number;
 	skillActivations?: Record<string, number>;
 }
 
@@ -252,14 +260,59 @@ export function fullSpurtJudge(
 		return pairs;
 	};
 
+	/** Every heal one activation of a skill can give, as a fraction of max HP. */
+	const healOptions = (id: string): number[] => {
+		const out: number[] = [];
+		for (const alt of table[id]?.alternatives ?? []) {
+			if (!baseTermsHold(alt.condition, conditionStats)) continue;
+			for (const e of alt.effects ?? []) {
+				if (e.type !== RECOVERY || !(e.modifier > 0)) continue;
+				const v = skillValue(e, levels.get(id) ?? 1);
+				if (!out.includes(v)) out.push(v);
+			}
+		}
+		return out;
+	};
+
+	/**
+	 * The HP each redone plan saw. A heal tick applies the heal before its own
+	 * drain, so the frames show heal minus drain. The heal is the player's own
+	 * recovery that matches (race_solver.rs: max HP × value, summed in float32),
+	 * which gives the planning HP exactly. When none matches (a rival's drain on
+	 * the same tick, say) the drain of the tick before stands in for it.
+	 */
+	const replanHps = (rec: SpurtRecord): Array<[number, number]> => {
+		const heals = rec.spurtHeals;
+		if (!heals?.length) return [];
+		const maxHp = f(rec.spurtMaxHp ?? NaN);
+		const amounts: number[] = [];
+		for (const id of Object.keys(rec.skillActivations ?? {})) {
+			for (const v of healOptions(id)) amounts.push(f(maxHp * f(v)));
+		}
+		const sums = [...amounts];
+		for (let i = 0; i < amounts.length; i++) for (let j = i + 1; j < amounts.length; j++) sums.push(f(amounts[i] + amounts[j]));
+		return heals.map(([pos, before, after, drain]): [number, number] => {
+			const estimate = after - before + drain;
+			let heal = estimate;
+			let best = HEAL_MATCH_HP;
+			for (const s of sums) if (Math.abs(s - estimate) < best) { best = Math.abs(s - estimate); heal = s; }
+			const hp = Math.max(0, Math.min(maxHp, f(f(before) + f(heal))));
+			return [pos, Number.isFinite(hp) ? hp : f(before + estimate)];
+		});
+	};
+
 	return (rec) => {
 		const pos = rec.spurtPlanPos, hp = rec.spurtPlanHp;
 		if (typeof pos !== 'number' || typeof hp !== 'number' || !Number.isFinite(pos) || !Number.isFinite(hp)) return null;
 		const pairs = pairsFor(rec.skillActivations);
 		if (!pairs) return null;
-		const hp32 = f(hp);
-		const first = judge(pairs[0][0], pairs[0][1], pos, hp32);
-		for (let i = 1; i < pairs.length; i++) if (judge(pairs[i][0], pairs[i][1], pos, hp32) !== first) return null;
+		// retail_spurt.rs SpurtState.update: a redone plan that comes out full
+		// replaces the current one, and the lastspurt condition reads it from
+		// then on, so the race counts as full when any plan is.
+		const plans: Array<[number, number]> = [[pos, f(hp)], ...replanHps(rec)];
+		const verdict = (speed: number, guts: number) => plans.some(([p, h]) => judge(speed, guts, p, h));
+		const first = verdict(pairs[0][0], pairs[0][1]);
+		for (let i = 1; i < pairs.length; i++) if (verdict(pairs[i][0], pairs[i][1]) !== first) return null;
 		return first;
 	};
 }

@@ -89,7 +89,8 @@ impl PreparedRace {
     /// startDelayTime, tail}` (+ `opp` when `second_player_index >= 0`,
     /// + `activations` counting `track_skill_id` for the player, + the
     /// player's `spurtPlanPos`/`spurtPlanHp` when `distance` is the course
-    /// length), or `{seed, error}` for a per-seed failure. Frames never serialize:
+    /// length, with `spurtHeals`/`spurtMaxHp` when a final-leg heal redoes
+    /// the plan), or `{seed, error}` for a per-seed failure. Frames never serialize:
     /// the tail grid is sampled here from the engine's numeric replay.
     /// Panic semantics match `run` (a panic kills the handle).
     pub fn run_compact(&mut self, seed: i32, track_skill_id: &str, second_player_index: i32, distance: f64) -> Result<String, String> {
@@ -195,7 +196,7 @@ fn sample_tail(packet: &[u8], frame_count: usize, horse_count: usize, meta_len: 
 /// one at or past the final-leg boundary: section × 16 in float32, as
 /// retail_physics::phase_boundaries computes it. None without a course
 /// length or past the last frame.
-fn spurt_plan_point(packet: &[u8], frame_count: usize, horse_count: usize, meta_len: usize, index: usize, distance: f64) -> Option<[f64; 2]> {
+fn spurt_plan_point(packet: &[u8], frame_count: usize, horse_count: usize, meta_len: usize, index: usize, distance: f64) -> Option<([f64; 2], usize)> {
     if !(distance > 0.) || index >= horse_count { return None; }
     let boundary = ((distance as f32 / 24.) * 16.) as f64;
     let mut crossed = false;
@@ -203,10 +204,34 @@ fn spurt_plan_point(packet: &[u8], frame_count: usize, horse_count: usize, meta_
         let (_, row) = packet_field(packet, frame_count, horse_count, meta_len, i)?;
         let col = index * 6;
         let pos = packet_f64(packet, row, col)?;
-        if crossed { return Some([pos, packet_f64(packet, row, col + 2)?]); }
+        if crossed { return Some(([pos, packet_f64(packet, row, col + 2)?], i)); }
         if pos >= boundary { crossed = true; }
     }
     None
+}
+
+/// Exact port of metrics.ts spurtHeals: every HP rise from frame J-1 to J
+/// after the plan frame, as [pos J-1, hp J-1, hp J, hp J-2 minus hp J-1],
+/// up to the finish. Each one is a tick that redoes the spurt plan.
+fn spurt_heals(packet: &[u8], frame_count: usize, horse_count: usize, meta_len: usize, index: usize, plan_frame: usize, distance: f64) -> Vec<[f64; 4]> {
+    let mut out = Vec::new();
+    let col = index * 6;
+    let at = |i: usize| -> Option<(f64, f64)> {
+        let (_, row) = packet_field(packet, frame_count, horse_count, meta_len, i)?;
+        Some((packet_f64(packet, row, col)?, packet_f64(packet, row, col + 2)?))
+    };
+    for j in plan_frame + 1..frame_count {
+        let (Some((pos, hp)), Some((_, next)), Some((_, before))) = (at(j - 1), at(j), at(j - 2)) else { break };
+        if pos >= distance { break; }
+        if next > hp { out.push([pos, hp, next, before - hp]); }
+    }
+    out
+}
+
+/// A runner's HP on the first frame: the race starts at maximum HP.
+fn first_hp(packet: &[u8], frame_count: usize, horse_count: usize, meta_len: usize, index: usize) -> Option<f64> {
+    let (_, row) = packet_field(packet, frame_count, horse_count, meta_len, 0)?;
+    packet_f64(packet, row, index * 6 + 2)
 }
 
 /// serde_json Number → the string JS `String(num)` would produce (skill-id
@@ -281,9 +306,14 @@ fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, se
     }
     let tail = sample_tail(packet, frame_count, horse_count, meta_len, pi, finish);
     out.insert("tail".into(), if tail.is_empty() { serde_json::Value::Null } else { serde_json::json!(tail) });
-    if let Some([pos, hp]) = spurt_plan_point(packet, frame_count, horse_count, meta_len, pi, distance) {
+    if let Some(([pos, hp], plan_frame)) = spurt_plan_point(packet, frame_count, horse_count, meta_len, pi, distance) {
         out.insert("spurtPlanPos".into(), serde_json::json!(pos));
         out.insert("spurtPlanHp".into(), serde_json::json!(hp));
+        let heals = spurt_heals(packet, frame_count, horse_count, meta_len, pi, plan_frame, distance);
+        if !heals.is_empty() {
+            out.insert("spurtHeals".into(), serde_json::json!(heals));
+            out.insert("spurtMaxHp".into(), serde_json::json!(first_hp(packet, frame_count, horse_count, meta_len, pi)));
+        }
     }
 
     // Lead-margin proxy field (metrics.leadMarginL; optimizer screening) —

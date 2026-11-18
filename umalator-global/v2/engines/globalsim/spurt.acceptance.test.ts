@@ -7,12 +7,14 @@
  * `lastspurt==2`, no wisdom check, no effect. The engine's lastspurt
  * condition reads 2 exactly when its current last spurt plan is result 1
  * (the full spurt), so the probe activates in the races the judge must call
- * full. The builds carry no recovery skill, so the plan is never redone
- * after the final leg starts and "current plan" is the first plan.
+ * full. A heal after the final leg starts redoes the plan, and a redone
+ * full plan counts too, so the recovery cases check the redone plans
+ * (spurtHeals) as well.
  *
- * A second check pins the planning point: on a full spurt the engine starts
- * spurting on the planning tick itself, so lastSpurtStartDistance equals
- * spurtPlanPos exactly.
+ * A second check pins the planning point: on a full first plan the engine
+ * starts spurting on the planning tick itself, so lastSpurtStartDistance
+ * equals spurtPlanPos exactly. A redone plan keeps the first plan's start,
+ * so races with a final-leg heal are left out of that check.
  */
 
 // Same CC_GLOBAL-before-import trick as adapter.test.ts.
@@ -115,6 +117,14 @@ const CASES: Case[] = [
 		stats: [1150, 680, 1100, 700, 900], strategy: 'Senkou', skills: ['202331'] },
 	{ name: 'dirt, soft ground, Strong Steps at power 1300', courseId: '10913', distance: 2000, ground: GroundCondition.Soft,
 		stats: [1150, 680, 1300, 700, 900], strategy: 'Senkou', skills: ['202331'] },
+	// Final-leg heals redo the plan (checkup finding 3). Super-Duper Stoked
+	// heals on the final corner, Triple 7s at 777 m to go, both after the
+	// final-leg boundary on Nakayama 2500, and stamina is short enough that
+	// the first plan is often not full.
+	{ name: 'Sasi, final-corner heal (Super-Duper Stoked)', courseId: '10506', distance: 2500, ground: GroundCondition.Good,
+		stats: [1150, 720, 1000, 600, 900], strategy: 'Sasi', skills: ['10521'] },
+	{ name: 'Senkou, two final-leg heals', courseId: '10506', distance: 2500, ground: GroundCondition.Good,
+		stats: [1150, 650, 1000, 600, 900], strategy: 'Senkou', skills: ['10521', '201571', '200011'] },
 ];
 
 for (const c of CASES) {
@@ -137,7 +147,7 @@ for (const c of CASES) {
 		const judge = compareSpurtJudge(input, horse);
 		t.ok(judge, 'judge built');
 
-		let agree = 0, full = 0, judged = 0, startMatches = 0;
+		let agree = 0, full = 0, judged = 0, startMatches = 0, heals = 0, redone = 0;
 		const misses: string[] = [];
 		for (const job of built.jobs.filter(j => j.id.startsWith('0|'))) {
 			const request = JSON.parse(JSON.stringify(job.request));
@@ -151,16 +161,23 @@ for (const c of CASES) {
 				judged += 1;
 				if (verdict === engineFull) agree += 1;
 				else misses.push(`seed ${r.seed}: judge ${verdict}, engine ${engineFull}, pos ${r.spurtPlanPos}, hp ${r.spurtPlanHp}`);
-				if (engineFull) {
+				if (r.spurtHeals?.length) {
+					heals += 1;
+					// Decided by a redone plan: the first plan alone says otherwise.
+					if (judge!({ ...r, spurtHeals: undefined }) !== verdict) redone += 1;
+				}
+				if (engineFull && !r.spurtHeals?.length) {
 					full += 1;
 					if (r.lastSpurtStartDistance === r.spurtPlanPos) startMatches += 1;
 				}
 			}
 		}
-		t.comment(`${judged}/${N} judged, ${full} full spurts, ${agree} agree${misses.length ? '; ' + misses.slice(0, 3).join('; ') : ''}`);
+		t.comment(`${judged}/${N} judged, ${full} full first plans, ${heals} with final-leg heals (${redone} decided by the redone plan), ${agree} agree${misses.length ? '; ' + misses.slice(0, 3).join('; ') : ''}`);
 		t.equal(judged, N, 'every race judged');
 		t.equal(agree, judged, 'the judge agrees with the engine on every race');
-		t.equal(startMatches, full, 'full spurts start on the planning tick (spurtPlanPos is the plan point)');
+		t.equal(startMatches, full, 'full first plans start on the planning tick (spurtPlanPos is the plan point)');
+		if (c.skills?.includes('10521')) t.ok(heals > 0, 'the recovery case really heals in the final leg');
+		if (c.skills?.includes('201571')) t.ok(redone > 0, 'some races are full only through a redone plan');
 		t.end();
 	});
 }

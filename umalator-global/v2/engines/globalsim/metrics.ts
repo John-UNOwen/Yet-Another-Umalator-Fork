@@ -73,6 +73,10 @@ export interface SeedCompactRecord {
 	 */
 	spurtPlanPos?: number;
 	spurtPlanHp?: number;
+	/** Final-leg heals that redo the plan (spurtPlanPoint), only when there are
+	 *  any, with the runner's starting (maximum) HP that sizes each heal. */
+	spurtHeals?: SpurtHeal[];
+	spurtMaxHp?: number;
 	/**
 	 * Set on the main thread by compare (spurt.ts fullSpurtJudge), never by the
 	 * worker: true when the engine's plan at the final leg was the maximum
@@ -197,17 +201,40 @@ export function spurtPlanPoint(
 	frames: { horses: { pos: number; hp: number }[] }[],
 	index: number,
 	distance: number | undefined,
-): { pos: number; hp: number } | null {
+): { pos: number; hp: number; heals: SpurtHeal[]; maxHp: number } | null {
 	if (!(distance != null && distance > 0)) return null;
 	const boundary = Math.fround(Math.fround(distance / 24) * 16);
 	let crossed = false;
 	for (let i = 0; i < frames.length; i++) {
 		const h = frames[i].horses[index];
 		if (!h) return null;
-		if (crossed) return { pos: h.pos, hp: h.hp };
+		if (crossed) return { pos: h.pos, hp: h.hp, heals: spurtHeals(frames, index, i, distance), maxHp: frames[0].horses[index].hp };
 		if (h.pos >= boundary) crossed = true;
 	}
 	return null;
+}
+
+/** One HP jump after the first spurt plan: [pos, hp before, hp after, drain the tick before]. */
+export type SpurtHeal = [number, number, number, number];
+
+/**
+ * The ticks that redo the spurt plan after the first one. A heal in the final
+ * leg sets the plan to be redone (race_solver_retail.rs, pending HP), and the
+ * tick that applies it plans with the position before its move and the HP
+ * after the heal, before that tick's drain. The frames show the heal as an HP
+ * rise, so each rise from frame J-1 to J (J after the plan frame) is one redo:
+ * frame J-1's position and HP, frame J's HP, and the drain from J-2 to J-1
+ * (spurt.ts uses it to tell which heal fired). Stops once the runner is past
+ * the finish.
+ */
+function spurtHeals(frames: { horses: { pos: number; hp: number }[] }[], index: number, planFrame: number, distance: number): SpurtHeal[] {
+	const out: SpurtHeal[] = [];
+	for (let j = planFrame + 1; j < frames.length; j++) {
+		const prev = frames[j - 1].horses[index], cur = frames[j].horses[index];
+		if (!prev || !cur || prev.pos >= distance) break;
+		if (cur.hp > prev.hp) out.push([prev.pos, prev.hp, cur.hp, frames[j - 2].horses[index].hp - prev.hp]);
+	}
+	return out;
 }
 
 /** Linear interpolation of one tail column (1 = pos, 2 = speed) at `dtBefore` seconds before finish. */

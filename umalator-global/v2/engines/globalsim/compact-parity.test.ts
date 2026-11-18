@@ -64,7 +64,7 @@ async function loadPkgFresh(stripCompact: boolean): Promise<WasmApi> {
 }
 
 /** Drive workerCore (mode compact) for one job; resolve with its records. */
-function runCore(request: any, seeds: number[], trackSkillId: string | undefined, secondPlayerIndex: number | undefined, stripCompact: boolean): Promise<SeedCompactRecord[]> {
+function runCore(request: any, seeds: number[], trackSkillId: string | undefined, secondPlayerIndex: number | undefined, stripCompact: boolean, distance = DISTANCE): Promise<SeedCompactRecord[]> {
 	return new Promise((resolve, reject) => {
 		const core = createGlobalsimWorkerCore({
 			postMessage: (m: any) => queueMicrotask(() => {
@@ -80,7 +80,7 @@ function runCore(request: any, seeds: number[], trackSkillId: string | undefined
 			fetchText: (url) => fs.promises.readFile(path.join(geomDir, path.basename(url)), 'utf8'),
 		});
 		core.onMessage({ type: 'skillData', skillData: mergedTable });
-		core.onMessage({ type: 'prepare', id: 'p1', setupKey: 'k1', request, trackSkillId, secondPlayerIndex, distance: DISTANCE });
+		core.onMessage({ type: 'prepare', id: 'p1', setupKey: 'k1', request, trackSkillId, secondPlayerIndex, distance });
 	});
 }
 
@@ -148,6 +148,25 @@ test('mob layout: wasm run_compact records deepStrictEqual JS extractCompact', a
 		// is 0, and ℓ > 0 ⇔ the player beat every rival ⇔ finishOrder === 0.
 		return l !== null && Number.isFinite(l) && Math.sign(l) === (typeof r.finishOrder === 'number' && r.finishOrder === 0 ? 1 : -1);
 	}), 'leadMarginL finite and sign-consistent with finishOrder===0 (0-based: 0 = won)');
+	t.end();
+});
+
+// ── final-leg heals: the redone spurt plans ──────────────────────────────────
+
+test('final-leg heals: spurtHeals deepStrictEqual and present', async t => {
+	// Triple 7s heals at 777 m to go, inside the final leg of Nakayama 2500.
+	const h = horseWithSkills(['201571', '100011']);
+	const built = buildCompareJobs(compareInput(h, h, { courseId: '10506', distance: 2500 }), Array.from({ length: N }, (_, i) => BASE_SEED + i), 'compact');
+	t.equal(built.errors.length, 0, `job build errors: ${built.errors.join(' | ')}`);
+	const job = built.jobs[0];
+	const viaWasm = await runCore(job.request, job.seeds, undefined, undefined, false, 2500);
+	const viaJs = await runCore(job.request, job.seeds, undefined, undefined, true, 2500);
+	t.deepEqual(viaWasm, viaJs, 'records with heals bit-identical (wasm vs JS extraction)');
+	const healed = viaWasm.filter(r => r.spurtHeals?.length);
+	t.ok(healed.length > 0, `some races heal after the plan (${healed.length}/${viaWasm.length})`);
+	t.ok(healed.every(r => typeof r.spurtMaxHp === 'number' && r.spurtHeals!.every(([pos, before, after]) => pos >= r.spurtPlanPos! && after > before)),
+		'each heal is after the plan point and raises HP, with the max HP alongside');
+	t.ok(viaWasm.filter(r => !r.spurtHeals).every(r => r.spurtMaxHp === undefined), 'no max HP without heals');
 	t.end();
 });
 
