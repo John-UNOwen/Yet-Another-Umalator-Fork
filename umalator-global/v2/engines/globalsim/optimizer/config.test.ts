@@ -37,6 +37,7 @@ test('applyTuning puts each setting on the field the search reads', t => {
 	const u = applyTuning(UNTIL_STOPPED, { kicksPerStart: 4 });
 	t.equal(u.kicks, Infinity, 'Until stopped keeps kicking pass after pass');
 	t.equal(u.kicksPerVisit, 4, 'so the setting is the count per visit');
+	t.equal(applyTuning(UNTIL_STOPPED, { kicksPerStart: 0 }).kicksPerVisit, 0, 'and 0 there means no kicks, as on a finite preset');
 	t.end();
 });
 

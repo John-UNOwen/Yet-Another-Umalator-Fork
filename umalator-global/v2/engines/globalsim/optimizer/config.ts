@@ -255,9 +255,11 @@ export function applyTuning(cfg: EffortConfig, t: SearchTuning = {}): EffortConf
 	if (given(t.kicksPerStart)) {
 		const k = Math.round(clampTo(t.kicksPerStart, L.kicksPerStart));
 		// Until stopped keeps kicking pass after pass, so the setting is the
-		// count per visit. Every other preset kicks one visit per start.
+		// count per visit. Every other preset kicks one visit per start. 0 means
+		// no kicks on both: Until stopped then climbs each peak pass after pass
+		// and ends when a pass races nothing new.
 		if (Number.isFinite(cfg.kicks)) out.kicks = k;
-		else out.kicksPerVisit = Math.max(1, k);
+		else out.kicksPerVisit = k;
 	}
 	if (given(t.kickGrowAfter)) out.kickGrowAfter = Math.round(clampTo(t.kickGrowAfter, L.kickGrowAfter));
 	if (given(t.spreadMinDiff)) out.spreadMinDiff = Math.round(clampTo(t.spreadMinDiff, L.spreadMinDiff));

@@ -768,6 +768,27 @@ test('until stopped visits every starting build before a second pass', async t =
 	t.end();
 });
 
+// "Shake-ups per start" 0 on Until stopped used to become 1. Now it is no
+// kicks, and the run still ends by itself once a pass races nothing new.
+test('until stopped with 0 shake-ups per start kicks nothing and still ends', async t => {
+	const inst = genInstance(4243);
+	const ev = new OracleEval(inst);
+	const ctrl = createController();
+	let kicked = false, capped = false;
+	const res = await runOptimizer(ev, {
+		space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean',
+		effort: { ...TEST_CFG, deltaMinL: 1, kicks: Infinity, kicksPerVisit: 0, climbRaces: Infinity, timeBudgetMs: Infinity },
+	}, ctrl, (x: OptimizerProgress) => {
+		if (/ILS kick/.test(x.note ?? '')) kicked = true;
+		if (x.racesRun > 3_000_000) { capped = true; ctrl.stop(); }
+	});
+	ev.dispose();
+	t.notOk(kicked, 'no shake-up ran');
+	t.notOk(capped, 'the run ended by itself');
+	t.ok(res.shortlist.length > 0, 'and reported builds');
+	t.end();
+});
+
 test('wide search: kick size grows after failed kicks, 2-4 then 4-6 then 6-8', t => {
 	t.deepEqual([0, 1, 2].map(kickSizeRange), [[2, 4], [4, 6], [6, 8]], 'swap ranges per level');
 	t.equal(kickLevelOf(0), 0, 'no failures: the default kick');
