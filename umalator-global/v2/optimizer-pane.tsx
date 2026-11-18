@@ -458,6 +458,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	// out of both sets.
 	const seededRef = useRef(false);
 	const pooledRef = useRef<Set<string>>(new Set());
+	/** Must-haves the current pool leaves out, restored when it brings them back. */
+	const parkedMustRef = useRef<Set<string>>(new Set());
 	useEffect(() => {
 		// The app passes an empty list for a moment while it re-derives the pool
 		// (a layout change does it). Remembering that empty list would make every
@@ -477,9 +479,17 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			for (const id of candidates) if (!before.has(id) && !mustHave.has(id)) next.add(id);
 			return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
 		});
+		// A must-have the new pool leaves out is parked, not forgotten: when a
+		// later pool brings it back it is a must-have again. Dropped, it came
+		// back as a plain allowed skill and the next run missed the constraint.
+		const parked = parkedMustRef.current;
+		for (const id of mustHave) if (!now.has(id)) parked.add(id);
+		const back = [...parked].filter((id) => now.has(id));
+		for (const id of back) parked.delete(id);
 		setMustHave((prev) => {
 			const next = new Set([...prev].filter((id) => now.has(id)));
-			return next.size === prev.size ? prev : next;
+			for (const id of back) next.add(id);
+			return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
 		});
 	}, [candidates, excluded]);
 
