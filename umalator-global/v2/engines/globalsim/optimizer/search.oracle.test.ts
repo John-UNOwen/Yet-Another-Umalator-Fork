@@ -20,7 +20,7 @@ import { NS_SEARCH, NS_VERIFY } from './cache';
 import { applyTuning, EffortConfig, KICK_GROW_AFTER, KICK_MAX_LEVEL, kickLevelOf, kickSizeRange, KICKS_PER_VISIT } from './config';
 import { BuildRefLite, objectiveOf, pairedOf, SearchEvaluator, statsOf } from './evaluator';
 import { affordable, BuildSpace, OptOption, simIdentity } from './space';
-import { aggregateValues, clipLeadL, createController, LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS, leadClipL, runOptimizer, searchPickOf, SearchCurrency } from './search';
+import { aggregateValues, clipLeadL, createController, LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS, leadClipL, leadFloorL, runOptimizer, searchPickOf, SearchCurrency } from './search';
 import { ActivationTelemetry, AggregationKind, MeanSem, ObjectiveKind, OptimizerProgress, OptimizerResult, SeedSlot, SeedValue } from './types';
 
 /** §E A/B switch: NO_TELEMETRY=1 hides activation telemetry from the fake
@@ -419,6 +419,27 @@ test('meanLead objective also finds the true latent best (ties allowed)', async 
 	const recMu = inst.mu(res.best.build.id);
 	// Under CRN Gaussian noise the paired ℓ CI resolves ~0.15 L at these seed counts.
 	t.ok(recMu >= truthMu - 0.2, `rec μ ${recMu.toFixed(2)} ≥ true ${truthMu.toFixed(2)} − 0.2`);
+	t.end();
+});
+
+// A uma far behind the field never wins, so P(1st) is 0 for every build. The
+// symmetric clip then flattened every seed to the same value and the search had
+// nothing to climb, and the verify tie rule handed back the build with the most
+// SP left. With the floor under the base build and the zero-rate verify falling
+// back to the lead, p1 lands where the meanLead search does.
+test('p1 on a uma that never wins still ranks by the lead (clip floor + zero-rate verify)', async t => {
+	const inst0 = genInstance(99001);
+	const inst: Instance = { ...inst0, mu: (id, si) => inst0.mu(id, si) - 20 };
+	const res = await runOptimizer(new OracleEval(inst), { space: inst.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: TEST_CFG }, createController(), () => undefined);
+	t.ok(res.shortlist.every(r => r.obj.mean === 0), 'no verified build ever wins (the case under test)');
+	t.equal(res.rankedByLead, true, 'the result says the rows were ranked by the lead');
+	const truthMu = inst.ranked[0].mu - 20; // ranked came from inst0, unshifted
+	const recMu = inst.mu(res.best.build.id);
+	t.ok(recMu >= truthMu - 0.3, `rec μ ${recMu.toFixed(2)} ≥ true ${truthMu.toFixed(2)} − 0.3`);
+	t.ok(res.best.build.selection.length > 0, 'not the empty build');
+	// A uma that can win keeps the plain p1 ranking.
+	const winnable = await runOptimizer(new OracleEval(inst0), { space: inst0.space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: TEST_CFG }, createController(), () => undefined);
+	t.notOk(winnable.rankedByLead, 'a uma that sometimes wins is ranked by P(1st)');
 	t.end();
 });
 
@@ -957,6 +978,15 @@ test('§F currency: the clipped lead is monotone, ℓ near the finish line, flat
 	t.equal(leadClipL(1.6), LEAD_CLIP_SIGMAS * 1.6, 'the band is 2.5 measured σ(ℓ) wide');
 	t.equal(leadClipL(0), LEAD_CLIP_MIN_L, 'a zero σ cannot collapse the band to nothing');
 	t.ok(leadClipL(NaN) >= LEAD_CLIP_MIN_L, 'a non-finite σ still gives a band');
+	// The floor: a base at or above −clip keeps the band, a base far behind
+	// moves the lower edge to one clip width below it, so its seeds read ℓ.
+	t.equal(leadFloorL(C, 0), -C, 'a base at the finish line keeps the band');
+	t.equal(leadFloorL(C, -1), -C - 1, 'a base 1 L behind moves the edge by 1 L');
+	t.equal(leadFloorL(C, -16), -16 - C, 'a base 16 L behind gets a floor one clip width below it');
+	t.equal(leadFloorL(C, NaN), -C, 'no measured base lead keeps the band');
+	t.equal(clipLeadL(-15, C, leadFloorL(C, -16)), -15, 'ℓ near a far-behind base passes through');
+	t.equal(clipLeadL(-30, C, leadFloorL(C, -16)), -16 - C, 'and is still flat far below it');
+	t.equal(clipLeadL(6, C, leadFloorL(C, -16)), C, 'the top of the band is unchanged');
 	// Routing: the win-rate objectives search the clipped lead, the rest keep ℓ
 	// (§6.1), the A/B mode reads ℓ for everything, and a null lead is dropped
 	// rather than coerced to zero (§7.1).

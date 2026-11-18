@@ -21,7 +21,7 @@ import { KnapGroup, mckpSolve, mckpSpreadStarts, mckpTopK } from './knapsack';
 import { affordable, affordableAdds, assertFeasible, assertOnePerGroup, BuildSpace, costOf, OptOption, simIdentity } from './space';
 import { fitSurrogate, SurrogateModel, SurrogateSample } from './surrogate';
 import {
-	ActivationTelemetry, AggregationKind, MeanSem, NoiseInfo, ObjectiveKind, OptimizerProgress,
+	ActivationTelemetry, AggregationKind, BuildStats, MeanSem, NoiseInfo, ObjectiveKind, OptimizerProgress,
 	OptimizerResult, ScoredBuild, SeedSlot, SeedValue,
 } from './types';
 
@@ -62,14 +62,30 @@ export const LEAD_CLIP_MIN_L = 0.05;
  * strictly increasing inside the band), so the search can never prefer a
  * smaller lead at the same point.
  */
-export function clipLeadL(leadL: number, clipL: number): number {
+export function clipLeadL(leadL: number, clipL: number, floorL?: number): number {
 	const c = Math.max(LEAD_CLIP_MIN_L, clipL);
-	return leadL > c ? c : leadL < -c ? -c : leadL;
+	const lo = floorL == null ? -c : Math.min(-c, floorL);
+	return leadL > c ? c : leadL < lo ? lo : leadL;
 }
 
 /** The clip width for a measured σ(ℓ) (§7.3). */
 export function leadClipL(sigmaLeadL: number): number {
 	return Math.max(LEAD_CLIP_MIN_L, LEAD_CLIP_SIGMAS * (Number.isFinite(sigmaLeadL) ? sigmaLeadL : LEAD_CLIP_MIN_L / LEAD_CLIP_SIGMAS));
+}
+
+/**
+ * The clip's lower edge for a base build whose mean lead is `baseLeadL`: the
+ * same width below the base as the band reaches below the finish line, and
+ * never inside the band. A base at or ahead of the finish line keeps the band
+ * as it was, and one a little behind it moves the edge by that much. A uma far behind the field would otherwise have
+ * every seed of every build clipped to −clip, which leaves the search nothing
+ * to rank: P(1st) is 0 for all of them, and the lead is the only signal that
+ * points toward the finish line. Below the base it reads ℓ, so a build that
+ * closes the gap is credited for it.
+ */
+export function leadFloorL(clipL: number, baseLeadL: number): number {
+	const c = Math.max(LEAD_CLIP_MIN_L, clipL);
+	return Number.isFinite(baseLeadL) ? Math.min(-c, baseLeadL - c) : -c;
 }
 
 /**
@@ -90,11 +106,11 @@ export function leadClipL(sigmaLeadL: number): number {
  */
 export type SearchCurrency = 'aligned' | 'lead';
 
-export function searchPickOf(objective: ObjectiveKind, currency: SearchCurrency = 'aligned', clipL = Infinity): (v: SeedValue) => number | null {
+export function searchPickOf(objective: ObjectiveKind, currency: SearchCurrency = 'aligned', clipL = Infinity, floorL?: number): (v: SeedValue) => number | null {
 	if (currency === 'lead') return v => v.lead;
 	switch (objective) {
 		case 'p1':
-		case 'pTop3': return v => (v.lead == null ? null : clipLeadL(v.lead, clipL));
+		case 'pTop3': return v => (v.lead == null ? null : clipLeadL(v.lead, clipL, floorL));
 		// meanLead / gainVsCurrent / meanPlacing: ℓ is still the currency (§6.1).
 		default: return v => v.lead;
 	}
@@ -485,7 +501,8 @@ async function runSingleScenario(
 	const noise: NoiseInfo = await calibrateNoise(ev, cfg, si, base, noiseVariants);
 	// §F: now the σ(ℓ) is known, the search currency: ℓ inside ±2.5 σ of the
 	// finish line, flat beyond it, which is where P(1st) stopped growing too.
-	const searchPick = searchPickOf(objective, input.searchCurrency, leadClipL(noise.sigmaLead));
+	const clipL = leadClipL(noise.sigmaLead);
+	const searchPick = searchPickOf(objective, input.searchCurrency, clipL, leadFloorL(clipL, noise.baseLead));
 
 	// ── Stage G machinery (also the Stop path): verify a shortlist fresh ──────
 	const verify = async (short: BuildRefLite[], nMinIn: number, nCapIn: number, stoppedEarly: boolean): Promise<OptimizerResult> => {
@@ -504,10 +521,22 @@ async function runSingleScenario(
 			pinSearch();
 		}
 		const rowsOf = (b: BuildRefLite) => ({ obj: ev.objective(NS_VERIFY, si, b, objective, vs), stats: ev.stats(NS_VERIFY, si, b) });
-		const rankedOf = () => pool
-			.map(b => ({ b, ...rowsOf(b) }))
-			.filter(x => x.obj && x.obj.n > 0 && Number.isFinite(x.obj!.mean))
-			.sort((a, b) => b.obj!.mean - a.obj!.mean || (a.b.id < b.b.id ? -1 : 1));
+		// A rate objective that is exactly 0 for every verified build (a uma that
+		// never wins or places against this field) cannot order them: every pair
+		// ties, the loop grows to the cap, and the tie rule then hands back the
+		// build with the most SP left, usually the empty one. Then the builds are
+		// ordered, tied and resolved by the lead instead, the search's own signal.
+		let byLead = false;
+		const vpick = (v: SeedValue): number | null => (byLead ? v.lead : pick(v));
+		const keyOf = (x: { obj: MeanSem | null; stats: BuildStats | null }): number =>
+			byLead ? (x.stats?.lead.mean ?? -Infinity) : x.obj!.mean;
+		const rankedOf = () => {
+			const rs = pool
+				.map(b => ({ b, ...rowsOf(b) }))
+				.filter(x => x.obj && x.obj.n > 0 && Number.isFinite(x.obj!.mean));
+			byLead = (objective === 'p1' || objective === 'pTop3') && rs.length > 0 && rs.every(x => x.obj!.mean === 0);
+			return rs.sort((a, b) => keyOf(b) - keyOf(a) || (a.b.id < b.b.id ? -1 : 1));
+		};
 		let n = nMin;
 		// §K time left: the races this stage still has to run. Growth past the
 		// current seed count only happens on a tie, so it is not counted ahead,
@@ -522,7 +551,7 @@ async function runSingleScenario(
 			await ev.ensure(pool.map(b => ({ ns: NS_VERIFY, scenarioIdx: si, build: b, positions })));
 			const ranked = rankedOf();
 			if (ranked.length >= 2) {
-				const top = ev.paired(NS_VERIFY, si, ranked[0].b, ranked[1].b, pick);
+				const top = ev.paired(NS_VERIFY, si, ranked[0].b, ranked[1].b, vpick);
 				if (top && !isTie(top.ci95)) break; // #1 vs #2 resolved (§G)
 			}
 			// Stop mid-verify: truncate on the spot like verifyAcross (anytime, P5).
@@ -532,7 +561,7 @@ async function runSingleScenario(
 		const ranked = rankedOf();
 		if (!ranked.length) throw new Error('optimizer: verification produced no measurable builds');
 		const pairedCiVs = (b: BuildRefLite): [number, number] => {
-			const p = ev.paired(NS_VERIFY, si, ranked[0].b, b, pick);
+			const p = ev.paired(NS_VERIFY, si, ranked[0].b, b, vpick);
 			return p ? p.ci95 : [0, 0]; // no common seeds ⇒ cannot claim a difference: honest tie
 		};
 		let rows: ScoredBuild[] = ranked.map(({ b, obj, stats }) => {
@@ -546,11 +575,12 @@ async function runSingleScenario(
 		// Recommendation inside the tie group: more SP left, then fewer skills (§G).
 		const group = rows.filter(r => r.tiedWithBest || r.build.id === ranked[0].b.id);
 		const best = group.sort((a, b) =>
-			b.leftover - a.leftover || a.skillCount - b.skillCount || b.obj.mean - a.obj.mean || (a.build.id < b.build.id ? -1 : 1))[0];
+			b.leftover - a.leftover || a.skillCount - b.skillCount || b.obj.mean - a.obj.mean
+			|| (byLead ? (b.stats?.lead.mean ?? -Infinity) - (a.stats?.lead.mean ?? -Infinity) : 0) || (a.build.id < b.build.id ? -1 : 1))[0];
 		rows = [best, ...rows.filter(r => r.build.id !== best.build.id)];
 		for (const r of rows) {
 			if (r.build.id === best.build.id) { r.tiedWithBest = false; continue; }
-			const p = ev.paired(NS_VERIFY, si, best.build, r.build, pick);
+			const p = ev.paired(NS_VERIFY, si, best.build, r.build, vpick);
 			r.tiedWithBest = p ? isTie(p.ci95) : true; // no common seeds ⇒ honest tie
 		}
 		// §13.3 invariants — an over-budget or double-group build must never escape.
@@ -626,6 +656,7 @@ async function runSingleScenario(
 			bestActivations: tele(best.build) ?? undefined,
 			contributions,
 			reference,
+			rankedByLead: byLead || undefined,
 		};
 	};
 
@@ -1353,11 +1384,11 @@ export interface AggregatedView extends SearchEvaluator {
 
 export function aggregatedEvaluator(
 	ev: SearchEvaluator, scenarioIdxs: readonly number[], aggregation: AggregationKind, objective: ObjectiveKind,
-	currency: SearchCurrency = 'aligned', clipL = Infinity,
+	currency: SearchCurrency = 'aligned', clipL = Infinity, floorL?: number,
 ): AggregatedView {
 	const sis = [...scenarioIdxs];
 	if (sis.length < 2) throw new Error('optimizer: aggregatedEvaluator needs at least two scenarios');
-	const one = searchPickOf(objective, currency, clipL);
+	const one = searchPickOf(objective, currency, clipL, floorL);
 	const merged = new Map<string, SeedSlot[]>(); // `${ns}|${identity}`, rebuilt on every ensure
 	const dropMerged = (): void => { merged.clear(); };
 
@@ -1498,7 +1529,9 @@ export async function runOptimizer(
 		// never noisier than its parts, so this width is the generous one.
 		const noiseVariants = noiseVariantSelections(input.space, input.effort).map(sel => buildRef(input.space, sel));
 		const rawNoise = await calibrateNoise(ev, input.effort, sidxs[0], buildRef(input.space, []), noiseVariants);
-		const aggEv = aggregatedEvaluator(ev, sidxs, input.aggregation, input.objective, input.searchCurrency, leadClipL(rawNoise.sigmaLead));
+		const rawClipL = leadClipL(rawNoise.sigmaLead);
+		const aggEv = aggregatedEvaluator(ev, sidxs, input.aggregation, input.objective, input.searchCurrency,
+			rawClipL, leadFloorL(rawClipL, rawNoise.baseLead));
 		// The adapter has already applied the §F currency per scenario and
 		// combined it by the aggregation, so the pipeline reads its slots as-is.
 		const agg = await runSingleScenario(

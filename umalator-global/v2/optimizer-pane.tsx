@@ -405,12 +405,24 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	/** Bumped when the opening book changes, so its count re-reads. */
 	const [bookTick, setBookTick] = useState(0);
 
-	/** The pool this pane offers: the caller's candidates plus whatever was put back. */
-	const candidates = useMemo(
+	/** How an imported career narrows the pool: its offer list, which only a Hachimi
+	 *  dump carries, and the skills that career cannot learn. */
+	const [poolFilter, setPoolFilter] = useState<Set<string> | null>(null);
+	const [poolBlock, setPoolBlock] = useState<Set<string>>(() => new Set());
+
+	/** The caller's candidates plus whatever the user took back from the exclusions. */
+	const withBack = useMemo(
 		() => applyExclusions(props.candidates, excluded, focusOn, included),
 		[props.candidates, excluded, focusOn, included],
 	);
-	const leftOut = excluded.length - (candidates.length - props.candidates.length);
+	/** The pool this pane offers. The career rule is applied here, not to the
+	 *  selection, so a skill that career cannot buy cannot come back through
+	 *  "Allow all" or a later re-derivation of the candidate list. */
+	const candidates = useMemo(
+		() => withBack.filter((id) => (!poolFilter || poolFilter.has(id)) && !poolBlock.has(id)),
+		[withBack, poolFilter, poolBlock],
+	);
+	const leftOut = excluded.length - (withBack.length - props.candidates.length);
 
 	// ── run machinery ─────────────────────────────────────────────────────────
 	const evRef = useRef<Evaluator | null>(null);
@@ -527,19 +539,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const savedBuilds = useMemo(() => (bk ? bookCount(bk) : 0), [bk, bookTick]);
 
 	// ── career import ─────────────────────────────────────────────────────────
-	/** The offer pool from an imported Hachimi career dump, kept as a set so the
-	 *  selection is re-cut whenever `candidates` changes (the imported uma
-	 *  re-derives that list, and it lands after this handler returns). */
-	const [poolFilter, setPoolFilter] = useState<Set<string> | null>(null);
-	/** What an imported career cannot learn, subtracted from the pool either way. */
-	const [poolBlock, setPoolBlock] = useState<Set<string>>(() => new Set());
 	const [career, setCareer] = useState<CareerImport | null>(null);
-	useEffect(() => {
-		if (!candidates.length || (!poolFilter && !poolBlock.size)) return;
-		const keep = (id: string) => (!poolFilter || poolFilter.has(id)) && !poolBlock.has(id);
-		setChosen(new Set(candidates.filter((id) => keep(id) && !mustHave.has(id))));
-		setMustHave((prev) => new Set([...prev].filter(keep)));
-	}, [poolFilter, poolBlock, candidates]);
+	/** Of the skills the app would offer, how many that career cannot learn. */
+	const blockedOut = useMemo(() => withBack.filter((id) => poolBlock.has(id)).length, [withBack, poolBlock]);
 
 	const importCareer = async () => {
 		if (runningRef.current) return;
@@ -917,7 +919,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<div class="v2-opt-career">
 						<span>{career.summary}</span>
 						{poolFilter && <span class="v2-opt-muted"> · pool limited to what that career was offering</span>}
-						{poolBlock.size > 0 && <span class="v2-opt-muted"> · {poolBlock.size} skill(s) that career cannot learn are out of the pool</span>}
+						{blockedOut > 0 && <span class="v2-opt-muted"> · {blockedOut} skill(s) that career cannot learn are out of the pool</span>}
 						{career.warnings.length > 0 && (
 							<details class="v2-opt-inline-details">
 								<summary>{career.warnings.length} import note{career.warnings.length > 1 ? 's' : ''}</summary>
@@ -1071,7 +1073,7 @@ function OptimizerResults(props: {
 			<header class="v2-opt-card-header">
 				<h3>Results</h3>
 				<span class="v2-opt-subtitle">
-					Ranked by {goal.label.toLowerCase()}, checked on {result.verificationSeeds.toLocaleString()} new races per build.
+					Ranked by {(result.rankedByLead ? goalOf('meanLead') : goal).label.toLowerCase()}, checked on {result.verificationSeeds.toLocaleString()} new races per build.
 					Click a build to see what each skill is worth.
 				</span>
 			</header>
@@ -1080,8 +1082,10 @@ function OptimizerResults(props: {
 					<strong>No build {objective === 'p1' ? 'won' : 'placed in the top 3 in'} a single race against this field.</strong>{' '}
 					{Number.isFinite(bestLead) ? `The best one still finished ${fmtN(Math.abs(bestLead), 1)} lengths behind the winner. ` : ''}
 					That is normal at the end of a career with nothing bought yet, but it means the {goal.short.toLowerCase()} cannot tell
-					these builds apart, so they are a tie, not a ranking. Set the goal to <strong>Margin vs winner</strong> to rank
-					builds by how much ground they gain.
+					these builds apart.{' '}
+					{result.rankedByLead
+						? <>So they are ordered by how much ground they gain instead, as <strong>Margin vs winner</strong> would rank them.</>
+						: <>So they are a tie, not a ranking. Set the goal to <strong>Margin vs winner</strong> to rank builds by how much ground they gain.</>}
 				</div>
 			)}
 			{result.stoppedEarly && (

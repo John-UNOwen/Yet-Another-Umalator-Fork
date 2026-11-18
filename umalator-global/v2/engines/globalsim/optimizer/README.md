@@ -32,7 +32,11 @@ seeds are disjoint (P3), ties are reported honestly (P4), and the run is anytime
   chart-parity screening, MCKP restarts, in-context drop/add/replace/pair moves
   with bandit allocation and knapsack re-solve (the search currency, §6.1 + §F:
   ℓ, clipped to ±2.5 measured σ(ℓ) for the win-rate objectives because past
-  that a bigger lead moves P(1st) by under a point),
+  that a bigger lead moves P(1st) by under a point. The lower edge sits one
+  clip width below the base build's mean ℓ when the base is behind the field,
+  so a uma that never wins still has a lead to climb. When every verified
+  build's rate is 0, Stage G orders, ties and resolves them by ℓ and the result
+  sets `rankedByLead`),
   Stage F = §C certified local search: every round enumerates the full feasible
   N1 (drop, add, swap/tier-move, 2-for-1 incl. upgrade-and-sell, 1-for-2, with no
   caps and no estimate pruning) and screens the waves with the bandit's

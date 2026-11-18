@@ -209,12 +209,18 @@ export interface OptimizerResult {
 	/** gainVsCurrent: the user's current build, verified on the same seeds as
 	 *  the rows. Reported here instead of as a row, unless it won. */
 	reference?: ScoredBuild;
+	/** The objective was a rate (P(1st) or P(top 3)) that came out exactly 0 for
+	 *  every verified build, so the rows were ordered and tied by the lead
+	 *  instead. The row scores still show the objective. */
+	rankedByLead?: boolean;
 }
 
 /** §7.3 noise calibration output. */
 export interface NoiseInfo {
 	/** sd of per-seed ℓ of the base build. */
 	sigmaLead: number;
+	/** Mean per-seed ℓ of the base build (the §F clip's lower edge sits below it). */
+	baseLead: number;
 	/** Paired sd of ℓ differences (base vs single-skill variants); the §C
 	 *  climb's ladder ceiling sizes from it (§D.4), and the pane prints it. */
 	sigmaDeltaLead: number;

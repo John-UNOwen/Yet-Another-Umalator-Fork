@@ -542,5 +542,6 @@ export async function calibrateNoise(
 	const sigmaDelta = sdCentred(deltas) || sd(leads) || NaN;
 	// The 95% band half-width a paired comparison resolves at gSeedsMin seeds:
 	const resolvedDeltaL = (2 * 1.96 * sigmaDelta) / Math.sqrt(Math.max(1, cfg.gSeedsMin));
-	return { sigmaLead: sd(leads), sigmaDeltaLead: sigmaDelta, baseP1: st.win.mean, nSeeds: n, resolvedDeltaL };
+	const baseLead = leads.length ? leads.reduce((a, b) => a + b, 0) / leads.length : NaN;
+	return { sigmaLead: sd(leads), baseLead, sigmaDeltaLead: sigmaDelta, baseP1: st.win.mean, nSeeds: n, resolvedDeltaL };
 }
