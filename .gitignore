@@ -44,3 +44,9 @@ videos/
 
 # vision-router artifacts (local tool output)
 /.dsh-vision-router/
+
+# On-device OCR assets, fetched by tools/fetch-ocr-assets.mjs and checked against ocr/MANIFEST.json.
+# The manifest stays tracked, the binaries do not.
+/ocr/ort/
+/ocr/models/
+/ocr/licenses/
