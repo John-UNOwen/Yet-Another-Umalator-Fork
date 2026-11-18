@@ -305,9 +305,11 @@ test('validation: bad strategy / aptitude / mood / uniqueLv', t => {
 	t.deepEqual(errCodes(toGlobalSimRunner(horse({ surfaceAptitude: 'X' }), 0)), ['bad-aptitude']);
 	t.deepEqual(errCodes(toGlobalSimRunner(horse({ mood: 3 }), 0)), ['bad-mood']);
 	t.deepEqual(errCodes(toGlobalSimRunner(horse({ mood: 1.5 }), 0)), ['bad-mood']);
-	// outfit 102201 (3★) resolves a unique skill; uniqueLv 4 is not a game level.
-	const h = new HorseState({ ...EXAMPLE_HORSE, outfitId: '102201', starCount: 3 as const, uniqueLv: 4 });
-	t.deepEqual(errCodes(toGlobalSimRunner(h, 0)), ['bad-uniqueLv']);
+	// outfit 102201 (3★) resolves a unique skill. Levels 1 to 6 are game levels, 0 and 7 are not.
+	const at = (uniqueLv: number) => new HorseState({ ...EXAMPLE_HORSE, outfitId: '102201', starCount: 3 as const, uniqueLv });
+	for (const lv of [4, 6]) t.deepEqual(errCodes(toGlobalSimRunner(at(lv), 0)), [], `uniqueLv ${lv} is accepted`);
+	t.deepEqual(errCodes(toGlobalSimRunner(at(7), 0)), ['bad-uniqueLv']);
+	t.deepEqual(errCodes(toGlobalSimRunner(at(0), 0)), ['bad-uniqueLv']);
 	t.end();
 });
 

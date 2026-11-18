@@ -253,6 +253,9 @@ export function canonicalSkillOrder(ids: readonly string[]): string[] {
  */
 export const MEASURED_SKILL_LEVEL = 3;
 
+/** Highest unique skill level the app offers (the unique chip's max, storage.ts and career import clamp). */
+export const MAX_UNIQUE_LV = 6;
+
 /**
  * Map one HorseState to a GlobalSim runner (stats RAW — no overcap/mood/ground
  * pre-adjustment; GlobalSim applies those itself). The unique skill from
@@ -297,8 +300,8 @@ export function toGlobalSimRunner(
 	// Unique skill: same lookup the classic compare path uses (compare.ts:88).
 	const uniqueId = uniqueSkillForUma(horse.get('outfitId'), horse.get('starCount'));
 	const uniqueLv = horse.get('uniqueLv');
-	if (uniqueId && (!Number.isInteger(uniqueLv) || uniqueLv < 1 || uniqueLv > 3)) {
-		errors.push({ code: 'bad-uniqueLv', field: `${fieldBase}.uniqueLv`, message: `uniqueLv must be an integer in [1, 3] when a unique skill is present (got ${JSON.stringify(uniqueLv)})` });
+	if (uniqueId && (!Number.isInteger(uniqueLv) || uniqueLv < 1 || uniqueLv > MAX_UNIQUE_LV)) {
+		errors.push({ code: 'bad-uniqueLv', field: `${fieldBase}.uniqueLv`, message: `uniqueLv must be an integer in [1, ${MAX_UNIQUE_LV}] when a unique skill is present (got ${JSON.stringify(uniqueLv)})` });
 	}
 
 	// HorseState.skills is an Immutable Map keyed by groupId (values = skill ids),
