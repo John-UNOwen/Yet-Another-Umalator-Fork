@@ -61,7 +61,7 @@ import {
 } from "lucide-react";
 import { V2TrackSelect } from "./track-select";
 import { CompactConditions, ConditionGroups, GlobalsimFieldControls } from "./conditions";
-import { presets, visiblePresets, DEFAULT_PRESET } from "./presets";
+import { presets, visiblePresets, DEFAULT_PRESET, EventType } from "./presets";
 import { V2UmaPanel, UmaState, defaultUmaState } from "./uma-panel";
 import { TraineesTab } from "./trainees-tab";
 import { UmasTab, UmasTabState, initialUmasTabState } from "./roster/umas-tab";
@@ -221,6 +221,7 @@ const STRINGS = {
 };
 
 import tracknames from "../../uma-skill-tools/data/tracknames.json";
+import { initAnalytics, setRunContext, track } from "./analytics";
 Object.keys(tracknames).forEach(
   (k) => (STRINGS["tracknames"][k] = tracknames[k][1]),
 );
@@ -740,7 +741,25 @@ function App() {
   // The merged build goes back through the app's own validator, so a file with a
   // bad value in it cannot push a stat out of range; if validation rejects it, the
   // previous uma is left alone.
+  // Categories sent with each run event (course, distance, ground, style, preset).
+  useEffect(() => {
+    const course = courseData[courseId];
+    const preset = selectedPresetId == null ? null : presets.find((p) => p.id === selectedPresetId);
+    const kind = preset?.type === EventType.LOH ? "LOH" : "CM";
+    setRunContext({
+      courseId,
+      trackName: course ? tracknames[course.raceTrackId]?.[1] : undefined,
+      distance: course?.distance,
+      distanceType: course?.distanceType,
+      surface: course?.surface,
+      ground,
+      strategy: uma1.strategy,
+      preset: preset ? { key: `${kind}-${preset.id}`, title: `${kind} ${preset.id} - ${preset.name}` } : null,
+    });
+  }, [courseId, ground, uma1.strategy, selectedPresetId]);
+
   const handleImportCareer = useCallback((imp: CareerImport) => {
+    track("career-import");
     setUma1((prev) => validateAndParseUmaJson({ ...prev, ...imp.uma }) ?? prev);
     if (imp.hints.size) {
       setSkillHints((prev) => {
@@ -906,6 +925,7 @@ function App() {
     chartAbortRef.current?.abort();
     chartAbortRef.current = null;
     setIsRunning(true);
+    track("skill-chart-run");
     setCompletedWorkers(0);
     setSkillChartResults(new Map());
     setSkillChartProgress({});
@@ -1068,6 +1088,7 @@ function App() {
     }
     if (mode === "compare") {
       setIsRunning(true);
+      track("compare-run");
       setResults(null);
 
       const course = courseData[courseId];
@@ -1712,6 +1733,7 @@ function App() {
                       label: "Copy Link",
                       icon: <Link size={16} />,
                       onClick: () => {
+                        track("copy-link");
                         copyShareableUrl({
                           courseId,
                           ground,
@@ -2646,3 +2668,4 @@ function App() {
 }
 
 render(<App />, document.getElementById("app")!);
+initAnalytics();

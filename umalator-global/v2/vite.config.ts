@@ -163,6 +163,8 @@ export default defineConfig(({ mode }) => {
     CC_OCR_PROXY: JSON.stringify(env.OCR_PROXY_URL || ''),
     CC_TURNSTILE_SITEKEY: JSON.stringify(env.TURNSTILE_SITEKEY || ''),
     CC_COW_SKIN: JSON.stringify(env.COW_SKIN || ''),
+    // GoatCounter site code; empty (local, forks) means no analytics. See analytics.ts.
+    CC_GOATCOUNTER: JSON.stringify(env.GOATCOUNTER_CODE || ''),
     'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools'),
   },
 

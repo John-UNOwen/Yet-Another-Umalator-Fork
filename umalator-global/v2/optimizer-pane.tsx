@@ -48,6 +48,7 @@ import { Grade } from '../../uma-skill-tools/RaceParameters';
 import { fromJS, Map as ImmMap } from 'immutable';
 import { skillDisplayName } from './skill-name';
 import skillmeta from '../../skill_meta.json';
+import { track } from './analytics';
 
 export interface OptimizerPaneProps {
 	/** GlobalSim worker-pool factory (app-v2 globalsimWorkerFactory). */
@@ -575,6 +576,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		if (runningRef.current || !skillData || !workerFactory) return;
 		runningRef.current = true;
 		setRunning(true);
+		track('optimizer-run');
 		setMessage(null);
 		setRunResult(null);
 		setProgress(null);

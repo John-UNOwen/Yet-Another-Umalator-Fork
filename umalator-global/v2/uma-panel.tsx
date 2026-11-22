@@ -35,6 +35,7 @@ import skillmeta from '../../skill_meta.json';
 import { skillGroups } from './skill-chart-utils';
 import notInGame from '../not-in-game.json';
 import { BASE_PATH, resolveBase } from '../../components/base-path';
+import { track } from './analytics';
 
 // ============================================
 // UNIQUE SKILL CALCULATION
@@ -719,6 +720,7 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 			alert('The screenshot read has a value the simulator cannot use (check the stats, mood and aptitudes), so it was not loaded.');
 			return;
 		}
+		track('ocr-import');
 		onLoad?.(parsed);
 	}, [onLoad]);
 

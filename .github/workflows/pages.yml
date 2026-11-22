@@ -63,6 +63,9 @@ jobs:
       - name: Build the v2 site
         env:
           CC_BASE_PATH: /${{ github.event.repository.name }}
+          # GoatCounter site code (Settings > Secrets and variables > Actions > Variables).
+          # Unset = the site ships with no analytics. See umalator-global/v2/analytics.ts.
+          GOATCOUNTER_CODE: ${{ vars.GOATCOUNTER_CODE }}
         run: |
           npm ci
           npm run build:v2
