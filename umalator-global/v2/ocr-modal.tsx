@@ -59,6 +59,8 @@ interface Shot {
 	url: string;
 	bytes: ArrayBuffer;
 	size: number;
+	/** Read already: its result is in `results` at the same index, so a later read skips it. */
+	read?: boolean;
 }
 
 type Phase = 'pick' | 'ask' | 'work' | 'review';
@@ -107,9 +109,18 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 	const workerRef = useRef<Worker | null>(null);
 	const waitingRef = useRef(new Map<number, { resolve: (r: ScanResult) => void; reject: (e: Error) => void }>());
 
+	// The previews are object URLs, which hold their image until revoked: release them when the
+	// modal opens or closes, and when it unmounts.
+	const shotsRef = useRef<Shot[]>([]);
+	shotsRef.current = shots;
+	useEffect(() => () => { for (const s of shotsRef.current) URL.revokeObjectURL(s.url); }, []);
+
 	useEffect(() => {
+		setShots((held) => {
+			for (const s of held) URL.revokeObjectURL(s.url);
+			return held.length ? [] : held;
+		});
 		if (!isOpen) return;
-		setShots([]);
 		setResults([]);
 		setPhase('pick');
 		setProgress(null);
@@ -148,14 +159,19 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 		setPhase('work');
 		const w = worker();
 		w.postMessage({ type: 'prepare', names: OFFERED });
+		// Only the shots not read yet: results line up with shots by index, and the read ones are
+		// already in them. New shots are only ever added at the end, so these are the tail.
+		const todo = list.filter((s) => !s.read);
 		const found: ScanResult[] = [];
 		try {
-			for (const [i, shot] of list.entries()) {
-				setProgress({ stage: 'read', done: i, total: list.length });
+			for (const [i, shot] of todo.entries()) {
+				setProgress({ stage: 'read', done: i, total: todo.length });
 				found.push(await new Promise<ScanResult>((resolve, reject) => {
 					const id = waitingRef.current.size + 1000 + i;
 					waitingRef.current.set(id, { resolve, reject });
-					w.postMessage({ type: 'scan', id, source: shot.bytes }, [shot.bytes]);
+					// A copy, not a transfer: a transfer empties the shot's own buffer, and a retry or a
+					// later read would then send nothing.
+					w.postMessage({ type: 'scan', id, source: shot.bytes.slice(0) });
 				}));
 			}
 		} catch (err) {
@@ -164,6 +180,7 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 			return;
 		}
 		setResults((held) => [...held, ...found]);
+		setShots((held) => held.map((s) => (todo.includes(s) ? { ...s, read: true } : s)));
 		setPhase('review');
 	}, [worker]);
 

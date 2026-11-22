@@ -811,26 +811,32 @@ function App() {
     savePreferences({ notificationDismissed: NOTIFICATION_ID });
   }, []);
 
-  // Publish the real height of the header band (+ the open Advanced strip) as
-  // --header-height. Nothing static can match it: the control bar wraps to two
-  // or three bands by width, the strip toggles, and a dismissed banner shifts
-  // the bar down. The fixed uma drawer hangs itself from this var below 1920px,
-  // so a stale value buries its header under the bar and pushes its bottom off
-  // screen — which is what the fixed-height widescreen shell no longer needs.
+  // Publish where the control bar (+ the open Advanced strip) ends on screen as
+  // --header-bottom. Nothing static can match it: the bar wraps to two or three
+  // bands by width, the strip toggles, a banner shifts the bar down, and below
+  // 1920px the page scrolls the bar away. The fixed drawers hang from this var,
+  // so a stale value buries their headers under the bar (it sits above them).
   useEffect(() => {
     const root = document.documentElement;
     let raf = 0;
+    let last = -1;
     const measure = () => {
       raf = 0;
       const header = document.querySelector(".v2-header");
       if (!header) return;
       const strip = document.querySelector(".v2-advanced-strip");
-      const h = Math.round(
-        (header as HTMLElement).offsetTop +
-          header.getBoundingClientRect().height +
-          (strip?.getBoundingClientRect().height ?? 0),
+      const bottom = Math.max(
+        0,
+        Math.round(
+          Math.max(
+            header.getBoundingClientRect().bottom,
+            strip?.getBoundingClientRect().bottom ?? 0,
+          ),
+        ),
       );
-      if (h > 0) root.style.setProperty("--header-height", `${h}px`);
+      if (bottom === last) return;
+      last = bottom;
+      root.style.setProperty("--header-bottom", `${bottom}px`);
     };
     // Coalesce: a resize/zoom pass fires the observer many times per frame.
     const schedule = () => {
@@ -845,10 +851,13 @@ function App() {
       if (el) ro.observe(el);
     }
     window.addEventListener("resize", schedule);
+    // Scrolling measures at once: deferred a frame, the drawers trail the bar.
+    window.addEventListener("scroll", measure, { passive: true });
     return () => {
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", measure);
     };
   }, [advancedOpen, showNotification]);
 

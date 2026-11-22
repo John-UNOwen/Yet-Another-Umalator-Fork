@@ -34,7 +34,8 @@ export function validateAndParseUmaJson(json: any): UmaState | null {
 	// Check required numeric fields
 	const numericFields = ['speed', 'stamina', 'power', 'guts', 'wisdom', 'mood'];
 	for (const field of numericFields) {
-		if (typeof json[field] !== 'number') return null;
+		// Finite too: NaN is a number, and the engine adapter rejects it on every run.
+		if (typeof json[field] !== 'number' || !Number.isFinite(json[field])) return null;
 	}
 
 	// Check required string fields
@@ -81,11 +82,12 @@ export function validateAndParseUmaJson(json: any): UmaState | null {
 		// and then failed every run.
 		starCount: Number.isFinite(json.starCount) ? Math.max(1, Math.min(5, Math.round(json.starCount))) : 3,
 		uniqueLv: Number.isFinite(json.uniqueLv) ? Math.max(1, Math.min(6, Math.round(json.uniqueLv))) : 1, // 6 = adapter MAX_UNIQUE_LV
-		speed: Math.max(1, Math.min(2000, json.speed)),
-		stamina: Math.max(1, Math.min(2000, json.stamina)),
-		power: Math.max(1, Math.min(2000, json.power)),
-		guts: Math.max(1, Math.min(2000, json.guts)),
-		wisdom: Math.max(1, Math.min(2000, json.wisdom)),
+		// The game's stats are whole numbers, so a typed 1200.5 is rounded like the star count.
+		speed: Math.max(1, Math.min(2000, Math.round(json.speed))),
+		stamina: Math.max(1, Math.min(2000, Math.round(json.stamina))),
+		power: Math.max(1, Math.min(2000, Math.round(json.power))),
+		guts: Math.max(1, Math.min(2000, Math.round(json.guts))),
+		wisdom: Math.max(1, Math.min(2000, Math.round(json.wisdom))),
 		strategy: json.strategy,
 		distanceAptitude: json.distanceAptitude,
 		surfaceAptitude: json.surfaceAptitude,

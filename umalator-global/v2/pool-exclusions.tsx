@@ -3,7 +3,8 @@
  * Skill Optimizer: one line per skill with the reason, an "include anyway" box per
  * skill, and a master switch for the filter.
  */
-import { h } from 'preact';
+import { h, Fragment } from 'preact';
+import { useState } from 'preact/hooks';
 import type { PoolExclusion } from './skill-chart-utils';
 import { skillDisplayName } from './skill-name';
 
@@ -24,15 +25,21 @@ export interface PoolExclusionListProps {
 
 export function PoolExclusionList(props: PoolExclusionListProps) {
 	const { excluded, included, onToggle, focusOn, onFocusChange, disabled, note } = props;
+	// The body is only rendered while the dropdown is open. A closed <details> still
+	// holds its text, and the browser's find-in-page (Ctrl+F) matches it and pops the
+	// dropdown open, so a search for a skill in the chart landed here instead.
+	const [open, setOpen] = useState(false);
 	if (!excluded.length) return null;
 	const back = excluded.filter(e => e.kind !== 'engine' && (!focusOn || included.has(e.id))).length;
 	const leftOut = excluded.length - back;
 	return (
-		<details class="v2-pool-exclusions" style={{ fontSize: 12 }}>
+		<details class="v2-pool-exclusions" style={{ fontSize: 12 }} open={open}
+			onToggle={(ev) => setOpen((ev.currentTarget as HTMLDetailsElement).open)}>
 			<summary style={{ cursor: 'pointer', opacity: 0.8 }}>
 				{leftOut} skill{leftOut === 1 ? '' : 's'} left the pool
 				{back > 0 ? ` · ${back} put back` : ''}
 			</summary>
+			{open && <>
 			<label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0', cursor: 'pointer' }}
 				title="Leave out skills whose own condition cannot hold in this race, or that the app check finds no activation window for. Turning this off puts them all back, so the run simulates them too.">
 				<input type="checkbox" checked={focusOn} disabled={disabled} onChange={() => onFocusChange(!focusOn)} />
@@ -54,6 +61,7 @@ export function PoolExclusionList(props: PoolExclusionListProps) {
 					);
 				})}
 			</div>
+			</>}
 		</details>
 	);
 }

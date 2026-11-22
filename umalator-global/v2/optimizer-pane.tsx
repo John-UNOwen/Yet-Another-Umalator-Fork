@@ -457,6 +457,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const pooledRef = useRef<Set<string>>(new Set());
 	/** Must-haves the current pool leaves out, restored when it brings them back. */
 	const parkedMustRef = useRef<Set<string>>(new Set());
+	// The same set for rendering: a parked must-have has no row in the pool, so the note under the
+	// pool buttons is the only place it shows, and where it can be forgotten.
+	const [parkedMust, setParkedMust] = useState<string[]>([]);
 	useEffect(() => {
 		// The app passes an empty list for a moment while it re-derives the pool
 		// (a layout change does it). Remembering that empty list would make every
@@ -483,6 +486,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		for (const id of mustHave) if (!now.has(id)) parked.add(id);
 		const back = [...parked].filter((id) => now.has(id));
 		for (const id of back) parked.delete(id);
+		setParkedMust((prev) => (prev.length === parked.size && prev.every((id) => parked.has(id)) ? prev : [...parked]));
 		setMustHave((prev) => {
 			const next = new Set([...prev].filter((id) => now.has(id)));
 			for (const id of back) next.add(id);
@@ -576,7 +580,6 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		if (runningRef.current || !skillData || !workerFactory) return;
 		runningRef.current = true;
 		setRunning(true);
-		track('optimizer-run');
 		setMessage(null);
 		setRunResult(null);
 		setProgress(null);
@@ -613,6 +616,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			return fail('No skill in the pool can be bought (already owned, purple, or outside the active table), so there is nothing to search.');
 		}
 		if (!course) return fail('Course data unavailable.');
+		// Counted only past the checks above, so a run that stops at once with a message is not one.
+		track('optimizer-run');
 
 		// UmaState → HorseState, the exact chart-run conversion (app-v2).
 		const w: any = convertUmaStateForWorker(uma);
@@ -931,6 +936,16 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 							onClick={props.onResetHints}>Clear hints</Button>
 					)}
 				</div>
+				{parkedMust.length > 0 && (
+					<div class="v2-opt-muted" style={{ fontSize: 12, margin: '4px 0', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+						<span>
+							{parkedMust.length} must-have{parkedMust.length > 1 ? 's' : ''} out of this pool ({parkedMust.map(skillName).join(', ')}),
+							{' '}marked must-have again if a later pool has {parkedMust.length > 1 ? 'them' : 'it'}.
+						</span>
+						<Button size="sm" variant="ghost" disabled={running}
+							onClick={() => { parkedMustRef.current.clear(); setParkedMust([]); }}>Forget</Button>
+					</div>
+				)}
 				{career && (
 					<div class="v2-opt-career">
 						<span>{career.summary}</span>

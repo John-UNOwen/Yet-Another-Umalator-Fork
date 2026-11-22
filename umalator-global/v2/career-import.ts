@@ -498,7 +498,7 @@ function convertUmadumpCareer(snap: any, file: string): CareerImport {
 
 	const tiers = parseTiers(c.skill_tips_array, warnings);
 	const hints = snapshotHints(tiers, warnings);
-	const offered = snapshotPool(tiers, outfitSkillSets[String(c.card_id ?? '')] ?? [], owned);
+	const offered = snapshotPool(tiers, outfitSkillsAt(String(c.card_id ?? ''), c.talent_level, warnings), owned);
 	warnings.push(offered.length
 		? 'The Optimizer pool comes from the hint tiers in this snapshot and the skill list this outfit brings, so a skill outside both stays out of it.'
 		: 'Nothing in this snapshot names a skill the Optimizer could offer, so the pool was left as it is.');
@@ -557,9 +557,25 @@ function tierSkills(groupId: number, rarity: number): string[] {
 /** Skill ids the game's skill screen never sells, so no career pool should offer them. */
 const neverSold = new Set<string>(careerUnbuyable.skills);
 
-/** The skills each outfit brings into a career, master.mdb's card skill sets by outfit id.
- *  The game holds the higher rungs of that list back until the uma's rank reaches them. */
-const outfitSkillSets = careerCardSkillsRaw as Record<string, string[]>;
+/** The skills each outfit brings into a career, master.mdb's card skill sets by outfit id, as
+ *  [skillId, need_rank]. need_rank 0 is offered from the start; 2-5 waits for that awakening level. */
+const outfitSkillSets = careerCardSkillsRaw as unknown as Record<string, [string, number][]>;
+
+/**
+ * The outfit's skills the career can buy: the rungs its awakening level (`talent_level`) has
+ * reached. A snapshot without that level keeps every rung and says so, since it cannot tell.
+ */
+function outfitSkillsAt(cardId: string, talentLevel: unknown, warnings: string[]): string[] {
+	const list = outfitSkillSets[cardId] ?? [];
+	if (isNum(talentLevel)) {
+		const level = Math.round(talentLevel);
+		return list.filter(([, need]) => need <= level).map(([id]) => id);
+	}
+	if (list.some(([, need]) => need > 0)) {
+		warnings.push('The snapshot does not give the uma’s awakening level, so the pool also has the outfit skills a higher awakening level unlocks.');
+	}
+	return list.map(([id]) => id);
+}
 
 /** One readable `skill_tips_array` entry: the hint tier of one family at one rarity. */
 interface HintTier {

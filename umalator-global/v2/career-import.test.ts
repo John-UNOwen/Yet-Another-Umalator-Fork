@@ -288,7 +288,8 @@ const soldIn = (group: string) => Object.keys(skilldata)
 const MILE_MAVEN = '200681';
 
 /** What outfit OUTFIT brings into a career: sold, and known to the app's skill table. */
-const outfitSkills = (((careerCardSkills as Record<string, string[]>)[OUTFIT]) ?? [])
+const outfitRungs = ((careerCardSkills as unknown as Record<string, [string, number][]>)[OUTFIT]) ?? [];
+const outfitSkills = outfitRungs.map(([id]) => id)
 	.filter((id) => !careerUnbuyable.skills.includes(id) && !!(skilldata as Record<string, any>)[id]);
 if (!outfitSkills.includes(MILE_MAVEN)) {
 	throw new Error(`test fixture bug: outfit ${OUTFIT} no longer brings ${MILE_MAVEN}`);
@@ -311,6 +312,8 @@ function snapshot(charaOver: Record<string, unknown> = {}) {
 		single_mode_load_common: {
 			chara_info: {
 				single_mode_chara_id: 4845, card_id: Number(OUTFIT), rarity: 4,
+				// The awakening level: every rung of the outfit's list is open at 5.
+				talent_level: 5,
 				speed: 1597, stamina: 570, power: 1235, wiz: 955, guts: 551,
 				motivation: 5, fans: 231291, race_running_style: 2,
 				proper_ground_turf: 7, proper_ground_dirt: 7,
@@ -427,6 +430,20 @@ test('the pool leaves out what the career has already learned', (t) => {
 	t.same(owned.offered, expectedPool(), 'the only family hinted is the uma’s own unique, so the pool is the outfit’s list');
 	t.notOk(owned.offered.includes(UNIQUE), 'and what the career has is not offered back');
 	t.equal(owned.hints.get(UNIQUE), 2, 'the hint level still lands on that skill');
+	t.end();
+});
+
+test('the outfit skills follow the awakening level when the snapshot gives it', (t) => {
+	const gated = outfitRungs.filter(([, need]) => need > 1).map(([id]) => id).filter((id) => outfitSkills.includes(id));
+	if (!gated.length) throw new Error(`test fixture bug: outfit ${OUTFIT} has no skill above awakening level 1`);
+	const low = convertCareerDump(snapshot({ talent_level: 1, skill_tips_array: [] }))!;
+	t.ok(gated.every((id) => !low.offered.includes(id)), 'at awakening level 1 the higher rungs are not offered');
+	t.notOk(low.warnings.some((w) => /awakening level/.test(w)), 'and nothing is said about a level it knows');
+	const full = convertCareerDump(snapshot({ talent_level: 5, skill_tips_array: [] }))!;
+	t.ok(gated.every((id) => full.offered.includes(id)), 'at level 5 every rung is offered');
+	const unknown = convertCareerDump(snapshot({ talent_level: undefined, skill_tips_array: [] }))!;
+	t.ok(gated.every((id) => unknown.offered.includes(id)), 'without a level every rung stays in');
+	t.ok(unknown.warnings.some((w) => /awakening level/.test(w)), 'and the pane says it could not tell');
 	t.end();
 });
 

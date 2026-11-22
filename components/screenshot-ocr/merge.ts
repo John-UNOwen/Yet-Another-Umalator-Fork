@@ -59,6 +59,9 @@ function combine(kept: SkillRead, next: SkillRead): SkillRead {
 		name: better.name,
 		match: { ...better.match, ids },
 		level: levels.length ? Math.max(...levels) : null,
+		// The box of the reading kept, so the review can still crop the row from the shot that read it
+		// (dropped, a skill seen on two screenshots lost its crop).
+		box: better.box,
 	};
 }
 

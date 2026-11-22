@@ -88,11 +88,11 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
-  /* Header height - a fallback only. The real bar wraps to two or three bands
-     depending on width and the Advanced strip adds another, so app-v2.tsx
-     measures it at runtime and overwrites this on :root. Consumers: the fixed
-     uma drawer's top/height below 1920px. */
-  --header-height: 116px;
+  /* Where the control bar ends on screen - a fallback only. The real bar wraps
+     to two or three bands depending on width, the Advanced strip adds another,
+     and the page can scroll it away, so app-v2.tsx measures it at runtime and
+     overwrites this on :root. Consumers: the fixed uma and summary drawers. */
+  --header-bottom: 116px;
 
   /* Drawer width - wide enough for 5 stat inputs */
   --drawer-width: 680px;
@@ -2148,6 +2148,25 @@ body {
   .v2-skill-chart-wrapper {
     height: 100%; /* Fill container */
     overflow: auto; /* Scroll when content exceeds */
+  }
+}
+
+/* The fixed drawers start below the control bar, which sits above them
+   (z-index 200) and would otherwise cover their headers. Phones (768px and
+   below) keep their full-screen overlays, and from 1920px the uma drawer is a
+   static column. */
+@media (min-width: 769px) {
+  .v2-summary-drawer {
+    top: var(--header-bottom);
+    height: calc(100vh - var(--header-bottom)); /* fallback */
+    height: calc(100dvh - var(--header-bottom));
+  }
+}
+@media (min-width: 769px) and (max-width: 1919px) {
+  .v2-uma-drawer {
+    top: var(--header-bottom);
+    height: calc(100vh - var(--header-bottom)); /* fallback */
+    height: calc(100dvh - var(--header-bottom));
   }
 }
 
@@ -6532,6 +6551,14 @@ body {
   }
 
   .v2-header-right {
+    display: none;
+  }
+
+  /* The field, sim and advanced controls live in the More sheet on phones, so
+     the second header row and its strip would only repeat them (and the row
+     overflows sideways at phone width). */
+  .v2-header-sub,
+  .v2-advanced-strip {
     display: none;
   }
 

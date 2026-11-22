@@ -68,12 +68,14 @@ let names: readonly NameEntry[] = [];
 async function prepare(onNames: readonly NameEntry[]): Promise<void> {
 	names = onNames;
 	if (engine) return;
-	engine = (async () => {
+	const loading = (async () => {
 		const manifest = await fetchManifest();
 		const key = manifestKey(manifest);
 		const cache = await openAssetCache(stores, key, `${OCR}`);
-		await dropStaleCaches(stores, 'ocr-' + key);
 		const fetched = await ensureAssets(manifest, cache, { download: (a) => fetchAsset(a.dest), sha256: defaultSha256, onProgress: report('assets') });
+		// Only once the new set is whole, as model-cache.ts describes. What a failed download did fetch
+		// stays in the new cache, so a retry resumes rather than starting over.
+		await dropStaleCaches(stores, 'ocr-' + key);
 		post({ type: 'progress', stage: 'models', done: 0, total: 2 });
 
 		const mod: any = await importRuntime(`${OCR}/ort/ort.wasm.min.js`);
@@ -95,7 +97,11 @@ async function prepare(onNames: readonly NameEntry[]): Promise<void> {
 		if (fetched.length) console.log(`ocr: fetched ${fetched.length} of ${manifest.assets.length} assets`);
 		return built;
 	})();
-	return engine.then(() => undefined);
+	engine = loading;
+	// A failed load is not kept: the next prepare or scan starts it again, so a network blip does not
+	// leave the reader broken until the page reloads.
+	loading.catch(() => { if (engine === loading) engine = null; });
+	return loading.then(() => undefined);
 }
 
 /** A screenshot the user picked, decoded to the RGBA the engine works on. */

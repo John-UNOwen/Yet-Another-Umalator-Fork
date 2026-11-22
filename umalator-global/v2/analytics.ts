@@ -6,8 +6,8 @@
  * nothing. GoatCounter also ignores localhost on its own.
  *
  * What is sent: the page path and query (so `?preset=8` shows up, the hash
- * with a shared build never does), the bare event names below, and with each
- * run a few category events (course, distance, ground, running style, preset).
+ * with a shared build never does), the bare event names below, and one hit per
+ * run naming its preset, course, ground, distance class and running style.
  * No stats, skills or results. An ad blocker or a failed load turns every call
  * into a no-op, so analytics can never break the app.
  */
@@ -21,9 +21,6 @@ export type AnalyticsEvent =
 	| 'copy-link'
 	| 'ocr-import'
 	| 'career-import';
-
-/** Run events also send the current run's category events. */
-const RUN_EVENTS: ReadonlySet<AnalyticsEvent> = new Set(['compare-run', 'skill-chart-run', 'optimizer-run']);
 
 type Hit = { path: string; title: string };
 type GoatCounter = { count: (vars: { path: string; title?: string; event?: boolean }) => void };
@@ -66,11 +63,29 @@ export function initAnalytics(): void {
 	document.head.appendChild(s);
 }
 
-/** Counts one usage event; a run event also counts the current run context. */
+const RUN_MODE: Partial<Record<AnalyticsEvent, string>> = {
+	'compare-run': 'Compare',
+	'skill-chart-run': 'Skill chart',
+	'optimizer-run': 'Optimizer',
+};
+
+/**
+ * Counts one usage event. A run is a single hit whose path carries every run
+ * category (run/<mode>/<preset>/<course>/<ground>/<distance>/<style>): GoatCounter
+ * drops hits sent in a quick burst, so separate category hits lost the last ones.
+ * The dashboard's path filter totals any one category (e.g. "pace-chaser").
+ */
 export function track(name: AnalyticsEvent): void {
 	if (!code) return;
-	hit({ path: name, title: name });
-	if (RUN_EVENTS.has(name)) runContext.forEach(hit);
+	const mode = RUN_MODE[name];
+	if (!mode) {
+		hit({ path: name, title: name });
+		return;
+	}
+	hit({
+		path: ['run', slug(mode), ...runContext.map((p) => p.path)].join('/'),
+		title: [mode, ...runContext.map((p) => p.title)].join(' · '),
+	});
 }
 
 // --- Run categories ----------------------------------------------------------
@@ -102,23 +117,23 @@ export interface RunContextInput {
 }
 
 /**
- * Sets the categories sent with every run event: one hit each for the course,
- * distance class, ground, running style and preset. Low-cardinality labels only,
- * so each shows up as one row with a count in the GoatCounter dashboard.
+ * Sets the categories that go into every run hit, in path order: preset,
+ * course, ground, distance class, running style. Each part is a short
+ * lowercase slug for the path and a readable label for the title.
  */
 export function setRunContext(c: RunContextInput): void {
 	const out: Hit[] = [];
-	const surface = SURFACE[c.surface ?? 0] ?? '';
-	const courseTitle = [c.trackName, c.distance ? `${c.distance}m` : '', surface].filter(Boolean).join(' ');
-	out.push({ path: `course/${c.courseId}`, title: courseTitle || `Course ${c.courseId}` });
-	const distance = DISTANCE[c.distanceType ?? 0];
-	if (distance) out.push({ path: `distance/${slug(distance)}`, title: distance });
-	const ground = GROUND[c.ground ?? 0];
-	if (ground) out.push({ path: `ground/${slug(ground)}`, title: ground });
-	const style = c.strategy ? STYLE[c.strategy] : undefined;
-	if (style) out.push({ path: `style/${slug(style)}`, title: style });
 	out.push(c.preset
-		? { path: `preset/${slug(c.preset.key)}`, title: c.preset.title }
-		: { path: 'preset/custom', title: 'Custom race' });
+		? { path: slug(c.preset.key), title: c.preset.title }
+		: { path: 'custom', title: 'Custom race' });
+	const surface = SURFACE[c.surface ?? 0] ?? '';
+	const course = [c.trackName, c.distance ? `${c.distance}m` : '', surface].filter(Boolean).join(' ');
+	out.push(course ? { path: slug(course), title: course } : { path: `course-${c.courseId}`, title: `Course ${c.courseId}` });
+	const ground = GROUND[c.ground ?? 0];
+	if (ground) out.push({ path: slug(ground), title: ground });
+	const distance = DISTANCE[c.distanceType ?? 0];
+	if (distance) out.push({ path: slug(distance), title: distance });
+	const style = c.strategy ? STYLE[c.strategy] : undefined;
+	if (style) out.push({ path: slug(style), title: style });
 	runContext = out;
 }
