@@ -5,7 +5,7 @@
  * Run via: npm run test:ocr
  */
 import test from 'tape';
-import { APTITUDE_WORDS, aptitudeCells, cellBox, header, letterProbes, levelBeside, statColumns, statNumberLine, uniqueLevel } from './layout';
+import { APTITUDE_WORDS, aptitudeCells, cellBox, header, letterProbes, levelBeside, markerBeside, statColumns, statNumberLine, uniqueLevel } from './layout';
 import type { OcrLine } from './contract';
 
 const line = (text: string, x: number, y: number, w: number, h = 24, score = 0.99): OcrLine => ({ text, score, box: { x, y, w, h } });
@@ -172,5 +172,16 @@ test('a level chip belongs to the name it sits clear of', (t) => {
 	const far = line('Lvl 3', 1200, 1117, 64, 29);
 	t.equal(levelBeside(name, [name, wide, far]), null, 'another name reaches into the gap, so the chip is not this one’s');
 	t.equal(levelBeside(wide, [name, wide, far]), 3, 'and it is the one it sits clear of');
+	t.end();
+});
+
+test('a marker the detector boxed on its own belongs to the name it follows', (t) => {
+	const name = line('Pace Chaser Corners', 141, 729, 287, 34);
+	const marker = line('O', 433, 738, 20, 19);
+	const chip = line('Lvl 3', 440, 745, 91, 39);
+	t.equal(markerBeside(name, [name, marker, chip]), marker, 'the marker sits just past the name');
+	t.equal(markerBeside(name, [name, chip]), null, 'a chip is wider than one, so it is not a marker');
+	t.equal(markerBeside(name, [name, line('O', 433, 790, 20, 19)]), null, 'a box on the row below is not this row’s');
+	t.equal(markerBeside(name, [name, line('O', 141, 738, 20, 19)]), null, 'a box inside the name is not beside it');
 	t.end();
 });

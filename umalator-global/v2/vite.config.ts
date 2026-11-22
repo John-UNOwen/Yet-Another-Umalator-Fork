@@ -93,6 +93,10 @@ function serveUmaToolsAssets(): Plugin {
             '.css': 'text/css',
             '.js': 'application/javascript',
             '.json': 'application/json',
+            // onnxruntime-web imports its .mjs and streams its .wasm, and the browser refuses a
+            // module or a wasm stream served as octet-stream, which fails the OCR worker here.
+            '.mjs': 'text/javascript',
+            '.wasm': 'application/wasm',
           };
           res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
           fs.createReadStream(filePath).pipe(res);

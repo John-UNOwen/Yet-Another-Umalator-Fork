@@ -49,14 +49,17 @@ take an entry's last name, which for a renamed skill is the retired one: `202342
 `["Muddy ◎", "Mud Play ◎"]`, so `Mud Play` was offered and `Muddy` was not. The line itself read at 0.95 all
 along. The readers now take index 0, and every row on every screen answers to an offered name.
 
-The tier a marker shows comes from the shape of its glyph, because the reader draws `◎`, `○` and `0` alike: a
-ring with a second ring inside it is `◎`, a ring on its own is `○` (`markers.ts`). 14 rows arrived as a letter
-and the shape settled all 14, 13 as a single ring and one with two. The double one is Taiki Shuttle's
-`Pace Chaser Straightaways 0`, which becomes the `◎` tier `201311` in the same image where the single ring makes
-`Tokyo Racecourse O` the `○` tier `200032`. Two rows arrived as `©`, which the text settles on its own.
+The tier a marker shows comes from the shape of its glyph, because the reader draws `◎`, `○` and `0` alike. The
+two differ by the width of their hole: `◎` is one wide wall around a hole two pixels across, `○` leaves most of
+its inside empty (`markers.ts`). 14 rows arrived as a letter and the shape settled all 14, 13 as a single ring
+and one with two. The double one is Taiki Shuttle's `Pace Chaser Straightaways 0`, which becomes the `◎` tier
+`201311` in the same image where the single ring makes `Tokyo Racecourse O` the `○` tier `200032`. Two rows
+arrived as `©`, which the text settles on its own.
 
-7 rows stay a choice for the user, because no marker arrived at all. The candidates are the two or three tier
-variants of that name, and the review screen offers them.
+Rows whose text lost the marker altogether are measured the same way, since the game always draws one, so each
+line is asked for its glyph whether or not its last character looked like a letter. Four rows still reach the
+review screen as a choice, because neither their text nor the pixels around their name gave a ring. The
+candidates are the two or three tier variants of that name, and the review screen offers them.
 
 Aptitude letters are colours: S 44°, A 25°, B 340°, C 107°, D 205°, E 287°, F 247°, and G carries no colour,
 which is how it is told apart. All 50 cells, ten per capture, came out as a person read them, which is what

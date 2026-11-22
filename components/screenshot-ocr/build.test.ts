@@ -29,10 +29,25 @@ test('the reading stands when nothing is edited', (t) => {
 	t.end();
 });
 
-test('distance takes the best of the four and surface the turf grade', (t) => {
+test('distance and surface each take the best of their cells', (t) => {
 	const draft = umaFromRead(mergeReads([read({ aptitudes: { turf: 'B', short: 'B', mile: 'A', medium: 'G', long: 'C' } })]));
 	t.equal(draft.distanceAptitude, 'A');
 	t.equal(draft.surfaceAptitude, 'B');
+	t.end();
+});
+
+test('a dirt horse keeps its dirt grade on the surface the panel shows', (t) => {
+	const dirt = umaFromRead(mergeReads([read({ aptitudes: { turf: 'F', dirt: 'A' } })]));
+	t.equal(dirt.surfaceAptitude, 'A', 'the panel keeps one grade, and the better of the two is the one the horse is built for');
+	const turf = umaFromRead(mergeReads([read({ aptitudes: { turf: 'A', dirt: 'G' } })]));
+	t.equal(turf.surfaceAptitude, 'A');
+	t.end();
+});
+
+test('a surface the user set stands over the reading', (t) => {
+	const merged = mergeReads([read({ aptitudes: { turf: 'F', dirt: 'A' } })]);
+	const draft = umaFromRead(merged, { aptitudes: { turf: 'C', dirt: 'C' } });
+	t.equal(draft.surfaceAptitude, 'C');
 	t.end();
 });
 

@@ -40,9 +40,10 @@ export interface UmaDraft {
 const STAT_DEFAULTS: Record<StatKey, number> = { Speed: 1200, Stamina: 1200, Power: 800, Guts: 400, Wit: 400 };
 const STRATEGY_APTITUDE: Record<Strategy, AptitudeKey> = { Nige: 'nige', Senkou: 'senkou', Sasi: 'sashi', Oikomi: 'oikomi' };
 const DISTANCES: readonly AptitudeKey[] = ['short', 'mile', 'medium', 'long'];
+const SURFACES: readonly AptitudeKey[] = ['turf', 'dirt'];
 const STRATEGIES: readonly Strategy[] = ['Nige', 'Senkou', 'Sasi', 'Oikomi'];
 
-/** S above A above B. The panel keeps one distance grade, so the best of the four is what fits. */
+/** S above A above B. The panel keeps one grade per group, so the best of the group is what fits. */
 const BEST = ['S', 'A', 'B', 'C', 'D', 'E', 'F', 'G'] as const;
 const rank = (grade: Grade) => BEST.indexOf(grade as (typeof BEST)[number]);
 
@@ -51,14 +52,18 @@ export const styleAptitudeOf = (strategy: Strategy): AptitudeKey => STRATEGY_APT
 
 /** The four cells the panel collapses into one distance grade. */
 export const DISTANCE_KEYS: readonly AptitudeKey[] = DISTANCES;
+/** The two cells the panel collapses into one surface grade. */
+export const SURFACE_KEYS: readonly AptitudeKey[] = SURFACES;
 /** One row of the merged list, named by the candidates it came with so the review screen and this module agree. */
 export const skillKey = (row: { match: { ids: readonly string[] } }) => row.match.ids.join(',');
 
 export function umaFromRead(merged: MergedRead, edits: Edits = {}): UmaDraft {
 	const grade = (key: AptitudeKey) => edits.aptitudes?.[key] ?? merged.aptitudes[key].value ?? 'A';
-	// A distance cell the screens never showed does not vote. Only an unread set falls back.
-	const shown = DISTANCES.map((key) => edits.aptitudes?.[key] ?? merged.aptitudes[key].value).filter((g): g is Grade => !!g);
-	const distance = shown.length ? shown.sort((a, b) => rank(a) - rank(b))[0] : 'A';
+	// A cell the screens never showed does not vote. Only an unread group falls back.
+	const best = (keys: readonly AptitudeKey[]): Grade => {
+		const shown = keys.map((key) => edits.aptitudes?.[key] ?? merged.aptitudes[key].value).filter((g): g is Grade => !!g);
+		return shown.length ? shown.sort((a, b) => rank(a) - rank(b))[0] : 'A';
+	};
 	const strategy = STRATEGIES.includes(edits.strategy as Strategy) ? (edits.strategy as Strategy) : 'Senkou';
 	const stat = (label: StatKey) => edits.stats?.[label] ?? merged.stats[label].value ?? STAT_DEFAULTS[label];
 
@@ -82,8 +87,8 @@ export function umaFromRead(merged: MergedRead, edits: Edits = {}): UmaDraft {
 		guts: stat('Guts'),
 		wisdom: stat('Wit'),
 		strategy,
-		distanceAptitude: distance,
-		surfaceAptitude: grade('turf'),
+		distanceAptitude: best(DISTANCES),
+		surfaceAptitude: best(SURFACES),
 		strategyAptitude: grade(STRATEGY_APTITUDE[strategy]),
 		mood: 2,
 		skills,

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Grade } from './aptitudes';
 import type { AptitudeKey } from './layout';
-import { DISTANCE_KEYS, umaFromRead } from './build';
+import { DISTANCE_KEYS, SURFACE_KEYS, umaFromRead } from './build';
 import { splitMarker } from './matcher';
 import { gaps, mergeReads } from './merge';
 import type { Read } from './merge';
@@ -124,6 +124,17 @@ test('the one distance grade is the best of the four shown', (t) => {
 		t.equal(shown.length, 4, `${capture} showed all four distance cells`);
 		const best = [...shown].sort((a, b) => BEST.indexOf(a) - BEST.indexOf(b))[0];
 		t.equal(frozen(capture).distanceAptitude, best, `${capture} takes ${best} from ${shown.join(' ')}`);
+	}
+	t.end();
+});
+
+test('the one surface grade is the best of the two shown', (t) => {
+	for (const capture of Object.keys(HAND)) {
+		const aptitudes = fixture(capture).aptitudes ?? {};
+		const shown = SURFACE_KEYS.map((key) => aptitudes[key]).filter((grade): grade is Grade => !!grade);
+		t.equal(shown.length, 2, `${capture} showed the turf and dirt cells`);
+		const best = [...shown].sort((a, b) => BEST.indexOf(a) - BEST.indexOf(b))[0];
+		t.equal(frozen(capture).surfaceAptitude, best, `${capture} takes ${best} from ${shown.join(' ')}`);
 	}
 	t.end();
 });

@@ -236,3 +236,21 @@ export function levelBeside(name: OcrLine, lines: readonly OcrLine[]): number | 
 	}
 	return null;
 }
+
+/**
+ * A marker the detector boxed on its own, just past the name's end, which is how it sometimes lands when
+ * the reader could not draw it. A chip is wider than a marker, so the width bound keeps the level out.
+ */
+export function markerBeside(name: OcrLine, lines: readonly OcrLine[]): OcrLine | null {
+	const centre = name.box.y + name.box.h / 2;
+	const height = name.box.h;
+	return lines
+		.filter((l) => l !== name
+			&& Math.abs(l.box.y + l.box.h / 2 - centre) < height * 0.6
+			&& l.box.x >= boxRight(name.box) - height * 0.2
+			&& l.box.x <= boxRight(name.box) + height * 1.4
+			&& l.box.w <= height * 1.15
+			&& l.box.h >= height * 0.35
+			&& l.box.h <= height * 1.2)
+		.sort((a, b) => a.box.x - b.box.x)[0] ?? null;
+}

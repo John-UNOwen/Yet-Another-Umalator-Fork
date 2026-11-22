@@ -278,16 +278,14 @@
 				"text": "Medium Straightaways ",
 				"name": "Medium Straightaways ◎",
 				"match": {
-					"id": null,
+					"id": "201102",
 					"ids": [
-						"201101",
 						"201102"
 					],
 					"name": "Medium Straightaways ◎",
 					"score": 1,
 					"margin": 0.21052631578947367,
-					"trims": 0,
-					"why": "level"
+					"trims": 0
 				},
 				"level": null,
 				"box": {
@@ -301,16 +299,14 @@
 				"text": "Late Surger Straightaways ",
 				"name": "Late Surger Straightaways ◎",
 				"match": {
-					"id": null,
+					"id": "201382",
 					"ids": [
-						"201381",
 						"201382"
 					],
 					"name": "Late Surger Straightaways ◎",
 					"score": 1,
 					"margin": 0.2405263157894737,
-					"trims": 0,
-					"why": "level"
+					"trims": 0
 				},
 				"level": null,
 				"box": {

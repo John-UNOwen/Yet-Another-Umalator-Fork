@@ -12,6 +12,10 @@ import type { Box } from './contract';
 const PANEL: [number, number, number] = [28, 30, 42];
 const INK: [number, number, number] = [236, 232, 224];
 
+/** A capture may draw its row on a gradient, so the panel has a second shade from `SHADE_X` rightwards. */
+const SHADE: [number, number, number] = [60, 60, 72];
+const SHADE_X = 120;
+
 const WIDTH = 160, HEIGHT = 30;
 /** The line's box, as the detector would give it for a name and its marker. */
 const LINE: Box = { x: 0, y: 0, w: WIDTH, h: HEIGHT };
@@ -33,10 +37,12 @@ const block = (x0: number, y0: number, w: number, h: number): Shape => (x, y) =>
 
 const anyOf = (shapes: Shape[]): Shape => (x, y) => shapes.some((s) => s(x, y));
 
-function canvasWith(shapes: Shape[], box = LINE) {
+function canvasWith(shapes: Shape[], box = LINE, shaded = false) {
 	const rgba = new Uint8ClampedArray(WIDTH * HEIGHT * 4);
 	for (let i = 0; i < WIDTH * HEIGHT; i++) {
-		rgba[i * 4] = PANEL[0]; rgba[i * 4 + 1] = PANEL[1]; rgba[i * 4 + 2] = PANEL[2]; rgba[i * 4 + 3] = 255;
+		const x = i % WIDTH;
+		const panel = shaded && x >= SHADE_X ? SHADE : PANEL;
+		rgba[i * 4] = panel[0]; rgba[i * 4 + 1] = panel[1]; rgba[i * 4 + 2] = panel[2]; rgba[i * 4 + 3] = 255;
 	}
 	const drawn = anyOf(shapes);
 	for (let y = 0; y < HEIGHT; y++) {
@@ -52,7 +58,7 @@ function canvasWith(shapes: Shape[], box = LINE) {
 /** A name drawn as three letter blocks, ending far enough left to leave the marker its space. */
 const NAME: Shape[] = [block(20, 6, 6, 18), block(32, 6, 6, 18), block(44, 6, 6, 18)];
 
-const read = (shapes: Shape[], box = LINE) => markerShape(canvasWith(shapes, box).rgba, WIDTH, box);
+const read = (shapes: Shape[], box = LINE, shaded = false) => markerShape(canvasWith(shapes, box, shaded).rgba, WIDTH, box);
 
 test('a ring after a name is the single tier', (t) => {
 	t.equal(read([...NAME, ring(6, 9)]), '○', 'one ring of ink with a hole in it');
@@ -60,7 +66,7 @@ test('a ring after a name is the single tier', (t) => {
 });
 
 test('a ring inside a ring is the double tier', (t) => {
-	t.equal(read([...NAME, ring(2, 4), ring(6, 9)]), '◎', 'two rings of ink, so two bands crossed from the centre');
+	t.equal(read([...NAME, ring(2, 4), ring(6, 9)]), '◎', 'the inner ring sits where the single tier has its hole');
 	t.end();
 });
 
@@ -96,6 +102,14 @@ test('a glyph the shape of a letter is no tier', (t) => {
 	t.end();
 });
 
+test('a box that stops short of the marker still answers', (t) => {
+	// A capture of the same dialog ended its row box a glyph before the marker, and the reader then had
+	// nothing to measure there.
+	t.equal(read([...NAME, ring(6, 9)], { x: 0, y: 0, w: 120, h: HEIGHT }), '○', 'the box ends 13 px before the ring starts');
+	t.equal(read([...NAME, ring(2, 4), ring(6, 9)], { x: 0, y: 0, w: 120, h: HEIGHT }), '◎', 'the same on the double tier');
+	t.end();
+});
+
 test('a glyph joined to the name is no tier', (t) => {
 	// One blank column between them, where the game leaves the width of a space.
 	t.equal(read([block(80, 6, 37, 18), ring(6, 9, 127)]), null, 'the ring sits one column from the name, where a letter would be');
@@ -104,5 +118,30 @@ test('a glyph joined to the name is no tier', (t) => {
 
 test('a box with nothing in it is no tier', (t) => {
 	t.equal(read([]), null, 'an empty line');
+	t.end();
+});
+
+test('a thick ring with a small hole is the double tier', (t) => {
+	// The dialog draws `◎` as one wide wall around a hole two pixels across, not as two separate rings.
+	t.equal(read([...NAME, ring(2.5, 9)]), '◎', 'a wall this thick leaves almost no hole');
+	t.end();
+});
+
+test('a pale column inside the wall is still one ring', (t) => {
+	// A capture at 1179 px wide brought the wall back with one column of panel in it, which a ray crosses
+	// twice even though the hole runs the whole way to the centre.
+	const seamed: Shape = (x, y) => ring(6, 9)(x, y) && !(x === CX + 7 && Math.abs(y - CY) < 4);
+	t.equal(read([...NAME, seamed]), '○', 'the hole is wider than the wall is thick');
+	t.end();
+});
+
+test('a box that ends inside the marker still answers', (t) => {
+	// The detector stopped two pixels short of the marker's right wall, which cut it down to a stroke.
+	t.equal(read([...NAME, ring(6, 9)], { x: 0, y: 0, w: 150, h: HEIGHT }), '○', 'the crop reaches past the box, the glyph does not need to fit it');
+	t.end();
+});
+
+test('a row drawn on a gradient still answers', (t) => {
+	t.equal(read([...NAME, ring(6, 9)], LINE, true), '○', 'the right half of the row is a second panel shade, not ink');
 	t.end();
 });

@@ -16,7 +16,7 @@ import { BASE_PATH } from '../../components/base-path';
 import { mapCharacterNameToOutfitId, mapOutfitNameToId } from '../../components/GeminiOCR';
 import { GRADES } from '../../components/screenshot-ocr/aptitudes';
 import type { Grade } from '../../components/screenshot-ocr/aptitudes';
-import { DISTANCE_KEYS, skillKey, styleAptitudeOf, umaFromRead } from '../../components/screenshot-ocr/build';
+import { DISTANCE_KEYS, SURFACE_KEYS, skillKey, styleAptitudeOf, umaFromRead } from '../../components/screenshot-ocr/build';
 import type { Edits, Strategy, UmaDraft } from '../../components/screenshot-ocr/build';
 import { gaps, mergeReads } from '../../components/screenshot-ocr/merge';
 import type { MergedRead, Read, SkillRead } from '../../components/screenshot-ocr/merge';
@@ -229,6 +229,13 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 		for (const key of DISTANCE_KEYS) aptitudes[key] = value;
 		return { ...held, aptitudes };
 	}), []);
+	// The panel keeps one surface grade, so choosing one stands in for the turf and dirt cells, the way
+	// setDistance below does for the four distances.
+	const setSurface = useCallback((value: Grade) => setEdits((held) => {
+		const aptitudes = { ...held.aptitudes };
+		for (const key of SURFACE_KEYS) aptitudes[key] = value;
+		return { ...held, aptitudes };
+	}), []);
 	const setSkill = useCallback((key: string, value: { pick?: string; off?: boolean }) => setEdits((held) => ({
 		...held,
 		skills: { ...held.skills, [key]: { ...held.skills[key], ...value } },
@@ -303,7 +310,7 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 					</div>
 				</div>
 			) : phase === 'review' ? (
-				<Review merged={merged} missing={missing} pairs={results.map((r, i) => ({ url: shots[i]?.url ?? '', read: r.read }))} notes={results.flatMap((r) => r.statNotes)} draft={draft} skills={edits.skills} edit={edit} setStat={setStat} setAptitude={setAptitude} setDistance={setDistance} setSkill={setSkill} outfit={outfit} onOutfit={(v) => { edit('epithet', v); edit('outfitId', ''); }} />
+				<Review merged={merged} missing={missing} pairs={results.map((r, i) => ({ url: shots[i]?.url ?? '', read: r.read }))} notes={results.flatMap((r) => r.statNotes)} draft={draft} skills={edits.skills} edit={edit} setStat={setStat} setAptitude={setAptitude} setSurface={setSurface} setDistance={setDistance} setSkill={setSkill} outfit={outfit} onOutfit={(v) => { edit('epithet', v); edit('outfitId', ''); }} />
 			) : (
 				<div class="v2-ocr-upload">
 					<div class="v2-ocr-section">
@@ -338,7 +345,7 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 
 const STAT_FIELD: Record<StatKey, keyof UmaDraft> = { Speed: 'speed', Stamina: 'stamina', Power: 'power', Guts: 'guts', Wit: 'wisdom' };
 
-function Review({ merged, missing, pairs, notes, draft, skills, edit, setStat, setAptitude, setDistance, setSkill, outfit, onOutfit }: {
+function Review({ merged, missing, pairs, notes, draft, skills, edit, setStat, setAptitude, setSurface, setDistance, setSkill, outfit, onOutfit }: {
 	merged: MergedRead;
 	missing: string[];
 	pairs: readonly { url: string; read: Read }[];
@@ -348,6 +355,7 @@ function Review({ merged, missing, pairs, notes, draft, skills, edit, setStat, s
 	edit: <K extends keyof UiEdits>(field: K, value: UiEdits[K]) => void;
 	setStat: (label: StatKey, value: number) => void;
 	setAptitude: (key: AptitudeKey, value: Grade) => void;
+	setSurface: (value: Grade) => void;
 	setDistance: (value: Grade) => void;
 	setSkill: (key: string, value: { pick?: string; off?: boolean }) => void;
 	outfit: { typed: string; id: string };
@@ -385,7 +393,7 @@ function Review({ merged, missing, pairs, notes, draft, skills, edit, setStat, s
 						})}
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Surface:</span>
-							<CustomSelect value={draft.surfaceAptitude} onChange={(v) => setAptitude('turf', v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
+							<CustomSelect value={draft.surfaceAptitude} onChange={(v) => setSurface(v as Grade)} options={APTITUDE_OPTIONS} className="v2-ocr-select-small" />
 						</div>
 						<div class="v2-ocr-review-item">
 							<span class="v2-ocr-review-key">Distance:</span>
