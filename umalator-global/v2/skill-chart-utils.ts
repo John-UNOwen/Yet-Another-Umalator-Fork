@@ -122,6 +122,9 @@ export function calculateSkillCost(
 	if (!group) return 0;
 
 	const existing = ownedSkills.get(groupId);
+	// Already learned: nothing left to pay. (The walk below skipped only the
+	// owned id itself and still charged every tier under it.)
+	if (existing === id) return 0;
 	let cost = 0;
 
 	// An owned lower tier was paid for together with every link below it, so

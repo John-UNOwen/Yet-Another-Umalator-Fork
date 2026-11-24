@@ -60,8 +60,17 @@ export function loadBook(store?: Pick<Storage, 'getItem'>): BookFile {
 		const raw = (store ?? globalThis.localStorage)?.getItem?.(BOOK_STORAGE_KEY);
 		if (!raw) return emptyFile();
 		const parsed = JSON.parse(raw);
-		if (!parsed || parsed.version !== 1 || typeof parsed.entries !== 'object') return emptyFile();
-		return parsed as BookFile;
+		if (!parsed || parsed.version !== 1 || !parsed.entries || typeof parsed.entries !== 'object') return emptyFile();
+		// Keep only well-formed entries, so one bad entry (an older format, or a
+		// hand edit) is dropped instead of breaking every run for that race.
+		const entries: Record<string, BookEntry[]> = {};
+		for (const [key, list] of Object.entries(parsed.entries)) {
+			if (!Array.isArray(list)) continue;
+			const ok = list.filter((e: any): e is BookEntry => !!e && Array.isArray(e.selection)
+				&& e.selection.every((id: unknown) => typeof id === 'string'));
+			if (ok.length) entries[key] = ok;
+		}
+		return { version: 1, entries };
 	} catch {
 		return emptyFile();
 	}

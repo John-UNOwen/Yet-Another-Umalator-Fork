@@ -4,8 +4,10 @@
  * Groups = skill groups; each group contributes exactly one item (or the
  * implicit "none" with cost 0 / value 0); weight = SP cost; value = the
  * stage's per-skill value (out-of-context v⁰ in Stage C, in-context v in
- * Stage D re-picks); capacity = SP budget. DP over integer SP — with ≤ ~40
- * groups × ≤ ~4,000 SP the table is trivial (plan §8: "trivial").
+ * Stage D re-picks); capacity = SP budget. DP over integer SP, so one solve
+ * costs groups × budget cells: about 13 ms at 200 groups and 10,000 SP, and
+ * the top-K sweep re-solves up to TOPK_RESOLVE_CAP times. The pane caps the
+ * budget (MAX_SP_BUDGET in config.ts) to keep that bounded.
  *
  * Top-K restart points (§8): we re-solve the exact DP excluding ONE pick of
  * the best solution at a time and keep the K best distinct starts under a
@@ -59,7 +61,12 @@ export function mckpSolve(groups: readonly KnapGroup[], budget: number, forbidde
 		if (opts.length) usable.push({ groupId: g.groupId, options: opts });
 	}
 	if (forcedCost > budget) return null;
-	const cap = budget - forcedCost;
+	// Past the cost of taking every group's dearest option, extra capacity can
+	// change no choice, so the table stops there: the answer is the same, and
+	// a huge or infinite budget cannot size the arrays.
+	let mostCost = 0;
+	for (const g of usable) mostCost += Math.max(...g.options.map(o => o.cost));
+	const cap = Math.min(budget - forcedCost, mostCost);
 	const nG = usable.length;
 	if (nG === 0) return { selection: forcedPick, ids: [...forcedPick.values()], value: 0, cost: forcedCost };
 

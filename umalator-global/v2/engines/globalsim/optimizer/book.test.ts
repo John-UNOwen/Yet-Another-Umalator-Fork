@@ -97,3 +97,16 @@ test('selectStarts keeps only legal, affordable prior builds for the current ros
 	t.ok(starts.every(st => new Set(st.map(id => space.byId.get(id)!.groupId)).size === st.length), 'each start is one-per-group');
 	t.end();
 });
+
+test('a malformed entry is dropped on load instead of breaking a run', t => {
+	const store = new MemStore();
+	store.setItem(BOOK_STORAGE_KEY, JSON.stringify({ version: 1, entries: {
+		k: [{ selection: 'not-an-array' }, null, { selection: ['a1', 7] }, { selection: ['a1', 'b1'] }],
+		bad: 'not-a-list',
+	} }));
+	const space = spaceWith([['a1', 'A', 100], ['b1', 'B', 100]], 1000);
+	t.equal(bookCount('k', store), 1, 'only the well-formed entry counts');
+	t.deepEqual(selectStarts(space, 'k', store), [['a1', 'b1']], 'and selectStarts returns it without throwing');
+	t.equal(bookCount('bad', store), 0, 'a key whose value is not a list reads as empty');
+	t.end();
+});

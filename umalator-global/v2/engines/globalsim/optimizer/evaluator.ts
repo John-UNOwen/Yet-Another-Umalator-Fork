@@ -136,7 +136,8 @@ export interface Evaluator extends SearchEvaluator {
 	abort(): void;
 }
 
-/** Deterministic per-scenario salt (scenario 0 keeps the raw base seed). */
+/** Deterministic per-scenario salt. Every scenario is salted, scenario 0 too,
+ *  so no scenario's list starts from the raw base seed. */
 function scenarioSalt(i: number): number {
 	return Math.imul(i + 1, 0x62a9d9ed);
 }
@@ -527,6 +528,10 @@ export async function calibrateNoise(
 		}
 		if (isBase) continue;
 		if (own.length < 2) continue;
+		// A skill that never fires leaves every paired delta at exactly 0. That
+		// says nothing about the noise, so it is left out like a variant with
+		// too few seeds.
+		if (own.every(d => d === 0)) continue;
 		const m = own.reduce((x, y) => x + y, 0) / own.length;
 		for (const d of own) deltas.push(d - m);
 		nVar++;
@@ -539,7 +544,10 @@ export async function calibrateNoise(
 		if (dof < 1) return NaN;
 		return Math.sqrt(xs.reduce((a, x) => a + x * x, 0) / dof);
 	};
-	const sigmaDelta = sdCentred(deltas) || sd(leads) || NaN;
+	// With no variant to pair, the single-seed spread is the only figure there
+	// is. With variants that all said nothing, it is about 10x the paired one,
+	// so report none rather than a wrong one.
+	const sigmaDelta = nVar ? sdCentred(deltas) || NaN : variants.length ? NaN : sd(leads);
 	// The 95% band half-width a paired comparison resolves at gSeedsMin seeds:
 	const resolvedDeltaL = (2 * 1.96 * sigmaDelta) / Math.sqrt(Math.max(1, cfg.gSeedsMin));
 	const baseLead = leads.length ? leads.reduce((a, b) => a + b, 0) / leads.length : NaN;

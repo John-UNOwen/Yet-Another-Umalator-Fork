@@ -23,10 +23,10 @@ import { MobPreset, parseMobPresets } from '../mobs';
 import { createGlobalsimWorkerCore, WasmApi } from '../workerCore';
 import { WorkerFactory, WorkerLike } from '../pool';
 import { calculateSkillCost, isPurpleSkill, skillGroups } from '../../../skill-chart-utils';
-import { createEvaluator, calibrateNoise, seedValueOf, statsOf } from './evaluator';
+import { BuildRefLite, createEvaluator, calibrateNoise, SearchEvaluator, seedValueOf, statsOf } from './evaluator';
 import { NS_SEARCH, NS_VERIFY } from './cache';
 import { buildSpace, simIdentity } from './space';
-import { ScenarioSpec } from './types';
+import { ScenarioSpec, SeedSlot } from './types';
 import { leadMarginL, SeedCompactRecord } from '../metrics';
 import { buildCompareJobs, GlobalsimCompareInput } from '../compare';
 import { EffortConfig, STANDARD } from './config';
@@ -278,6 +278,27 @@ test('noise calibration runs on the live engine (§7.3)', async t => {
 	t.ok(noise.baseP1 >= 0 && noise.baseP1 <= 1, `base P(1st) = ${noise.baseP1.toFixed(3)}`);
 	t.ok(noise.resolvedDeltaL > 0 && Number.isFinite(noise.resolvedDeltaL), 'resolved δ reported');
 	ev.dispose();
+	t.end();
+});
+
+// A variant whose skill never fires has paired deltas of exactly 0, which say
+// nothing about the noise. With only such variants the figure used to fall
+// back to the single-seed spread, about 10x the paired one.
+test('noise calibration ignores variants that never change a race', async t => {
+	const sv = (lead: number): SeedSlot => ({ lead, win: 0, top3: 0, placing: 5, hpEmpty: 0, rushed: 0 });
+	const leads = Array.from({ length: 40 }, (_, i) => Math.sin(i * 1.7) * 2);
+	const rows = new Map<string, SeedSlot[]>([
+		['base', leads.map(sv)],
+		['dead', leads.map(sv)],
+		['live', leads.map((l, i) => sv(l + 0.2 + 0.1 * Math.cos(i * 2.3)))],
+	]);
+	const fake = { ensure: async () => ({ jobErrors: [] }), slots: (_ns: string, _si: number, id: string) => rows.get(id) ?? [] } as unknown as SearchEvaluator;
+	const cfg: EffortConfig = { ...STANDARD, noiseSeeds: 40, gSeedsMin: 100 };
+	const ref = (id: string): BuildRefLite => ({ id, selection: [] });
+	const onlyDead = await calibrateNoise(fake, cfg, 0, ref('base'), [ref('dead')]);
+	t.ok(Number.isNaN(onlyDead.sigmaDeltaLead), `only a dead variant: no σΔ claimed (got ${onlyDead.sigmaDeltaLead})`);
+	const mixed = await calibrateNoise(fake, cfg, 0, ref('base'), [ref('dead'), ref('live')]);
+	t.ok(mixed.sigmaDeltaLead > 0.05 && mixed.sigmaDeltaLead < 0.1, `a live variant sets σΔ from its own deltas (${mixed.sigmaDeltaLead.toFixed(3)} L)`);
 	t.end();
 });
 

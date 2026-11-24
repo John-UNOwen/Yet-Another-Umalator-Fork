@@ -619,7 +619,9 @@ function snapshotHints(tiers: HintTier[], warnings: string[]): Map<string, numbe
 		if (!ids.length) { unknownTiers++; continue; }
 		const level = clamp(t.level, 0, HINT_DISCOUNT.length - 1);
 		if (level !== t.level) clamped++;
-		for (const id of ids) hints.set(id, level);
+		// The tier also holds skills the game never sells (a racecourse ×), and
+		// the app keeps those on their own level.
+		for (const id of ids) if (!neverSold.has(id)) hints.set(id, level);
 	}
 	if (unknownTiers) {
 		warnings.push(`${unknownTiers} hint tier(s) in the snapshot match no skill in the local skill table.`);

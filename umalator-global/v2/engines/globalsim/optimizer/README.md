@@ -90,8 +90,9 @@ records carry `bestRivalFinishTimeRaw` (both the JS and the wasm
 `run_compact` paths, bit-identical, see `compact-parity.test.ts`),
 `metrics.ts` gained `leadMarginL` (ℓ in lengths,
 `(bestRivalT − ownT) × finish speed / 2.5`), and the app shell gained the
-Optimize tab (its pane carries the scenario/robustness + aggregation controls,
-the opening-book toggle, the recommended build's in-build skill list, and an
+Optimize tab (its pane runs one scenario, the race as set up, with mean
+aggregation: the multi-scenario search has no control in the pane yet. It
+carries the opening-book toggle, the recommended build's in-build skill list, and an
 "Open in Compare" button that loads the build onto a copy of the current uma as
 Uma 2).
 

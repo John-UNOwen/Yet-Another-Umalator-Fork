@@ -382,8 +382,8 @@ Hint levels follow what each writer can see:
   levels for the other rarity tier, which the game tracks separately.
 - **Snapshot, per tier**: `skill_tips_array` is `[{group_id, rarity, level}]`, the game's own
   hint table, and a tier is the unit the game prices, so its level goes onto every skill of that
-  group and rarity (`skill_meta.json` names the group, `skill_data.json` the rarity). A tier at
-  level 0 is written too, which clears a level an earlier import left behind.
+  group and rarity (`skill_meta.json` names the group, `skill_data.json` the rarity), except the
+  ones the game never sells, such as a racecourse ×. A tier at level 0 is written too, which clears a level an earlier import left behind.
 
 The candidate pool differs for the same reason. A dump limits it to its `IsGet≠1` rows that the
 app can offer. A snapshot carries no offer list, so the pool is rebuilt from the two things that put

@@ -1085,10 +1085,22 @@ function App() {
 
   // Run simulation via worker
   const handleRunSimulation = useCallback(() => {
+    // RUN starts the optimizer, and the same button stops it mid-run. The
+    // pane stays mounted in the other modes and its run keeps going there, so
+    // the button stops it from those modes too, instead of starting a second
+    // run on the same workers.
+    if (optimizerRunning) {
+      optimizerControl.current?.stop();
+      return;
+    }
     if (mode === "optimizer") {
-      // RUN starts the optimizer, and the same button stops it mid-run.
-      if (optimizerRunning) optimizerControl.current?.stop();
-      else optimizerControl.current?.run();
+      // Auto-reroll covers optimizer runs like every other run. The new seed
+      // goes to the run directly, since the state update lands after it starts.
+      if (autoSeed) {
+        const next = Math.floor(Math.random() * 0xFFFFFFFF);
+        setSeed(next);
+        optimizerControl.current?.run(next);
+      } else optimizerControl.current?.run();
       return;
     }
     setGlobalsimError(null); // superseded by this run
@@ -1633,7 +1645,7 @@ function App() {
                   onClick={handleRunSimulation}
                   disabled={isRunning}
                 >
-                  {isRunning ? "Running..." : mode === "optimizer" && optimizerRunning ? "STOP" : "RUN"}
+                  {isRunning ? "Running..." : optimizerRunning ? (mode === "optimizer" ? "STOP" : "STOP OPTIMIZER") : "RUN"}
                 </Button>
                 <Dropdown
                   trigger={
@@ -2136,6 +2148,7 @@ function App() {
                     ownedByGroup={hasSkills}
                     hints={skillHints}
                     seed={seed}
+                    onSeedChange={setSeed}
                     onOpenInCompare={handleOpenInCompare}
                     onImportCareer={handleImportCareer}
                     onHintChange={(id, hint) => {
@@ -2506,7 +2519,7 @@ function App() {
               onViewChange={handleMobileViewChange}
               onRun={handleRunSimulation}
               isRunning={isRunning}
-              runLabel={mode === "optimizer" && optimizerRunning ? "STOP" : undefined}
+              runLabel={optimizerRunning ? (mode === "optimizer" ? "STOP" : "STOP OPTIMIZER") : undefined}
               hasResults={!!results}
             />
 

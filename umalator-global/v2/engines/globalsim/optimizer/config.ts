@@ -178,6 +178,11 @@ export interface CustomEffort {
 	minutes: number;
 }
 export const CUSTOM_STARTS_MAX = 50;
+/** Highest SP budget the pane accepts. The knapsack runs on the main thread
+ *  and its cost grows with the budget: at 20,000 SP and 340 skill groups one
+ *  pick of the starting builds takes about 2.5 s. A real career ends well
+ *  under this. */
+export const MAX_SP_BUDGET = 20000;
 export const DEFAULT_CUSTOM: CustomEffort = { starts: 10, minutes: 40 };
 
 export function customEffortConfig(c: CustomEffort): EffortConfig {

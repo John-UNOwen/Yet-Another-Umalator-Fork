@@ -9,7 +9,7 @@
 (globalThis as any).CC_GLOBAL = true;
 
 import test from 'tape';
-import { hintLinkedIds, withHintLevel } from './skill-chart-utils';
+import { calculateSkillCost, hintLinkedIds, withHintLevel } from './skill-chart-utils';
 
 test('○ and ◎ of one skill share a hint level', t => {
 	// End Closer Straightaways ◎ 201451, ○ 201452, gold Moonlit Flash 201453.
@@ -34,5 +34,15 @@ test('withHintLevel sets the pair and leaves the rest alone', t => {
 	t.notOk(before.has('201452'), 'the input map is not changed');
 	const plain = withHintLevel(new Map(), '201453', 3);
 	t.deepEqual([...plain.entries()], [['201453', 3]], 'a skill without a partner sets only itself');
+	t.end();
+});
+
+test('a learned skill costs nothing, and an upgrade costs only the tiers above it', t => {
+	// End Closer Straightaways: ○ 201452, ◎ 201451, gold Moonlit Flash 201453.
+	const none = new Map<string, number>();
+	const gold = calculateSkillCost('201453', none, new Map());
+	t.equal(calculateSkillCost('201453', none, new Map([['20145', '201453']])), 0, 'the learned gold costs 0');
+	const upgrade = calculateSkillCost('201453', none, new Map([['20145', '201451']]));
+	t.ok(upgrade > 0 && upgrade < gold, `over a learned ◎, the gold costs only its own tier (${upgrade} of ${gold})`);
 	t.end();
 });

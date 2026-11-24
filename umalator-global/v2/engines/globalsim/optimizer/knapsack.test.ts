@@ -54,6 +54,31 @@ test('mckpSolve matches brute force on 40 random instances', t => {
 	return t.end();
 });
 
+test('mckpSolve: a budget past the cost of everything gives the same answer, Infinity included', t => {
+	const rnd = lcg(0xB16B00);
+	let same = true;
+	for (let inst = 0; inst < 30; inst++) {
+		const groups: KnapGroup[] = Array.from({ length: 3 + Math.floor(rnd() * 6) }, (_, g) => ({
+			groupId: `g${g}`,
+			options: Array.from({ length: 1 + Math.floor(rnd() * 3) }, (_, i) => ({
+				id: `g${g}o${i}`, cost: 50 + Math.floor(rnd() * 300), value: rnd() - 0.3,
+			})),
+		}));
+		const all = groups.reduce((a, g) => a + Math.max(...g.options.map(o => o.cost)), 0);
+		const at = mckpSolve(groups, all)!;
+		for (const b of [all + 1, all * 7, 1e7, Infinity]) {
+			const s = mckpSolve(groups, b)!;
+			same &&= s.ids.join() === at.ids.join() && s.cost === at.cost && s.value === at.value;
+		}
+		// Under the cap the answer still matches brute force.
+		const tight = Math.floor(all / 3);
+		same &&= Math.abs(mckpSolve(groups, tight)!.value - bruteBest(groups, tight)) < 1e-9;
+	}
+	t.ok(same, 'solutions above the cost of every group\'s dearest option match the solution at it');
+	t.equal(mckpTopK([{ groupId: 'a', options: [{ id: 'x', cost: 100, value: 1 }] }], Infinity, 3).length, 1, 'top-K on an infinite budget returns');
+	t.end();
+});
+
 test('mckpSolve respects locks (forced items) and shrinks capacity', t => {
 	const groups: KnapGroup[] = [
 		{ groupId: 'a', options: [{ id: 'a1', cost: 6, value: 1 }, { id: 'a2', cost: 1, value: 1 }], forcedId: 'a1' },

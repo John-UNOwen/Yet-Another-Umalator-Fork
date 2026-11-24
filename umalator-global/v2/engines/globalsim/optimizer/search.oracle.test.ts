@@ -899,6 +899,23 @@ test('settings: builds shown is met when the current build is the best measured'
 	t.end();
 });
 
+// With every skill a must-have there is one build, so the check has no #2 to
+// resolve: it used to keep buying races up to the cap anyway.
+test('verification: a single build stops at the first look', async t => {
+	const options: OptOption[] = Array.from({ length: 2 }, (_, i) => ({ id: `f${i}`, groupId: `g${i}`, cost: 20, tierIndex: 0, forced: true }));
+	const space: BuildSpace = {
+		ownedByGroup: new Map(), fixedIds: options.map(o => o.id), forcedCost: 40,
+		options, byId: new Map(options.map(o => [o.id, o] as const)), groups: new Map(options.map(o => [o.groupId, [o]] as const)), budget: 100, warnings: [],
+	};
+	const inst: Instance = { space, mu: () => 0, ranked: [], dead: new Set<string>() };
+	const ev = new OracleEval(inst);
+	const res = await runOptimizer(ev, { space, scenarioIdx: 0, objective: 'p1', aggregation: 'mean', effort: TEST_CFG }, createController(), () => undefined);
+	ev.dispose();
+	t.equal(res.shortlist.length, 1, 'one build');
+	t.equal(res.verificationSeeds, TEST_CFG.gSeedsMin, `checked on the minimum ${TEST_CFG.gSeedsMin} races, not grown to the ${TEST_CFG.gSeedsCap} cap`);
+	t.end();
+});
+
 // §K refill: a drop's full top-up is the only move that reaches "sell one,
 // buy the rest" builds beyond two adds. The hand-made instance below is
 // adversarial for the old move space: the incumbent {exp} is a local peak for

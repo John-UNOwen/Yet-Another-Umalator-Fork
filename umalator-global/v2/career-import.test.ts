@@ -246,7 +246,7 @@ test('falls back to the learning-screen window when the union is missing', (t) =
 
 const TIER_GOLD = '200331';     // group 20033, rarity 2
 const TIER_SILVER = '200332';   // group 20033, rarity 1
-const TIER_SILVER_2 = '200333'; // group 20033, rarity 1
+const TIER_SILVER_X = '200333'; // group 20033, rarity 1: Corner Adept ×, never sold
 const TIER_PAIR_A = '200131';   // group 20013, rarity 1
 const TIER_PAIR_B = '200132';   // group 20013, rarity 1
 const NEVER_SOLD = '200133';    // Standard Distance ×, same family, never sold
@@ -256,7 +256,7 @@ const FAM2_SILVER = '200432';   // Focus, family 20043 rarity 1
 const FAM2_NEVER = '200433';    // Gatekept, family 20043 rarity 1, never sold
 const UNIQUE_GROUP = '11010';   // the family of the fixture uma’s own unique
 for (const [id, group, rarity] of [
-	[TIER_GOLD, '20033', 2], [TIER_SILVER, '20033', 1], [TIER_SILVER_2, '20033', 1],
+	[TIER_GOLD, '20033', 2], [TIER_SILVER, '20033', 1], [TIER_SILVER_X, '20033', 1],
 	[TIER_PAIR_A, '20013', 1], [TIER_PAIR_B, '20013', 1],
 	[NEVER_SOLD, '20013', 1], [OTHER_TIER, '20033', 6],
 	[FAM2_GOLD, '20043', 2], [FAM2_SILVER, '20043', 1], [FAM2_NEVER, '20043', 1],
@@ -459,7 +459,7 @@ test('a snapshot hint tier covers every skill of that group and rarity', (t) => 
 	const imp = convertCareerDump(snapshot())!;
 	t.equal(imp.hints.get(TIER_GOLD), 3, 'the gold tier entry');
 	t.equal(imp.hints.get(TIER_SILVER), 1, 'the silver tier of the same group, tracked apart');
-	t.equal(imp.hints.get(TIER_SILVER_2), 1, 'including the tier’s other id');
+	t.notOk(imp.hints.has(TIER_SILVER_X), 'but not its never-sold ×');
 	t.equal(imp.hints.get(TIER_PAIR_A), 5, 'and every id of the other group');
 	t.equal(imp.hints.get(TIER_PAIR_B), 5, 'both of a ◎/○ pair');
 	t.notOk(imp.hints.has(UNIQUE), 'a skill no tier covers gets no level');
@@ -473,6 +473,15 @@ test('a snapshot hint tier covers every skill of that group and rarity', (t) => 
 		skill_tips_array: [{ group_id: 20033, rarity: 2, level: 0 }],
 	}))!;
 	t.equal(cleared.hints.get(TIER_GOLD), 0, 'a tier reported unhinted clears a level left by an earlier import');
+	t.end();
+});
+
+test('a snapshot hint tier leaves out the skill the game never sells', (t) => {
+	// Funabashi Racecourse: ◎ 202211, ○ 202212 and the never-sold × 202213 share group 20221, rarity 1.
+	const imp = convertCareerDump(snapshot({ skill_tips_array: [{ group_id: 20221, rarity: 1, level: 3 }] }))!;
+	t.equal(imp.hints.get('202211'), 3, 'the ◎ takes the level');
+	t.equal(imp.hints.get('202212'), 3, 'and the ○');
+	t.notOk(imp.hints.has('202213'), 'the × does not');
 	t.end();
 });
 
@@ -531,8 +540,8 @@ test('reports what a snapshot cannot give', (t) => {
 
 test('the summary counts hint levels that carry one', (t) => {
 	const all = convertCareerDump(snapshot())!;
-	t.equal(all.hints.size, 6, 'the three fixture tiers cover six local ids');
-	t.ok(all.summary.includes('6 hint levels'), `the summary counts them: ${all.summary}`);
+	t.equal(all.hints.size, 4, 'the three fixture tiers cover four buyable local ids');
+	t.ok(all.summary.includes('4 hint levels'), `the summary counts them: ${all.summary}`);
 
 	const one = convertCareerDump(snapshot({ skill_tips_array: [{ group_id: 20033, rarity: 2, level: 4 }] }))!;
 	t.equal(one.hints.size, 1, 'the gold tier of group 20033 holds one local id');

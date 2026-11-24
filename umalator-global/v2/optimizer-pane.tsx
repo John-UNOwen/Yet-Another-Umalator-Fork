@@ -20,7 +20,7 @@ import { BuildRefLite, createEvaluator, Evaluator } from './engines/globalsim/op
 import { createController, runOptimizer, SearchController } from './engines/globalsim/optimizer/search';
 import { bookCount, bookKey, clearBook, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
 import {
-	applyTuning, CUSTOM_STARTS_MAX, DEFAULT_CUSTOM, effortConfig, KICK_GROW_AFTER, KICKS_PER_VISIT,
+	applyTuning, CUSTOM_STARTS_MAX, DEFAULT_CUSTOM, effortConfig, KICK_GROW_AFTER, KICKS_PER_VISIT, MAX_SP_BUDGET,
 	SearchTuning, TUNING_LIMITS,
 } from './engines/globalsim/optimizer/config';
 import { SPREAD_MIN_DIFF_PICKS, SPREAD_NOISE } from './engines/globalsim/optimizer/knapsack';
@@ -79,8 +79,11 @@ export interface OptimizerPaneProps {
 	ownedByGroup: Map<string, string>;
 	/** skillHints (skill id → hint level). */
 	hints: Map<string, number>;
-	/** App base seed, pre-fills the seed input. */
+	/** App base seed. With onSeedChange the pane's Seed box edits it, so the
+	 *  header Seed box and the pane's show one number; without it, it only
+	 *  pre-fills a seed of the pane's own. */
 	seed: number;
+	onSeedChange?: (seed: number) => void;
 	/** "Open in Compare": hand a build's added skills to the app, which merges
 	 *  them onto a copy of the current uma as Uma 2 (optional). */
 	onOpenInCompare?: (addedSkillIds: string[]) => void;
@@ -101,7 +104,8 @@ export interface OptimizerPaneProps {
 
 /** What the app's RUN button calls while the Optimizer tab is open. */
 export interface OptimizerControl {
-	run(): void;
+	/** `seed` overrides the seed shown, for a run the app just re-rolled. */
+	run(seed?: number): void;
 	stop(): void;
 }
 
@@ -230,7 +234,9 @@ const goalOf = (o: ObjectiveKind): GoalInfo => GOALS.find((g) => g.id === o) ?? 
 /** A goal's value as shown: rates as percentages, the rest in their own unit. */
 const fmtGoal = (m: MeanSem | undefined, o: ObjectiveKind): string => {
 	const g = goalOf(o);
-	return g.rate ? fmtMeanCi(m, 1, 100, '%') : fmtMeanCi(m, 2, 1, g.unit);
+	// The search maximises, so it carries average placing negated: show it as a placing again.
+	const shown = o === 'meanPlacing' && m ? { ...m, mean: -m.mean } : m;
+	return g.rate ? fmtMeanCi(shown, 1, 100, '%') : fmtMeanCi(shown, 2, 1, g.unit);
 };
 
 const PRESETS: { value: EffortPreset; label: string }[] = [
@@ -342,6 +348,8 @@ interface RunSnapshot {
 	/** Hint levels the run priced skills with, so later hint changes cannot
 	 *  re-price the finished results. */
 	hints: Map<string, number>;
+	/** Learned skills the run priced with, frozen for the same reason. */
+	owned: Map<string, string>;
 }
 
 /** Advanced settings: null keeps the preset's value. */
@@ -382,7 +390,9 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const [buildsShown, setBuildsShown] = useState(5);
 	const [worthRaces, setWorthRaces] = useState(500);
 	const [advanced, setAdvanced] = useState<AdvancedSettings>(NO_ADVANCED);
-	const [seed, setSeed] = useState(props.seed);
+	const [ownSeed, setOwnSeed] = useState(props.seed);
+	const seed = props.onSeedChange ? props.seed : ownSeed;
+	const setSeed = props.onSeedChange ?? setOwnSeed;
 	const [useBook, setUseBook] = useState(true);
 	/** Wider search: spread-out starting builds and kicks that grow. */
 	const [wideSearch, setWideSearch] = useState(false);
@@ -428,13 +438,14 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	const lastUiRef = useRef(0); // progress-throttle timestamp
 	const heldUiRef = useRef<OptimizerProgress | null>(null); // newest event the throttle held back
 	const flushUiRef = useRef<number | null>(null); // timer that shows it when the gap ends
-	// False once unmounted. app-v2 renders this pane only on the Optimizer tab, so
-	// switching tabs unmounts it while a run is still in flight. Every post-await
-	// setState below is gated on this so nothing touches a dead component.
+	// False once unmounted. app-v2 keeps this pane mounted (hidden) in the other
+	// modes, so a run carries on across a tab switch and the app's RUN button
+	// stops it from any mode. Unmounting still happens when the app itself goes
+	// away, so every post-await setState below is gated on this.
 	const mountedRef = useRef(true);
 
-	// The pane is conditionally mounted, so this cleanup can fire MID-RUN. Mark
-	// unmounted, then hard-stop the in-flight work:
+	// If the pane unmounts mid-run, mark it unmounted, then hard-stop the
+	// in-flight work:
 	//  - dispose() only RESOLVES the running pool batch, which does NOT stop the
 	//    search, so the orphaned runOptimizer would keep going.
 	//  - ctrl.stop() winds the pipeline down, abort() REJECTS the running batch so
@@ -474,11 +485,6 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			setChosen(new Set(candidates));
 			return;
 		}
-		setChosen((prev) => {
-			const next = new Set([...prev].filter((id) => now.has(id)));
-			for (const id of candidates) if (!before.has(id) && !mustHave.has(id)) next.add(id);
-			return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
-		});
 		// A must-have the new pool leaves out is parked, not forgotten: when a
 		// later pool brings it back it is a must-have again. Dropped, it came
 		// back as a plain allowed skill and the next run missed the constraint.
@@ -486,6 +492,14 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		for (const id of mustHave) if (!now.has(id)) parked.add(id);
 		const back = [...parked].filter((id) => now.has(id));
 		for (const id of back) parked.delete(id);
+		// A returning must-have goes back to the must-have set only, or the
+		// pool line counted it (and its SP) twice.
+		const backSet = new Set(back);
+		setChosen((prev) => {
+			const next = new Set([...prev].filter((id) => now.has(id)));
+			for (const id of candidates) if (!before.has(id) && !mustHave.has(id) && !backSet.has(id)) next.add(id);
+			return next.size === prev.size && [...next].every((id) => prev.has(id)) ? prev : next;
+		});
 		setParkedMust((prev) => (prev.length === parked.size && prev.every((id) => parked.has(id)) ? prev : [...parked]));
 		setMustHave((prev) => {
 			const next = new Set([...prev].filter((id) => now.has(id)));
@@ -548,6 +562,17 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 	}) : null;
 	const bk = bookKeyNow();
 	const savedBuilds = useMemo(() => (bk ? bookCount(bk) : 0), [bk, bookTick]);
+	/** Saved builds a run could start from now: the run drops those the pool
+	 *  or the budget no longer allows. */
+	const usableBuilds = useMemo(() => {
+		if (!bk || !savedBuilds) return 0;
+		const must = [...mustHave];
+		const space = buildSpace({
+			purchasable: [...chosen, ...must], include: must, ownedByGroup, fixedIds: [], hints,
+			budget: Math.max(0, Math.min(MAX_SP_BUDGET, Math.floor(Number(budget) || 0)) - Math.floor(Number(reserve) || 0)),
+		});
+		return space.error ? 0 : selectStarts(space, bk).length;
+	}, [bk, bookTick, savedBuilds, chosen, mustHave, ownedByGroup, hints, budget, reserve]);
 
 	// ── career import ─────────────────────────────────────────────────────────
 	const [career, setCareer] = useState<CareerImport | null>(null);
@@ -559,7 +584,10 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		const imp = await pickCareerDump();
 		if (!imp) return;
 		props.onImportCareer?.(imp); // outfit, stats, aptitudes, learned skills, hint levels
-		if (imp.budget != null) setBudget(imp.budget);
+		if (imp.budget != null) {
+			setBudget(Math.min(MAX_SP_BUDGET, imp.budget));
+			if (imp.budget > MAX_SP_BUDGET) setMessage(`The career has ${imp.budget} SP, so the budget was set to the ${MAX_SP_BUDGET} SP the optimizer accepts.`);
+		}
 		setPoolFilter(imp.offered.length ? new Set(imp.offered) : null);
 		setPoolBlock(new Set(imp.blocked));
 		setCareer(imp);
@@ -576,7 +604,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		spreadNoise: advanced.spreadNoise ?? undefined,
 	});
 
-	const run = async () => {
+	const run = async (seedOverride?: number) => {
 		if (runningRef.current || !skillData || !workerFactory) return;
 		runningRef.current = true;
 		setRunning(true);
@@ -589,11 +617,12 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		evRef.current = null;
 
 		const reserveUse = Math.max(0, Math.floor(Number(reserve) || 0));
-		const budgetUse = Math.max(0, Math.floor(Number(budget) || 0) - reserveUse);
+		const budgetUse = Math.max(0, Math.min(MAX_SP_BUDGET, Math.floor(Number(budget) || 0)) - reserveUse);
 		const runLeftOut = leftOut;
 		const runMust = [...mustHave];
 		const runHints = new Map(hints);
-		const seedUse = Math.floor(Number(seed) || 0);
+		const runOwned = new Map(ownedByGroup);
+		const seedUse = Math.floor(Number(seedOverride ?? seed) || 0);
 		// Must-have skills are locks: always in, their cost reserved once
 		// (space.ts include), so they never appear in a build's `selection`.
 		const space: BuildSpace = buildSpace({
@@ -722,7 +751,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			);
 			if (!mountedRef.current) return;
 			console.log('[optimizer]', res);
-			setRunResult({ result: res, objective, leftOut: runLeftOut, reserve: reserveUse, mustHave: runMust, hints: runHints });
+			setRunResult({ result: res, objective, leftOut: runLeftOut, reserve: reserveUse, mustHave: runMust, hints: runHints, owned: runOwned });
 			setProgress(null);
 			if (useBook) {
 				saveBook(key, res.shortlist.slice(0, 5).map(r => ({
@@ -752,7 +781,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 		}
 	};
 	// The app's RUN button reaches the latest run and stop through this ref.
-	if (props.controlRef) props.controlRef.current = { run: () => { void run(); }, stop };
+	if (props.controlRef) props.controlRef.current = { run: (s) => { void run(s); }, stop };
 
 	// ── guards ────────────────────────────────────────────────────────────────
 	if (!skillData || !workerFactory) {
@@ -795,7 +824,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<span class="v2-opt-subtitle">Finds the skills worth buying with your SP, raced against the {fieldName}.</span>
 				</header>
 				<div class="v2-opt-fields">
-					<NumberInput label="SP budget" value={budget} min={0} step={50} suffix="SP" disabled={running}
+					<NumberInput label="SP budget" value={budget} min={0} max={MAX_SP_BUDGET} step={50} suffix="SP" disabled={running}
 						onChange={(v) => setBudget(v ?? 0)} />
 					<NumberInput label="Keep in reserve" value={reserve} min={0} step={50} suffix="SP" disabled={running}
 						helperText="Not spent by any build"
@@ -843,7 +872,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					<Switch checked={wideSearch} disabled={running} onChange={setWideSearch}
 						label={<span title="Starting builds are held further apart and half of them come from a shuffled knapsack, and a shake-up that keeps failing swaps more skills. Each start covers more ground, so give the run more time.">Wider search</span>} />
 					<Switch checked={useBook} disabled={running} onChange={setUseBook}
-						label={<span title="Start from the best builds earlier runs found for this race, and save this run's best builds for next time.">Use saved builds{savedBuilds ? ` (${savedBuilds})` : ''}</span>} />
+						label={<span title="Start from the best builds earlier runs found for this race, and save this run's best builds for next time.">Use saved builds{usableBuilds ? ` (${usableBuilds})` : ''}</span>} />
 				</div>
 
 				<details class="v2-opt-advanced">
@@ -890,7 +919,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 						<div class="v2-input-field">
 							<label class="v2-input-label">Saved builds</label>
 							<div class="v2-opt-inline v2-opt-input-row">
-								<span class="v2-opt-muted">{savedBuilds} saved</span>
+								<span class="v2-opt-muted">{savedBuilds} saved{usableBuilds < savedBuilds ? `, ${usableBuilds} usable with this pool and budget` : ''}</span>
 								<Button size="sm" variant="ghost" disabled={running || !savedBuilds || !bk} icon={<Trash2 size={14} />}
 									onClick={() => { if (bk) { clearBook(bk); setBookTick((t) => t + 1); } }}>Forget</Button>
 							</div>
@@ -1006,7 +1035,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 
 			{/* ── Results (from the frozen snapshot, never live state) ── */}
 			{runResult ? (
-				<OptimizerResults snapshot={runResult} hints={runResult.hints} ownedByGroup={ownedByGroup} onOpenInCompare={props.onOpenInCompare} />
+				<OptimizerResults snapshot={runResult} hints={runResult.hints} ownedByGroup={runResult.owned} onOpenInCompare={props.onOpenInCompare} />
 			) : !running && (
 				<section class="v2-opt-card v2-opt-empty">
 					<div class="v2-results-placeholder">

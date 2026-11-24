@@ -572,10 +572,16 @@ async function runSingleScenario(
 			emit('verify', `verifying ${n}/${nCap} seeds`);
 			const positions = Array.from({ length: n }, (_, i) => i);
 			await ev.ensure(pool.map(b => ({ ns: NS_VERIFY, scenarioIdx: si, build: b, positions })));
+			// One build has no #2 to resolve, so more races cannot change anything.
+			if (pool.length < 2) break;
 			const ranked = rankedOf();
 			if (ranked.length >= 2) {
+				// The loop looks again after every growth step, so it stops on the
+				// sequential boundary (SEQ_ADOPT_Z), not 1.96: at 1.96 a true tie
+				// was called resolved 10 to 15% of the time over the presets' 3 to
+				// 7 looks, against 4 to 5.5% at SEQ_ADOPT_Z.
 				const top = ev.paired(NS_VERIFY, si, ranked[0].b, ranked[1].b, vpick);
-				if (top && !isTie(top.ci95)) break; // #1 vs #2 resolved (§G)
+				if (top && (seqLo(top) > 0 || seqHi(top) < 0)) break; // #1 vs #2 resolved (§G)
 			}
 			// Stop mid-verify: truncate on the spot like verifyAcross (anytime, P5).
 			if (ctrl.stopped() || overTime() || n >= nCap) break;
@@ -900,9 +906,9 @@ async function runSingleScenario(
 				const add = addedOf.get(out.build.id);
 				if (!add || !add.pairWith) continue;
 				// Pair add Δ splits half/half as a floor estimate — never
-				// overwrite a direct single-option measurement. A 1-for-2 puts
-				// its dropped skill's value back before halving.
-				const half = (out.diff.mean + backOf(add.replaced)) / 2;
+				// overwrite a direct single-option measurement. A pair that sold
+				// one or two skills puts their values back before halving.
+				const half = (out.diff.mean + backOf(add.replaced) + backOf(add.extraDrop)) / 2;
 				if (!value.has(add.opt)) { value.set(add.opt, half); valueN.set(add.opt, out.diff.n); }
 				if (!value.has(add.pairWith)) { value.set(add.pairWith, half); valueN.set(add.pairWith, out.diff.n); }
 			}
@@ -965,7 +971,7 @@ async function runSingleScenario(
 			// §K: only the ones that can change it).
 			const cands: BuildRefLite[] = [];
 			const dropOf = new Map<string, string>(); // build id → dropped option
-			const addedOf = new Map<string, { opt: string; replaced?: string; pairWith?: string }>();
+			const addedOf = new Map<string, { opt: string; replaced?: string; extraDrop?: string; pairWith?: string }>();
 			for (const id of X.selection) {
 				const b = remember(refOf(X.selection.filter(x => x !== id)));
 				dropOf.set(b.id, id);
@@ -1002,7 +1008,13 @@ async function runSingleScenario(
 					const [A, C] = a.id < c.id ? [a, c] : [c, a];
 					const b = remember(withOption(withOption(X.selection, A).selection, C));
 					if (addDead(b, A.id) || addDead(b, C.id)) return; // §E never-add
-					addedOf.set(b.id, { opt: A.id, pairWith: C.id });
+					// Either add can be an upgrade of a group X already holds, which
+					// sells X's pick there: record it so the split puts it back.
+					const sold = X.selection.filter(x => {
+						const gid = space.byId.get(x)?.groupId;
+						return gid === A.groupId || gid === C.groupId;
+					});
+					addedOf.set(b.id, { opt: A.id, pairWith: C.id, replaced: sold[0], extraDrop: sold[1] });
 					cands.push(b);
 				};
 				for (let a = 0; a < pos.length && a < 3; a++) for (let c = a + 1; c < pos.length; c++) addPair(pos[a], pos[c]);
@@ -1758,8 +1770,8 @@ export async function runOptimizer(
 
 /** Merge each scenario's shortlist and verify the pooled candidates fresh
  *  across every scenario, then rank by the aggregation (§6.4). A build tied
- *  with the leader in ANY scenario is reported as a tie (conservative — we
- *  only claim a win where every scenario agrees). `extra` names more candidates
+ *  with the leader in ANY scenario is reported as a tie (conservative: a win
+ *  is claimed only where every scenario agrees). `extra` names more candidates
  *  for the pool (§G: the one aggregated search's per-scenario champions); they
  *  are verified on fresh seeds like everything else in it. */
 async function verifyAcross(
@@ -1791,9 +1803,16 @@ async function verifyAcross(
 		const n = objs.reduce((m, o) => Math.min(m, o.n), Infinity);
 		return { agg: aggregateValues(vals, aggregation), perScenario, sem, n: Number.isFinite(n) ? n : 0 };
 	};
-	const allTieVs = (best: BuildRefLite, b: BuildRefLite) => ranIdxs.every(si => {
+	// A tie in any one scenario makes the pair a tie.
+	const tieInAnyVs = (best: BuildRefLite, b: BuildRefLite) => ranIdxs.some(si => {
 		const p = ev.paired(NS_VERIFY, si, best, b, pick);
 		return p ? isTie(p.ci95) : true; // a scenario with no common seed cannot prove a difference
+	});
+	// The growth loop's stop: every scenario resolves the pair on the
+	// sequential boundary, since the loop looks again after each step.
+	const resolvedSeq = (best: BuildRefLite, b: BuildRefLite) => ranIdxs.every(si => {
+		const p = ev.paired(NS_VERIFY, si, best, b, pick);
+		return !!p && (seqLo(p) > 0 || seqHi(p) < 0);
 	});
 	// Secondary columns (P(1st)/P(top-3)/mean ℓ) pool every scenario's fresh
 	// verification slots into ONE real BuildStats — verification seeds only
@@ -1821,17 +1840,18 @@ async function verifyAcross(
 				build: b, sp, leftover: space.budget - sp, skillCount: b.selection.length,
 				obj: { mean: agg, sem, n: nn }, perScenario, provisional: false,
 				stats: pooledStats(b),
-				tiedWithBest: b.id !== ranked[0].b.id && allTieVs(ranked[0].b, b),
+				tiedWithBest: b.id !== ranked[0].b.id && tieInAnyVs(ranked[0].b, b),
 			};
 		});
 		const group = rows.filter(r => r.tiedWithBest || r.build.id === ranked[0].b.id);
 		best = group.sort((a, b) => b.leftover - a.leftover || a.skillCount - b.skillCount
 			|| b.obj.mean - a.obj.mean || (a.build.id < b.build.id ? -1 : 1))[0];
 		rows = [best, ...rows.filter(r => r.build.id !== best.build.id)];
-		for (const r of rows) r.tiedWithBest = r.build.id === best.build.id ? false : allTieVs(best.build, r.build);
+		for (const r of rows) r.tiedWithBest = r.build.id === best.build.id ? false : tieInAnyVs(best.build, r.build);
 		// Resolve the top two on the aggregation before stopping (§G).
 		const two = ranked.filter(x => x.b.id !== best.build.id)[0];
-		if (two && !allTieVs(best.build, two.b)) break; // a real winner somewhere, others agree
+		if (!two) break; // one build: nothing left to resolve
+		if (resolvedSeq(best.build, two.b)) break; // every scenario agrees on the winner
 		if (ctrl.stopped() || n >= gCap) break;
 		n = Math.min(gCap, n + Math.max(500, Math.floor(gSeeds / 4)));
 	}
