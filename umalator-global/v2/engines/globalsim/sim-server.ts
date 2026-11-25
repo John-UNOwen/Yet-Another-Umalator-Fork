@@ -8,7 +8,7 @@
  * ## Architecture
  *
  *   master (this file)  plain node http server, zero deps:
- *     GET    /ping                 → {ok, cores, tokenRequired}
+ *     GET    /ping                 → {ok, cores, tokenRequired, authed}
  *     POST   /session              → {sessionId,backend}  (forks ONE child;
  *                                    optional body {"engine":"wasm"|"native"|
  *                                    "gpu"}; SIM_SERVER_BACKENDS=wasm,native
@@ -478,6 +478,9 @@ function masterMain(): void {
 				const gpu = probeGpu();
 				json(res, 200, {
 					ok: true, cores: os.cpus().length, tokenRequired: !!token,
+					// /ping sits before the auth gate, so it must report the token
+					// verdict itself, else a wrong token looks connected.
+					authed,
 					// The extra lane needs a device that is exact, passes the guard race
 					// AND answers the multi-request entry. A pending check reports ok:false.
 					gpu: {

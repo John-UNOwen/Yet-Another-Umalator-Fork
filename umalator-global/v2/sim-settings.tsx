@@ -17,6 +17,8 @@ import { Tooltip } from './components';
 import { MAX_THREADS, serverAwareThreadCount } from './engines/globalsim/pool';
 import { lanePlanOf, lastJobLine } from './engines/globalsim/lanePlan';
 import type { GpuVerdict, LastJob } from './engines/globalsim/lanePlan';
+import type { SimAccess } from './engines/globalsim/simLink';
+import { needsGestureFor } from './engines/globalsim/simLink';
 
 interface SimCommonProps {
 	samples: number;
@@ -43,7 +45,10 @@ interface SimAdvancedProps {
 		setToken: (v: string) => void;
 		online: boolean;
 		cores?: number;
-		tokenNeeded: boolean;
+		/** The server answered but refused the token, so every call will 401. */
+		tokenRejected: boolean;
+		/** Chrome's Local Network Access state for this origin. */
+		access: SimAccess;
 		check: () => void;
 		/** The server's gpu lane verdict (device, cost, or the refusal). */
 		gpu?: GpuVerdict | null;
@@ -152,6 +157,20 @@ export function SimAdvancedControls({
 		})
 		: null;
 	const jobLine = lastJobLine(lastJob);
+	// The status has to name the real blocker. "not running" covers three
+	// different faults here, and the browser's own refusal used to look like a
+	// stopped server.
+	const serverStatus = !simServer
+		? null
+		: simServer.online
+			? simServer.tokenRejected
+				? 'Sim server connected, but it rejected the token. Enter the token it was started with, then press Check.'
+				: `Sim server connected: ${simServer.cores ?? 'all'} cores. Workers run outside the browser tab; Auto now uses every core with no tab-memory cost.`
+			: simServer.access === 'denied'
+				? "Chrome blocked this page from reaching your local server. Allow Local network in this site's settings, then press Check."
+				: simServer.access === 'prompt' && needsGestureFor(simServer.url)
+					? 'Press Check to use your local sim server. Chrome asks once for permission to reach it.'
+					: 'Sim server not running. Start it, then press Check.';
 	return (
 		<div class="v2-sim-advanced">
 			{setThreads && (
@@ -198,14 +217,8 @@ export function SimAdvancedControls({
 				</div>
 			)}
 
-			{simServer && (
-				<span class="v2-globalsim-notice v2-sim-server-status">
-					{simServer.online
-						? `Sim server connected — ${simServer.cores ?? 'all'} cores. Workers run outside the browser tab; Auto now uses every core with no tab-memory cost.`
-						: simServer.tokenNeeded
-							? 'Sim server needs its token — enter it above and press Check.'
-							: 'Sim server not running. Double-click sim-server.bat to run the sim in its own process — outside the browser tab, with no per-tab memory ceiling (restart it, then Check or reload).'}
-				</span>
+			{serverStatus && (
+				<span class="v2-globalsim-notice v2-sim-server-status">{serverStatus}</span>
 			)}
 
 			{simServer && simServer.online && lanePlan && (

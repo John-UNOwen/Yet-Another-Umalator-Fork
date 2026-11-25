@@ -151,6 +151,17 @@ export function serverAwareThreadCount(opt: ThreadsOption, serverBacked: boolean
 
 // ── worker seam ──────────────────────────────────────────────────────────────
 
+/**
+ * A Worker 'error' event carries the reason in `message`, and SimWorker passes a
+ * plain string. The pool used to drop both, so a 401 from the local sim server
+ * reached the user as "worker crashed".
+ */
+function workerErrorReason(e: unknown): string {
+	if (typeof e === 'string' && e) return e;
+	const m = (e as { message?: unknown } | null)?.message;
+	return typeof m === 'string' && m ? m : 'worker crashed';
+}
+
 export interface WorkerLike {
 	postMessage(msg: unknown): void;
 	addEventListener(type: 'message', cb: (e: { data: any }) => void): void;
@@ -1194,7 +1205,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		slot.worker.addEventListener('message', (e: { data: any }) => { if (!disposed && !aborted && slot.gen === gen) onWorkerMessage(slot, e.data); });
 		// A crashed worker (OOM / uncaught throw / wasm trap the runtime kills
 		// the thread for) lands here — same recovery path as an engine panic.
-		slot.worker.addEventListener('error', () => { if (!disposed && !aborted && slot.gen === gen) failWorker(slot, 'worker crashed'); });
+		slot.worker.addEventListener('error', (e) => { if (!disposed && !aborted && slot.gen === gen) failWorker(slot, workerErrorReason(e)); });
 		if (slot.worker.ready) {
 			// A rejected ready means the worker failed to open; its error event
 			// drives recovery, so dispatch it like a ready one and let that path

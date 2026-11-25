@@ -34,6 +34,9 @@ export interface PingResult {
 	ok: boolean;
 	cores?: number;
 	tokenRequired?: boolean;
+	/** Whether the server accepted the token this client sent. False with
+	 *  tokenRequired true means the server is up but every other call 401s. */
+	authed?: boolean;
 	/** The server's gpu verdict: only a batch-capable gpu whose startup check
 	 *  passed is usable as the extra lane. Pending until the server's check answers.
 	 *  Absent on servers that predate the field. */
@@ -71,14 +74,78 @@ export function saveSimServerSettings(url: string, token: string): void {
 	} catch { /* private mode — per-tab default is fine */ }
 }
 
-/** Cheap liveness probe (also how we learn the server wants a token). */
-export async function pingSimServer(url = loadSimServerUrl(), token = loadSimServerToken()): Promise<PingResult> {
+/** Chrome's Local Network Access sorts the destination into an address space,
+ *  and an https page may only reach http://127.0.0.1 when the request names the
+ *  space it means: without this a hostname that resolves to loopback fails the
+ *  mixed-content check before the permission is ever asked. IP literals are
+ *  exempt from that check, so this is a no-op for the default URL. */
+export type SimAddressSpace = 'local' | 'loopback';
+
+export function simTargetSpace(url: string): SimAddressSpace | undefined {
+	let host: string;
+	try { host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, ''); } catch { return undefined; }
+	if (host === 'localhost' || host === '::1' || host.endsWith('.localhost') || /^127\./.test(host)) return 'loopback';
+	if (host.endsWith('.local') || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) return 'local';
+	return undefined;
+}
+
+/** fetch init tagged with the target's address space (see simTargetSpace). */
+function simInit(url: string, init: RequestInit = {}): RequestInit {
+	const space = simTargetSpace(url);
+	return space ? ({ ...init, targetAddressSpace: space } as RequestInit) : init;
+}
+
+/**
+ * Whether this origin may reach loopback yet. Chrome answers 'prompt' when the
+ * site has never asked, and a request made without a user gesture is denied
+ * without showing the dialog and stays denied, so the app must not probe on
+ * load. Browsers without Local Network Access reject the query and report
+ * 'unknown', which keeps their old unconditional probe.
+ */
+export type SimAccess = 'granted' | 'prompt' | 'denied' | 'unknown';
+
+export async function simAccessState(): Promise<SimAccess> {
 	try {
-		const res = await fetch(`${url.replace(/\/+$/, '')}/ping`, {
+		if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown';
+		// 'loopback-network' is the current name. The older combined
+		// 'local-network-access' could crash a Chromium renderer, so it is not
+		// queried here.
+		const s = await navigator.permissions.query({ name: 'loopback-network' } as unknown as PermissionDescriptor);
+		return s.state === 'granted' || s.state === 'denied' ? s.state : 'prompt';
+	} catch { return 'unknown'; }
+}
+
+/**
+ * True when reaching `url` crosses into a more private address space than this
+ * page's own, which is the only case Chrome gates behind the permission. A
+ * public page reaching any local target crosses, a localhost page reaching
+ * loopback does not, and a page on the LAN reaching loopback does.
+ */
+export function needsGestureFor(url: string): boolean {
+	const target = simTargetSpace(url);
+	if (!target) return false;
+	const origin = typeof location === 'undefined' ? undefined : simTargetSpace(location.origin);
+	if (!origin) return true;
+	return (target === 'loopback' ? 2 : 1) > (origin === 'loopback' ? 2 : 1);
+}
+
+/**
+ * Liveness probe, and the one request that learns the server's token verdict.
+ * timeoutMs has to outlast a permission dialog: the request stays pending while
+ * the user reads it.
+ */
+export async function pingSimServer(
+	url = loadSimServerUrl(),
+	token = loadSimServerToken(),
+	opts: { timeoutMs?: number } = {},
+): Promise<PingResult> {
+	try {
+		const base = url.replace(/\/+$/, '');
+		const res = await fetch(`${base}/ping`, simInit(base, {
 			headers: token ? { 'x-sim-token': token } : undefined,
-			signal: AbortSignal.timeout(1500),
-		});
-		if (res.status === 401) return { ok: false, tokenRequired: true, error: 'token required' };
+			signal: AbortSignal.timeout(opts.timeoutMs ?? 1500),
+		}));
+		if (res.status === 401) return { ok: false, tokenRequired: true, authed: false, error: 'token required' };
 		if (!res.ok) return { ok: false, error: `http ${res.status}` };
 		const j = await res.json() as any;
 		const gpu = j.gpu && typeof j.gpu === 'object'
@@ -93,7 +160,13 @@ export async function pingSimServer(url = loadSimServerUrl(), token = loadSimSer
 				pending: j.gpu.pending === true,
 			}
 			: undefined;
-		return { ok: j.ok === true, cores: j.cores, tokenRequired: !!j.tokenRequired, ...(gpu ? { gpu } : {}) };
+		return {
+			ok: j.ok === true,
+			cores: j.cores,
+			tokenRequired: !!j.tokenRequired,
+			authed: typeof j.authed === 'boolean' ? j.authed : undefined,
+			...(gpu ? { gpu } : {}),
+		};
 	} catch (e: any) {
 		return { ok: false, error: String(e?.name === 'TimeoutError' ? 'timeout' : (e?.message || e)) };
 	}
@@ -149,7 +222,7 @@ class SimMux {
 			let got: Array<{ s: string; m: any }>;
 			try {
 				const ids = [...this.handlers.keys()].join(',');
-				const res = await fetch(`${this.base}/multiplex?ids=${encodeURIComponent(ids)}${ack ? '&ack=1' : ''}`, { headers: simHdrs(this.token), signal: ac.signal });
+				const res = await fetch(`${this.base}/multiplex?ids=${encodeURIComponent(ids)}${ack ? '&ack=1' : ''}`, simInit(this.base, { headers: simHdrs(this.token), signal: ac.signal }));
 				if (!res.ok) { this.failAll(`http ${res.status}`); return; }
 				got = (await res.json() as any).msgs ?? [];
 			} catch (e: any) {
@@ -211,7 +284,7 @@ export class SimWorker implements WorkerLike {
 	}
 
 	private async openSession(): Promise<string> {
-		const res = await fetch(`${this.base}/session`, { method: 'POST', headers: simHdrs(this.token), body: JSON.stringify(this.engine ? { engine: this.engine } : {}), signal: this.sendAc.signal });
+		const res = await fetch(`${this.base}/session`, simInit(this.base, { method: 'POST', headers: simHdrs(this.token), body: JSON.stringify(this.engine ? { engine: this.engine } : {}), signal: this.sendAc.signal }));
 		if (!res.ok) throw new Error(`sim server session open failed: http ${res.status}`);
 		const j = await res.json() as any;
 		if (typeof j.sessionId !== 'string') throw new Error('sim server: no sessionId');
@@ -246,7 +319,7 @@ export class SimWorker implements WorkerLike {
 			while (this.queue.length > 0 && !this.closed) {
 				const m = this.queue.shift();
 				try {
-					const res = await fetch(`${this.base}/session/${id}/msg`, { method: 'POST', headers: simHdrs(this.token), body: JSON.stringify(m), signal: this.sendAc.signal });
+					const res = await fetch(`${this.base}/session/${id}/msg`, simInit(this.base, { method: 'POST', headers: simHdrs(this.token), body: JSON.stringify(m), signal: this.sendAc.signal }));
 					if (!res.ok && res.status !== 410) { this.fail(`sim server msg failed: http ${res.status}`); return; }
 				} catch {
 					if (this.closed) return;
@@ -273,7 +346,7 @@ export class SimWorker implements WorkerLike {
 		if (id) {
 			this.mux.unwatch(id);
 			// Fire-and-forget; the server also GCs sessions it stops hearing from.
-			void fetch(`${this.base}/session/${id}`, { method: 'DELETE', headers: simHdrs(this.token), keepalive: true }).catch(() => { /* gone */ });
+			void fetch(`${this.base}/session/${id}`, simInit(this.base, { method: 'DELETE', headers: simHdrs(this.token), keepalive: true })).catch(() => { /* gone */ });
 		}
 	}
 }

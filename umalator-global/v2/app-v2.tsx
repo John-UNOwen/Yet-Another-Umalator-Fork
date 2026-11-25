@@ -91,12 +91,15 @@ import {
 import {
   SimWorker,
   pingSimServer,
+  simAccessState,
+  needsGestureFor,
   loadSimServerUrl,
   loadSimServerToken,
   saveSimServerSettings,
   simGpuFactory,
   simSessionFactory,
 } from "./engines/globalsim/simLink";
+import type { SimAccess } from "./engines/globalsim/simLink";
 import type { GpuVerdict, LastJob } from "./engines/globalsim/lanePlan";
 import { HorseState } from "../../components/HorseDefTypes";
 import { fromJS, Map as ImmMap } from "immutable";
@@ -327,7 +330,10 @@ function App() {
   const [simServerToken, setSimServerToken] = useState<string>(() => loadSimServerToken());
   const [simServerOnline, setSimServerOnline] = useState(false);
   const [simServerCores, setSimServerCores] = useState<number | undefined>(undefined);
-  const [simServerTokenNeeded, setSimServerTokenNeeded] = useState(false);
+  // Chrome's Local Network Access gate for this origin. 'prompt' means the page
+  // has never asked, and an ungestured request would be denied silently.
+  const [simAccess, setSimAccess] = useState<SimAccess>("unknown");
+  const [simServerTokenRejected, setSimServerTokenRejected] = useState(false);
   // The server's gpu verdict: the extra lane opens only when /ping reports a
   // usable (exact and batch-capable) device.
   const [simServerGpu, setSimServerGpu] = useState(false);
@@ -335,13 +341,16 @@ function App() {
   // The last finished GlobalSim run, shown under the lane plan in settings.
   const [lastSimJob, setLastSimJob] = useState<LastJob | null>(null);
   const gpuProbeRetryRef = useRef<number | null>(null);
-  const checkSimServer = useCallback(async () => {
-    const r = await pingSimServer(simServerUrl, simServerToken);
+  const checkSimServer = useCallback(async (opts?: { gesture?: boolean }) => {
+    // A gesture can open Chrome's permission dialog, and the request stays
+    // pending while it is up, so that path cannot use the 1.5 s probe budget.
+    const r = await pingSimServer(simServerUrl, simServerToken, opts?.gesture ? { timeoutMs: 60_000 } : undefined);
     setSimServerOnline(r.ok);
     setSimServerCores(r.cores);
     setSimServerGpu(!!(r.gpu?.ok && r.gpu.batch));
     setSimServerGpuPlan(r.gpu ?? null);
-    setSimServerTokenNeeded(!r.ok && !!r.tokenRequired);
+    setSimServerTokenRejected(r.tokenRequired === true && r.authed === false);
+    if (opts?.gesture) setSimAccess(await simAccessState());
     saveSimServerSettings(simServerUrl, simServerToken);
     // The startup check measured this device's launch floor and slope, so the
     // pool sizes its lane on those. No eager session: an open device costs the
@@ -361,8 +370,20 @@ function App() {
     }
   }, [simServerUrl, simServerToken]);
   useEffect(() => {
-    void checkSimServer();
-    return () => { if (gpuProbeRetryRef.current !== null) window.clearTimeout(gpuProbeRetryRef.current); };
+    // Probing on load is what broke this: Chrome denies an ungestured loopback
+    // request without a prompt and keeps that denial, so the dialog could never
+    // appear for the Check that came later. Only an existing grant, a local
+    // origin, or a browser without Local Network Access may probe here.
+    let live = true;
+    void simAccessState().then((access) => {
+      if (!live) return;
+      setSimAccess(access);
+      if (access === "granted" || access === "unknown" || !needsGestureFor(simServerUrl)) void checkSimServer();
+    });
+    return () => {
+      live = false;
+      if (gpuProbeRetryRef.current !== null) window.clearTimeout(gpuProbeRetryRef.current);
+    };
   }, []);
   // GlobalSim field selection (integration plan Phase 3): mob preset + gate mode.
   // The same seed and preset give the same field; "Auto" draws the tested uma's
@@ -1860,8 +1881,9 @@ function App() {
                   simServer={{
                     url: simServerUrl, setUrl: setSimServerUrl,
                     token: simServerToken, setToken: setSimServerToken,
-                    online: simServerOnline, cores: simServerCores, tokenNeeded: simServerTokenNeeded,
-                    check: () => { void checkSimServer(); },
+                    online: simServerOnline, cores: simServerCores,
+                    tokenRejected: simServerTokenRejected, access: simAccess,
+                    check: () => { void checkSimServer({ gesture: true }); },
                     gpu: simServerGpuPlan,
                   }}
                   lastJob={lastSimJob}
