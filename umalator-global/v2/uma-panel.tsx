@@ -8,6 +8,7 @@
 
 import { h, Fragment } from 'preact';
 import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 
 import { CustomSelect, IconSelect, Dropdown, Tooltip, Modal, Button } from './components';
 import { SkillsSection } from './skills';
@@ -203,6 +204,11 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 		`${BASE_PATH}/icons/mob/trained_mob_chr_icon_${8000 + Math.floor(Math.random() * 624)}_000001_01.png`,
 	[]);
 
+	const openSearch = useCallback(() => {
+		setIsSearchOpen(true);
+		setTimeout(() => inputRef.current?.focus(), 0);
+	}, []);
+
 	const handleSelect = useCallback((oid: string) => {
 		onSelect(oid);
 		setIsSearchOpen(false);
@@ -236,10 +242,16 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 
 	return (
 		<div class="v2-uma-portrait">
-			<div class="v2-uma-portrait-image" onClick={() => {
-				setIsSearchOpen(true);
-				setTimeout(() => inputRef.current?.focus(), 0);
-			}}>
+			<div
+				class="v2-uma-portrait-image"
+				role="button"
+				tabIndex={0}
+				aria-label={uma ? `Change character (${uma.name[1]})` : 'Select character'}
+				onClick={openSearch}
+				onKeyDown={(e) => {
+					if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSearch(); }
+				}}
+			>
 				<img
 					src={outfitId ? resolveBase((icons as any)[outfitId]) : randomMob}
 					alt={uma?.name[1] || 'Select character'}
@@ -265,7 +277,9 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 				)}
 			</div>
 
-			{isSearchOpen && (
+			{/* A body child, like the skill picker: inside the drawer (z-index 100)
+			    its own z-index could not lift it above the sticky header. */}
+			{isSearchOpen && createPortal(
 				<div class="v2-uma-search-overlay" onClick={() => setIsSearchOpen(false)}>
 					<div class="v2-uma-search-modal" onClick={e => e.stopPropagation()}>
 						<input
@@ -290,7 +304,9 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 							</label>
 						)}
 						<ul ref={listRef} class="v2-uma-search-results">
-							{suggestions.slice(0, 50).map((oid, i) => {
+							{/* Every match is listed: the old 50-row cap hid half the
+							    roster and let the arrow keys walk onto rows never drawn. */}
+							{suggestions.map((oid, i) => {
 								const uid = oid.slice(0, 4);
 								const u = (umas as any)[uid];
 								return (
@@ -307,7 +323,8 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 							})}
 						</ul>
 					</div>
-				</div>
+				</div>,
+				document.body,
 			)}
 		</div>
 	);
@@ -679,9 +696,9 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 
 	const handleCopyToClipboard = useCallback(async () => {
 		const success = await copyHorseToClipboard(state);
-		if (success) {
-			// Brief visual feedback could be added
-		}
+		// The clipboard can refuse (no permission, an insecure page): say so
+		// instead of failing silently.
+		if (!success) window.alert('Could not copy the build: the browser blocked clipboard access.');
 	}, [state]);
 
 	// Load handlers
@@ -805,6 +822,7 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 						<Tooltip content="Delete" position="left">
 							<button
 								class="v2-load-menu-delete"
+								aria-label={`Delete saved build ${name}`}
 								onClick={(e) => {
 									e.stopPropagation();
 									handleDeleteSlot(name);
@@ -830,7 +848,7 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 					<Tooltip content="Save" position="bottom">
 						<Dropdown
 							trigger={
-								<button class="v2-uma-action-btn">
+								<button class="v2-uma-action-btn" aria-label="Save build">
 									<Save size={14} />
 								</button>
 							}
@@ -841,7 +859,7 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 					<Tooltip content="Load" position="bottom">
 						<Dropdown
 							trigger={
-								<button class="v2-uma-action-btn">
+								<button class="v2-uma-action-btn" aria-label="Load build">
 									<Upload size={14} />
 								</button>
 							}
@@ -851,14 +869,14 @@ export function V2UmaPanel({ state, onChange, onLoad, onReset, onResetAll, title
 					</Tooltip>
 					{onReset && (
 						<Tooltip content="Reset" position="bottom">
-							<button class="v2-uma-action-btn" onClick={onReset}>
+							<button class="v2-uma-action-btn" aria-label="Reset this uma" onClick={onReset}>
 								<RotateCcw size={14} />
 							</button>
 						</Tooltip>
 					)}
 					{onResetAll && (
-						<Tooltip content="Reset All" position="bottom">
-							<button class="v2-uma-action-btn" onClick={onResetAll}>
+						<Tooltip content="Reset both umas" position="bottom">
+							<button class="v2-uma-action-btn" aria-label="Reset both umas" onClick={onResetAll}>
 								<Trash2 size={14} />
 							</button>
 						</Tooltip>

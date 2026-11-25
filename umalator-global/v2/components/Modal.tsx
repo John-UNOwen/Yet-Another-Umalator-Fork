@@ -8,8 +8,11 @@
 
 import { h } from 'preact';
 import type { ComponentChildren } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import { X } from 'lucide-react';
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+let modalSeq = 0;
 
 interface ModalProps {
 	isOpen: boolean;
@@ -34,6 +37,33 @@ export function Modal({
 	closeOnEscape = true,
 	className = ''
 }: ModalProps) {
+	const panelRef = useRef<HTMLDivElement>(null);
+	const titleId = useRef(`v2-modal-title-${++modalSeq}`).current;
+
+	// A dialog takes focus when it opens, keeps Tab inside it, and gives focus
+	// back to what opened it when it closes.
+	useEffect(() => {
+		if (!isOpen) return;
+		const opener = document.activeElement as HTMLElement | null;
+		const panel = panelRef.current;
+		const first = panel?.querySelector<HTMLElement>(FOCUSABLE);
+		(first ?? panel)?.focus();
+		function trapTab(e: KeyboardEvent) {
+			if (e.key !== 'Tab' || !panel) return;
+			const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => el.offsetParent !== null);
+			if (!items.length) { e.preventDefault(); panel.focus(); return; }
+			const head = items[0], tail = items[items.length - 1];
+			const at = document.activeElement;
+			if (e.shiftKey && (at === head || !panel.contains(at))) { e.preventDefault(); tail.focus(); }
+			else if (!e.shiftKey && (at === tail || !panel.contains(at))) { e.preventDefault(); head.focus(); }
+		}
+		document.addEventListener('keydown', trapTab);
+		return () => {
+			document.removeEventListener('keydown', trapTab);
+			if (opener && document.contains(opener)) opener.focus();
+		};
+	}, [isOpen]);
+
 	// Close on escape
 	useEffect(() => {
 		function handleEscape(e: KeyboardEvent) {
@@ -56,12 +86,17 @@ export function Modal({
 	return (
 		<div class="v2-modal-overlay" onClick={closeOnBackdrop ? onClose : undefined}>
 			<div
+				ref={panelRef}
 				class={`v2-modal v2-modal-${size} ${className}`}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={title ? titleId : undefined}
+				tabIndex={-1}
 				onClick={e => e.stopPropagation()}
 			>
 				{title && (
 					<div class="v2-modal-header">
-						<h2 class="v2-modal-title">{title}</h2>
+						<h2 class="v2-modal-title" id={titleId}>{title}</h2>
 						<button
 							type="button"
 							class="v2-modal-close"

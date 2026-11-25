@@ -183,7 +183,6 @@ export function RaceTrack(props) {
 			const skillLength = Math.max(50, draggedSkill.originalEnd - draggedSkill.originalStart); // Ensure minimum length of 50m
 			const newEnd = Math.round(Math.max(newStart + skillLength, Math.min(course.distance, newStart + skillLength)));
 			
-			console.log('Dragging:', {newStart, newEnd, dragOffset, x, w});
 			
 			if (props.onSkillDrag) { 
 				props.onSkillDrag(draggedSkill.skillId, draggedSkill.umaIndex, newStart, newEnd); 
@@ -219,7 +218,6 @@ export function RaceTrack(props) {
 		const x = e.clientX - rect.left - xOffset;
 		const dragX = x / w * course.distance;
 
-		console.log('Starting drag:', {skillId, umaIndex, start, end, dragX, x, w, rect});
 
 		setDraggedSkill({skillId, umaIndex, originalStart: start, originalEnd: end});
 		setDragOffset({x: dragX - start, y: 0});
@@ -373,7 +371,6 @@ export function RaceTrack(props) {
 	}, [props.courseid]);
 
 	const regions = useMemo(function () {
-		console.log('Regions being processed:', props.regions);
 		return props.regions.reduce((state,desc) => {
 			if (desc.type == RegionDisplayType.Immediate && desc.regions.length > 0) {
 				let x = desc.regions[0].start / course.distance * 100;
@@ -383,7 +380,6 @@ export function RaceTrack(props) {
 				state.seen.add(x);
 				state.elem.push(<line x1={`${x}%`} y1="0" x2={`${x}%`} y2="100%" stroke={desc.color.stroke} stroke-width={x == 0 ? 4 : 2} />);
 			} else if (desc.type == RegionDisplayType.Textbox) {
-				console.log('Processing Textbox region:', desc);
 				const rects = desc.regions.map(r => {
 					// Check if this skill has a forced position
 					let start = r.start;
@@ -424,7 +420,6 @@ export function RaceTrack(props) {
 					return (
 						<svg class="drag-textbox" x={x+'%'} y={y+'%'} width={w+'%'} height="10%" 
 							onMouseDown={(e) => {
-								console.log('Mouse down on skill marker:', desc.skillId, desc.umaIndex);
 								if (desc.skillId && desc.umaIndex !== undefined) {
 									e.preventDefault();
 									e.stopPropagation();
@@ -432,7 +427,6 @@ export function RaceTrack(props) {
 								}
 							}}
 							onMouseEnter={(e) => {
-								console.log('Mouse enter on skill marker:', desc.skillId, desc.umaIndex);
 								if (desc.skillId) {
 									e.preventDefault();
 									e.stopPropagation();
@@ -490,6 +484,8 @@ export function RaceTrack(props) {
 						{regions}
 						{props.posKeepLabels && props.posKeepLabels.map((label, index) => (
 							<g key={index} class="poskeep-label">
+								{/* The full name on hover: the label itself is an abbreviation. */}
+								{label.title && <title>{label.title}</title>}
 								<text 
 									x={label.x + label.width / 2} 
 									y={5 + label.yOffset} 

@@ -189,6 +189,9 @@ function HintCost(props: { id: string; cost: number; hint: number; disabled: boo
 
 // ── number formatting ───────────────────────────────────────────────────────
 
+// Two significant figures, for small noise figures that fmtN prints as 0.00.
+const fmtSig = (x: number | undefined | null): string =>
+	x == null || !Number.isFinite(x) ? '—' : Math.abs(x) >= 1 ? x.toFixed(2) : x === 0 ? '0' : x.toPrecision(2);
 const fmtN = (x: number | undefined | null, d = 2): string =>
 	x != null && Number.isFinite(x) ? x.toFixed(d).replace(/^-0\.(0+)$/, '0.$1') : '—';
 const fmtPct = (x: number | undefined | null): string =>
@@ -1036,7 +1039,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 					{progress ? <ProgressView progress={progress} objective={objective} untilStopped={preset === 'untilStopped'}
 						limitMs={cfgNow.timeBudgetMs} />
 						: <div class="v2-opt-muted">Starting the engine…</div>}
-					<div class="v2-opt-muted">Press STOP at the top to end the run early and check what it has found.</div>
+					<div class="v2-opt-muted">Press STOP to end the run early and check what it has found.</div>
 				</section>
 			)}
 
@@ -1047,7 +1050,7 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				<section class="v2-opt-card v2-opt-empty">
 					<div class="v2-results-placeholder">
 						<Wand2 size={40} />
-						<p>Set the SP and the skill pool, then press RUN at the top.</p>
+						<p>Set the SP and the skill pool, then press RUN.</p>
 					</div>
 				</section>
 			)}
@@ -1220,7 +1223,7 @@ function OptimizerResults(props: {
 			)}
 
 			<div class="v2-opt-footnote">
-				{result.verificationSeeds.toLocaleString()} checking races per build · race noise σΔ {fmtN(result.noise.sigmaDeltaLead)} L
+				{result.verificationSeeds.toLocaleString()} checking races per build · race noise σΔ {fmtSig(result.noise.sigmaDeltaLead)} L
 				{leftOut > 0 ? ` · ${leftOut} skill${leftOut === 1 ? '' : 's'} left the pool before the search` : ''}
 			</div>
 		</section>

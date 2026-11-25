@@ -64,6 +64,15 @@ function errCodes(res: AdapterResult<any>): string[] {
 
 // ── 1. enum mapping tables ───────────────────────────────────────────────────
 
+// The site validates course ids against the committed globalsim/courses.json,
+// while every other suite reads the engine's own table. When the engine pin
+// gains or drops a course, this says so instead of the app refusing the run.
+test('committed globalsim/courses.json matches the pinned engine course table', t => {
+	const committed: string[] = require(path.join(repoRoot, 'globalsim/courses.json'));
+	t.deepEqual([...committed].sort(), [...courseIds].sort(), 'run node umalator-global/build.mjs to regenerate it');
+	t.end();
+});
+
 test('ground enum maps to GlobalSim strings', t => {
 	t.equal(GROUND_TO_GLOBALSIM[GroundCondition.Good], 'Good', 'Good(1)=良/Firm → Good');
 	t.equal(GROUND_TO_GLOBALSIM[GroundCondition.Yielding], 'Yielding', 'Yielding(2)=稍重 → Yielding');

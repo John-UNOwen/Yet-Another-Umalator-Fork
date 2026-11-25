@@ -287,7 +287,7 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 		},
 		sortDescFirst: true,
 	}, {
-		header: (c: any) => <span onClick={c.header.column.getToggleSortingHandler()} title="pts vs the 50% neutral point; not a race win rate">vs Base</span>,
+		header: (c: any) => <span onClick={c.header.column.getToggleSortingHandler()} title="Share of races the swap finished ahead, minus 50. Ties count as not ahead, so a swap that changes nothing scores -50. Not a race win rate.">vs Base</span>,
 		id: 'gsbase',
 		// Sorting on winRate is monotone in (winRate - 0.5), so the accessor can
 		// stay the raw rate and keep the existing NaN-to-bottom ordering.
@@ -433,6 +433,7 @@ export function SkillChartPane(props: SkillChartPaneProps) {
 						Each number is what this one skill adds when swapped into the current build
 						(replacing an owned skill from its group), at level 3, against the current field on this setup.
 						It is not a general rating of the skill. SP Cost is what it costs this build with your hints.
+						{props.dirty && <strong> The build, course or conditions changed since this run: press RUN to measure them.</strong>}
 					</caption>
 				)}
 				<thead>

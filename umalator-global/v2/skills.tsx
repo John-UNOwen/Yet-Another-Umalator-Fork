@@ -311,12 +311,20 @@ const EFFECT_TYPE_NAMES: Record<number, string> = {
 	3: 'Power',
 	4: 'Guts',
 	5: 'Wit',
+	// 6, 8, 10, 13, 14, 29 and 35 follow the engine's names (vendor/GlobalSim race_solver.rs).
+	6: 'Runaway',
+	8: 'Vision',
 	9: 'Recovery',
+	10: 'Start Delay ×',
+	13: 'Rushing Time',
+	14: 'Start Delay (set)',
 	21: 'Current Speed',
 	22: 'Current Speed (w/ decel)',
 	27: 'Target Speed',
 	28: 'Lane Speed',
+	29: 'Rushing Chance',
 	31: 'Acceleration',
+	35: 'Target Lane',
 	37: 'Random Gold Skill',
 	42: 'Duration Increase',
 };
@@ -509,6 +517,7 @@ export function SkillChip({
 					<button
 						type="button"
 						class="v2-skill-chip-remove"
+						aria-label="Remove skill"
 						onClick={e => {
 							e.stopPropagation();
 							onRemove();

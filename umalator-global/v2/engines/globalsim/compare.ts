@@ -166,6 +166,31 @@ export interface GlobalsimCompareInput {
 	onProgress?: (partial: GlobalsimCompareResults) => void;
 	/** Completed races, wall time and threads, for the settings job line. */
 	onStats?: (stats: { races: number; ms: number; threads: number }) => void;
+	/** Cancellation (Stop): aborting rejects the promise with an AbortError and
+	 *  terminates the workers. Partial results already went to onProgress. */
+	signal?: AbortSignal;
+}
+
+function abortError(): Error {
+	const e = new Error('GlobalSim compare aborted');
+	e.name = 'AbortError';
+	return e;
+}
+
+/** Runs one pool's work under the input's abort signal, then disposes the pool. */
+async function underSignal<T>(signal: AbortSignal | undefined, pool: { abort(): void; dispose(): void }, run: () => Promise<T>): Promise<T> {
+	if (signal?.aborted) { pool.dispose(); throw abortError(); }
+	const onAbort = () => pool.abort();
+	signal?.addEventListener('abort', onAbort);
+	try {
+		return await run();
+	} catch (e) {
+		if (signal?.aborted) throw abortError();
+		throw e;
+	} finally {
+		signal?.removeEventListener('abort', onAbort);
+		pool.dispose();
+	}
 }
 
 /** The `globalsim` extension block (rendered by results-pane when present). */
@@ -559,12 +584,10 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 		onChunk: onRecord,
 	});
 	let jobErrors: Array<{ jobId: string; error: string }> = [];
-	try {
+	await underSignal(input.signal, pool, async () => {
 		const res = await pool.runJobs(jobs);
 		jobErrors = res.errors;
-	} finally {
-		pool.dispose();
-	}
+	});
 	if (agg.n === 0) {
 		const detail = jobErrors.slice(0, 3).map(e => `${e.jobId}: ${e.error}`).join(' | ');
 		throw new Error(`GlobalSim sampling produced no results (${agg.seedErrors} seed errors${detail ? `; ${detail}` : ''})`);
@@ -597,10 +620,10 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 				for (const r of records as FullRunData[]) if (!r.error) target.set(r.seed, r);
 			},
 		});
-		try {
+		await underSignal(input.signal, repPool, async () => {
 			const repErrors = await repPool.runJobs(repJobs);
 			if (repErrors.errors.length) console.warn('[GlobalSim] representative runs failed (check the rep pool skill-table injection):', repErrors.errors);
-		} finally { repPool.dispose(); }
+		});
 	}
 	const snapshotFor = (seed: number): unknown | null => {
 		const a = fullA.get(seed);

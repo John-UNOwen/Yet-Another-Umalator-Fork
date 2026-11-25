@@ -148,9 +148,19 @@ function generateNotInGame() {
 		const localUmas = JSON.parse(fs.readFileSync(path.join(dirname, 'umas.json'), 'utf-8'));
 		const localOutfits = Object.keys(localUmas).flatMap(id => Object.keys(localUmas[id].outfits || {}));
 
+		const outfits = localOutfits.filter(id => !dbOutfits.has(id));
+		// A not-in-game outfit's own unique skills are not in game either, even when
+		// global-live-skills.json lists them (upstream's list carries JP uniques).
+		// The ids follow uniqueSkillForUma in components/HorseDefTypes.ts: the 3-star
+		// unique, its 1-2 star form and the inherited (9xxxxx) copy.
+		const ownedUniques = new Set(outfits.flatMap(oid => {
+			const i = +oid.slice(1, -2), v = +oid.slice(-2);
+			const base = 10000 * (v - 1) + i * 10 + 1;
+			return [100000 + base, 10000 + base, 900000 + base].map(String);
+		}));
 		const result = {
-			skills: Object.keys(localSkills).filter(id => !dbSkills.has(id)),
-			outfits: localOutfits.filter(id => !dbOutfits.has(id))
+			skills: Object.keys(localSkills).filter(id => !dbSkills.has(id) || ownedUniques.has(id)),
+			outfits
 		};
 
 		fs.writeFileSync(outPath, JSON.stringify(result));

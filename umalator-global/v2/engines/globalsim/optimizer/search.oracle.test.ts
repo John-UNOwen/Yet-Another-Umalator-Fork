@@ -622,7 +622,9 @@ test('§K time left: the time limit caps the estimate, Until stopped has none', 
 
 // Checkup finding 16: the time budget used to stop only new work. The checking
 // stage then grew on ties and topped up every skill worth with no check at all.
-test('time budget: past it the checking stage races only its floor', async t => {
+// Checkup 2026-11-24 #2: skipping every top-up left the recommended build's
+// worth table empty, so that one build is still measured past the limit.
+test('time budget: past it the checking stage races its floor and the best build\'s worth', async t => {
 	const inst = genInstance(4242);
 	const run = async (cfg: EffortConfig) => {
 		const ev = new OracleEval(inst);
@@ -638,8 +640,12 @@ test('time budget: past it the checking stage races only its floor', async t => 
 	const late = await run({ ...cfg, timeBudgetMs: 1 });
 	const free = await run({ ...cfg, timeBudgetMs: Infinity });
 	t.ok(late.res.shortlist.length > 0 && late.res.shortlist.every(r => affordable(inst.space, r.build.selection)), 'an over-time run still reports affordable builds');
-	const floor = (late.res.shortlist.length + 1) * cfg.gSeedsMin;
-	t.ok(late.tail <= floor, `over time: no tie growth and no worth top-ups (${late.tail} races, floor ${floor})`);
+	const bestWorth = (late.res.best.skillCount + 1) * cfg.contribSeeds;
+	const floor = (late.res.shortlist.length + 1) * cfg.gSeedsMin + bestWorth;
+	t.ok(late.tail <= floor, `over time: no tie growth and no runner-up worth top-ups (${late.tail} races, floor ${floor})`);
+	const worth = late.res.best.contributions ?? [];
+	t.ok(worth.length === late.res.best.skillCount && worth.every(c => c.lead !== null),
+		`over time the recommended build still has every skill's worth (${worth.filter(c => c.lead !== null).length}/${late.res.best.skillCount})`);
 	t.ok(free.tail > late.tail, `without a limit the tail still tops up (${free.tail} > ${late.tail})`);
 	t.end();
 });

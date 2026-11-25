@@ -9,7 +9,7 @@ import { CourseData } from '../../uma-skill-tools/CourseData';
 import { RaceParameters } from '../../uma-skill-tools/RaceParameters';
 import { getParser } from '../../uma-skill-tools/ConditionParser';
 import { buildBaseStats, buildSkillData, Perspective } from '../../uma-skill-tools/RaceSolverBuilder';
-import type { UmaState } from './storage';
+import type { UmaState } from './uma-panel';
 import type { SkillChartResult } from './skill-chart-types';
 import { buildRaceParameters } from './simulation-utils';
 import { describeOut, factOut, raceFacts, RaceConditions, RaceCourse } from './engines/globalsim/focus';
@@ -39,7 +39,7 @@ export const skillGroups = Object.keys(skilldata).sort((a, b) =>
 	//   - rarity (lowest to highest: white → gold → pink)
 	//   - if rarity is same, sort ○ before ◎ (◎ skills have lower ID than ○ counterparts)
 	//   - sort purple versions last (to avoid counting towards total cost)
-	isPurpleSkill(a) - isPurpleSkill(b) || skilldata[a].rarity - skilldata[b].rarity || +b - +a
+	+isPurpleSkill(a) - +isPurpleSkill(b) || skilldata[a].rarity - skilldata[b].rarity || +b - +a
 ).reduce((groups, id) => {
 	const groupId = skillmeta[id]?.groupId;
 	if (groupId) {

@@ -13,6 +13,8 @@ node_modules/
 /globalsim-wasm/target/
 /globalsim-wasm/pkg/
 /globalsim-wasm/test/out/
+# The Pages artifact pages.yml assembles, when its steps are replayed locally.
+/_site/
 /globalsim/skills.merged.json
 # Build-time active GlobalSim skill table (written by umalator-global/build.mjs).
 /globalsim/skills.json

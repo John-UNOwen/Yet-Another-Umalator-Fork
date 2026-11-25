@@ -463,7 +463,8 @@ export function TraineesTab({
 		const uma = saveTarget === 1 ? currentUma1 : currentUma2;
 		// If in drill-down mode inside a folder, save into that folder
 		const folder = viewMode === 'drilldown' && drilldownFolder ? drilldownFolder : undefined;
-		saveHorseSlot(name, uma, '', folder);
+		// No memo argument: overwriting a slot keeps its note, as the UMA panel's save does.
+		if (!saveHorseSlot(name, uma, undefined, folder)) window.alert(`Could not save "${name}": the browser refused to store it (storage full or blocked).`);
 		refresh();
 	}, [saveTarget, currentUma1, currentUma2, refresh, viewMode, drilldownFolder]);
 

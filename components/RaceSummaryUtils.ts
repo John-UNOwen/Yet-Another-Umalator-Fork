@@ -490,7 +490,11 @@ export function generateTips(medianrun: any, events: RaceEvent[], umaIndex: numb
 	return tips;
 }
 
-// Get final race stats from median run
+// The race scoreboard shows the engine's time times 1.18 (see the race mechanics
+// doc), so every printed finish time goes through this factor.
+export const DISPLAYED_TIME_SCALE = 1.18;
+
+// Get final race stats from median run. `time` is the displayed (scoreboard) time.
 export function getFinalStats(medianrun: any, umaIndex: number, courseDistance: number): {
 	time: number;
 	hpRemaining: number;
@@ -507,7 +511,7 @@ export function getFinalStats(medianrun: any, umaIndex: number, courseDistance: 
 	const hpPercent = startingHp > 0 ? (finalHp / startingHp) * 100 : 0;
 
 	return {
-		time: finalTime,
+		time: finalTime * DISPLAYED_TIME_SCALE,
 		hpRemaining: finalHp,
 		hpPercent: Math.max(0, hpPercent)
 	};

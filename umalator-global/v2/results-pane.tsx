@@ -11,6 +11,7 @@ import { h, Fragment } from 'preact';
 import { useMemo } from 'preact/hooks';
 import { Clock, Zap, Heart, Shield, Swords, Flag, TrendingUp } from 'lucide-react';
 import { skillDisplayName } from './skill-name';
+import { DISPLAYED_TIME_SCALE } from '../../components/RaceSummaryUtils';
 
 // ============================================
 // TYPES
@@ -178,7 +179,8 @@ interface ResultsSummaryProps {
 
 function ResultsSummary({ stats, samples, displayRun }: ResultsSummaryProps) {
 	return (
-		<div class="v2-results-summary">
+		<>
+		<div class="v2-results-summary" title="Finish margin in lengths (L). + means Uma 2 finished ahead, - means Uma 1 did.">
 			<div class={`v2-results-stat${displayRun === 'min' ? ' highlight' : ''}`}>
 				<span class="v2-results-stat-label">Min</span>
 				<span class="v2-results-stat-value uma1">{formatBashin(stats.min)}</span>
@@ -200,6 +202,8 @@ function ResultsSummary({ stats, samples, displayRun }: ResultsSummaryProps) {
 				<span class="v2-results-stat-value">{samples}</span>
 			</div>
 		</div>
+		<div class="v2-results-sign-note">Finish margin in lengths: + means Uma 2 finished ahead, - means Uma 1 did.</div>
+		</>
 	);
 }
 
@@ -323,9 +327,8 @@ function UmaStatsCard({ label, snapshot, umaIndex, staminaStats, allruns, colorC
 	// Get skill activations from the snapshot
 	const skillActivations = snapshot.sk[umaIndex];
 
-	// Apply 1.18x multiplier to convert actual time to displayed time
-	// Per game mechanics: DisplayedTime = ActualTime * 1.18
-	const displayedFinishTime = finishTime * 1.18;
+	// The scoreboard time, the same figure the Race Summary drawer prints.
+	const displayedFinishTime = finishTime * DISPLAYED_TIME_SCALE;
 
 	return (
 		<div class={`v2-uma-stats-card ${colorClass}`}>
@@ -451,9 +454,11 @@ function PlacingBars({ label, counts, colorClass }: { label: string; counts: num
 	);
 }
 
-function GlobalSimStatsBlock({ gs }: { gs: GlobalSimStats }) {
+function GlobalSimStatsBlock({ gs, isRunning }: { gs: GlobalSimStats; isRunning: boolean }) {
 	const fmtL = (x: number) => Number.isFinite(x) ? `${x >= 0 ? '+' : ''}${x.toFixed(2)}L` : '—';
-	const running = gs.doneSeeds < gs.sampleCount;
+	// The run's own state, not the pair count: a pair with an engine error is
+	// never counted, so the count could stay short of the target for good.
+	const running = isRunning;
 	return (
 		<div className="v2-results-card v2-gs-stats">
 			<div className="v2-results-header">
@@ -484,7 +489,7 @@ function GlobalSimStatsBlock({ gs }: { gs: GlobalSimStats }) {
 			<PlacingBars label="Uma 2" counts={gs.placing2} colorClass="uma2" />
 			{(gs.seedErrors > 0 || gs.jobErrors.length > 0) && (
 				<div className="v2-gs-warn">
-					{gs.seedErrors > 0 && <span>{gs.seedErrors} seed error(s); </span>}
+					{gs.seedErrors > 0 && <span>{gs.seedErrors} race(s) failed in the engine and were left out; </span>}
 					{gs.jobErrors.length > 0 && <span>{gs.jobErrors.length} chunk(s) failed twice: {gs.jobErrors.slice(0, 2).map(j => j.error).join('; ')}</span>}
 				</div>
 			)}
@@ -558,7 +563,7 @@ export function V2ResultsPane({ results, isRunning, progress, onRunSimulation, d
 			</div>
 
 			{/* GlobalSim full-field stats (engine extension; absent for v1/v2) */}
-			{results.globalsim && <GlobalSimStatsBlock gs={results.globalsim} />}
+			{results.globalsim && <GlobalSimStatsBlock gs={results.globalsim} isRunning={isRunning} />}
 
 			{/* Run selector */}
 			<div class="v2-run-selector">

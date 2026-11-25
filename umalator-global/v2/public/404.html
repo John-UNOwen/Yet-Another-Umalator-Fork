@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found · Yet Another Umalator</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #08090c; color: #f0f2f5; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 28rem; padding: 0 16px; text-align: center; }
+  a { color: #7fd94a; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Page not found</h1>
+  <p>This address is not part of the simulator. Old links to <code>/umalator-global/v2/</code> now live at the site root.</p>
+  <p><a id="home" href="/">Open the simulator</a></p>
+</main>
+<script>
+  // GitHub Pages serves this page for any missing path. A project site lives
+  // under its first path segment, so that segment is the app's root. Send the
+  // visitor there. If that root is missing too (a site served from the domain
+  // root), the second visit is already at it, so the page stays with the link
+  // instead of looping.
+  (function () {
+    var seg = location.pathname.split('/')[1];
+    var root = seg ? '/' + seg + '/' : '/';
+    document.getElementById('home').href = root;
+    if (location.pathname !== root) location.replace(root + location.hash);
+  })();
+</script>
+</body>
+</html>

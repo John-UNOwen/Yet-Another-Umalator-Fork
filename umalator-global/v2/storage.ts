@@ -495,7 +495,43 @@ export interface SessionState {
 	// Uma states
 	uma1: UmaState;
 	uma2: UmaState;
+	// The race seed and the GlobalSim field, so a reload repeats the same races
+	field?: FieldSettings;
 }
+
+/** The settings beside the builds that decide which races run. */
+export interface FieldSettings {
+	seed?: number;
+	paired?: boolean;
+	layout?: 'mob' | 'h2h';
+	gate?: number | 'auto';
+	preset?: string;
+}
+
+/** The field settings a stored session or a link may carry. Anything out of
+ *  range is dropped, so the app keeps its own value for that setting. */
+export function parseFieldSettings(json: unknown): FieldSettings {
+	if (!json || typeof json !== 'object') return {};
+	const j = json as Record<string, unknown>;
+	const out: FieldSettings = {};
+	if (typeof j.seed === 'number' && Number.isInteger(j.seed) && j.seed >= 0 && j.seed <= 0xFFFFFFFF) out.seed = j.seed;
+	if (typeof j.paired === 'boolean') out.paired = j.paired;
+	if (j.layout === 'mob' || j.layout === 'h2h') out.layout = j.layout;
+	if (j.gate === 'auto' || (typeof j.gate === 'number' && Number.isInteger(j.gate) && j.gate >= 0 && j.gate <= 8)) out.gate = j.gate;
+	if (typeof j.preset === 'string' && j.preset.length <= 64) out.preset = j.preset;
+	return out;
+}
+
+/** A race condition read from a session or a link: the value when it is a
+ *  member of the engine's enum, else the default. An out-of-range value used
+ *  to load and then fail every run, on every visit after. */
+function conditionOf(v: unknown, lo: number, hi: number, fallback: number): number {
+	return typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : fallback;
+}
+const groundOf = (v: unknown) => conditionOf(v, 1, 4, 1); // GroundCondition
+const weatherOf = (v: unknown) => conditionOf(v, 1, 4, 1); // Weather
+const seasonOf = (v: unknown) => conditionOf(v, 1, 5, 4); // Season, Sakura = 5
+const timeOf = (v: unknown) => conditionOf(v, 0, 4, 2); // Time
 
 /**
  * Save session state to localStorage
@@ -531,15 +567,16 @@ export function loadSession(): SessionState | null {
 		return {
 			courseId: knownCourseId(json.courseId),
 			selectedPresetId: json.selectedPresetId ?? null,
-			ground: typeof json.ground === 'number' ? json.ground : 1,
-			weather: typeof json.weather === 'number' ? json.weather : 1,
-			season: typeof json.season === 'number' ? json.season : 4,
-			time: typeof json.time === 'number' ? json.time : 2,
-			samples: typeof json.samples === 'number' ? json.samples : 500,
+			ground: groundOf(json.ground),
+			weather: weatherOf(json.weather),
+			season: seasonOf(json.season),
+			time: timeOf(json.time),
+			samples: typeof json.samples === 'number' ? Math.max(1, Math.min(10000, json.samples)) : 500,
 			// All three modes come back as saved (Optimizer used to load as Compare).
 			mode: json.mode === 'skill' || json.mode === 'optimizer' ? json.mode : 'compare',
 			uma1: validateAndParseUmaJson(json.uma1) || defaultUmaState,
 			uma2: validateAndParseUmaJson(json.uma2) || defaultUmaState,
+			field: parseFieldSettings(json.field),
 		};
 	} catch (e) {
 		console.error('Failed to load session:', e);
@@ -653,32 +690,65 @@ export interface ShareableState {
 	uma1: UmaState;
 	uma2: UmaState;
 	skillHints?: Record<string, number>;  // skill id → hint level; only non-zero saved. Optional for backward compat with older links.
+	// Optional so older links still load: the mode and the settings that decide
+	// which races run, so the receiver measures the same experiment.
+	mode?: 'compare' | 'skill' | 'optimizer';
+	field?: FieldSettings;
+}
+
+// A hash starting with this prefix is plain base64 JSON, written by browsers
+// without CompressionStream (iOS Safari below 16.4, Firefox below 113). Every
+// other hash is the gzip form. Base64 never contains '~', so the two cannot clash.
+const PLAIN_HASH_PREFIX = '~';
+// The largest link JSON the app reads. A real link is a few KB, and gzip packs
+// text about 1000:1, so a crafted hash could otherwise expand to gigabytes.
+const MAX_HASH_JSON = 1_000_000;
+
+const toBase64 = (bytes: Uint8Array): string => {
+	let bin = '';
+	for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	return btoa(bin);
+};
+const fromBase64 = (b64: string): Uint8Array => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+/** True when this browser can read the gzip share links other browsers write. */
+export function canReadCompressedLinks(): boolean {
+	return typeof DecompressionStream !== 'undefined';
 }
 
 /**
  * Serialize state to a compressed URL hash
  */
 export async function serializeStateToHash(state: ShareableState): Promise<string> {
-	const json = JSON.stringify(state);
-	const enc = new TextEncoder();
-	const stringStream = new ReadableStream({
-		start(controller) {
-			controller.enqueue(enc.encode(json));
-			controller.close();
-		}
-	});
-	const zipped = stringStream.pipeThrough(new CompressionStream('gzip'));
-	const reader = zipped.getReader();
-	let buf = new Uint8Array();
-	let result;
-	while ((result = await reader.read())) {
-		if (result.done) {
-			return encodeURIComponent(btoa(String.fromCharCode(...buf)));
-		} else {
-			buf = new Uint8Array([...buf, ...result.value]);
+	const bytes = new TextEncoder().encode(JSON.stringify(state));
+	if (typeof CompressionStream === 'undefined') return PLAIN_HASH_PREFIX + encodeURIComponent(toBase64(bytes));
+	const zipped = new Blob([bytes as BlobPart]).stream().pipeThrough(new CompressionStream('gzip'));
+	const buf = new Uint8Array(await new Response(zipped).arrayBuffer());
+	return encodeURIComponent(toBase64(buf));
+}
+
+/** Reads a hash into its JSON text, or throws. */
+async function hashJson(hash: string): Promise<string> {
+	if (hash.startsWith(PLAIN_HASH_PREFIX)) {
+		const json = new TextDecoder().decode(fromBase64(decodeURIComponent(hash.slice(PLAIN_HASH_PREFIX.length))));
+		if (json.length > MAX_HASH_JSON) throw new Error('share link too large');
+		return json;
+	}
+	if (!canReadCompressedLinks()) throw new Error('this browser cannot read compressed share links');
+	const unzipped = new Blob([fromBase64(decodeURIComponent(hash)) as BlobPart]).stream().pipeThrough(new DecompressionStream('gzip'));
+	const reader = unzipped.getReader();
+	const dec = new TextDecoder();
+	let json = '';
+	for (;;) {
+		const result = await reader.read();
+		if (result.done) break;
+		json += dec.decode(result.value, { stream: true });
+		if (json.length > MAX_HASH_JSON) {
+			await reader.cancel();
+			throw new Error('share link too large');
 		}
 	}
-	return '';
+	return json + dec.decode();
 }
 
 /**
@@ -686,26 +756,7 @@ export async function serializeStateToHash(state: ShareableState): Promise<strin
  */
 export async function deserializeStateFromHash(hash: string): Promise<ShareableState | null> {
 	try {
-		const zipped = atob(decodeURIComponent(hash));
-		const buf = new Uint8Array(zipped.split('').map(c => c.charCodeAt(0)));
-		const stringStream = new ReadableStream({
-			start(controller) {
-				controller.enqueue(buf);
-				controller.close();
-			}
-		});
-		const unzipped = stringStream.pipeThrough(new DecompressionStream('gzip'));
-		const reader = unzipped.getReader();
-		const dec = new TextDecoder();
-		let json = '';
-		let result;
-		while ((result = await reader.read())) {
-			if (result.done) break;
-			json += dec.decode(result.value, { stream: true });
-		}
-		json += dec.decode();
-
-		const parsed = JSON.parse(json);
+		const parsed = JSON.parse(await hashJson(hash));
 
 		// Validate and return
 		const uma1 = validateAndParseUmaJson(parsed.uma1);
@@ -714,16 +765,18 @@ export async function deserializeStateFromHash(hash: string): Promise<ShareableS
 
 		return {
 			courseId: knownCourseId(parsed.courseId),
-			ground: typeof parsed.ground === 'number' ? parsed.ground : 1,
-			weather: typeof parsed.weather === 'number' ? parsed.weather : 1,
-			season: typeof parsed.season === 'number' ? parsed.season : 4,
-			time: typeof parsed.time === 'number' ? parsed.time : 2,
+			ground: groundOf(parsed.ground),
+			weather: weatherOf(parsed.weather),
+			season: seasonOf(parsed.season),
+			time: timeOf(parsed.time),
 			// Clamp like the Samples input (sim-settings.tsx) — a crafted link
 			// must not hand globalsimSeedList a huge unclamped count (§6.3).
 			samples: typeof parsed.samples === 'number' ? Math.max(1, Math.min(10000, parsed.samples)) : 500,
 			uma1,
 			uma2,
 			skillHints: (parsed.skillHints && typeof parsed.skillHints === 'object') ? parsed.skillHints : {},
+			mode: parsed.mode === 'compare' || parsed.mode === 'skill' || parsed.mode === 'optimizer' ? parsed.mode : undefined,
+			field: parseFieldSettings(parsed.field),
 		};
 	} catch (e) {
 		console.error('Failed to deserialize state from hash:', e);
@@ -732,16 +785,18 @@ export async function deserializeStateFromHash(hash: string): Promise<ShareableS
 }
 
 /**
- * Copy shareable URL to clipboard
+ * Build the shareable URL and copy it. `url` is set even when the clipboard
+ * write fails (no permission, an insecure page), so the caller can show it.
  */
-export async function copyShareableUrl(state: ShareableState): Promise<boolean> {
+export async function copyShareableUrl(state: ShareableState): Promise<{ copied: boolean; url: string | null }> {
+	let url: string | null = null;
 	try {
 		const hash = await serializeStateToHash(state);
-		const url = window.location.protocol + '//' + window.location.host + window.location.pathname + '#' + hash;
+		url = window.location.protocol + '//' + window.location.host + window.location.pathname + '#' + hash;
 		await navigator.clipboard.writeText(url);
-		return true;
+		return { copied: true, url };
 	} catch (e) {
 		console.error('Failed to copy shareable URL:', e);
-		return false;
+		return { copied: false, url };
 	}
 }

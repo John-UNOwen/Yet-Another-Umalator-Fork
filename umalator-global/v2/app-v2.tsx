@@ -78,7 +78,19 @@ import { SimulationSettings, SimCommonControls, SimAdvancedControls } from "./si
 import { loadGlobalsimSkillTable } from "./engines/globalsim/skills";
 import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
 import { runGlobalsimCompare } from "./engines/globalsim/compare";
-import { runGlobalsimSkillChart } from "./engines/globalsim/chart";
+import { runGlobalsimSkillChart, withSkillSwappedIn } from "./engines/globalsim/chart";
+
+// Races behind one skill row's track view: enough for stable min/max/median
+// traces, few enough that a row click answers in about a second.
+const SKILL_TRACK_SAMPLES = 50;
+
+// Full names for the position-keep labels drawn over the track.
+const POS_KEEP_TITLES: Record<string, string> = {
+  PU: "Pace Up (position keep)",
+  PDM: "Pace Down (position keep)",
+  SU: "Speed Up (position keep)",
+  O: "Overtake (position keep)",
+};
 import {
   resolveThreadCount,
   serverAwareThreadCount,
@@ -112,6 +124,7 @@ import {
   savePreferences,
   copyShareableUrl,
   deserializeStateFromHash,
+  canReadCompressedLinks,
   validateAndParseUmaJson,
   COLOR_PALETTES,
   type ColorPalette,
@@ -243,9 +256,13 @@ function MaintenanceTime() {
 }
 
 function App() {
-  // Load saved state on mount
-  const savedSession = useRef(loadSession());
-  const savedPrefs = useRef(loadPreferences());
+  // Load saved state on mount. The lazy useState reads storage once: a
+  // useRef(loadSession()) argument ran on every render, streamed paints too.
+  const [savedSessionValue] = useState(loadSession);
+  const [savedPrefsValue] = useState(loadPreferences);
+  const savedSession = useRef(savedSessionValue);
+  const savedPrefs = useRef(savedPrefsValue);
+  const savedField = savedSessionValue?.field ?? {};
 
   // Course and conditions
   const [courseId, setCourseId] = useState(
@@ -293,8 +310,10 @@ function App() {
   // its results, pool choices and settings.
   const optimizerVisited = useRef(false);
   if (mode === "optimizer") optimizerVisited.current = true;
+  // The seed survives a reload with the rest of the session, so F5 repeats
+  // the same races. A first visit draws one.
   const [seed, setSeed] = useState(() =>
-    Math.floor(Math.random() * 0xffffffff),
+    savedField.seed ?? Math.floor(Math.random() * 0xffffffff),
   );
   // GlobalSim (wasm) is the only engine: compare AND the skill chart run the
   // full-field engine via engines/globalsim/pool.ts. The classic TS engine and
@@ -388,19 +407,25 @@ function App() {
   // GlobalSim field selection (integration plan Phase 3): mob preset + gate mode.
   // The same seed and preset give the same field; "Auto" draws the tested uma's
   // gate per seed, identically for both races of a compare pair.
-  const [globalsimFieldPreset, setGlobalsimFieldPreset] = useState("default");
+  const [globalsimFieldPreset, setGlobalsimFieldPreset] = useState(
+    savedField.preset && savedField.preset in mobPresets ? savedField.preset : "default",
+  );
   // Collapsible "Advanced" strip in the header (threads / sim server / notices).
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [globalsimGate, setGlobalsimGate] = useState<number | "auto">("auto");
+  const [globalsimGate, setGlobalsimGate] = useState<number | "auto">(savedField.gate ?? "auto");
   // Compare field layout: 'mob' isolates each build against 8 mobs; 'h2h'
   // races both umas together against 7 mobs (mirrored gate pairs). Compare
   // only — the skill chart always uses the mob layout.
-  const [globalsimLayout, setGlobalsimLayout] = useState<"mob" | "h2h">("mob");
+  const [globalsimLayout, setGlobalsimLayout] = useState<"mob" | "h2h">(savedField.layout ?? "mob");
   // Paired random streams (engine pairedRandomStreams): both sides draw from
   // position/skill-keyed streams, so a one-skill delta keeps its draws and the
   // paired σ(lead) drops ~10×. Compare-only toggle; OFF = retail (official
   // parity). The Skill Chart is always paired (chart.ts default) — no toggle.
-  const [globalsimPaired, setGlobalsimPaired] = useState(false);
+  const [globalsimPaired, setGlobalsimPaired] = useState(savedField.paired ?? false);
+  const fieldSettings = useMemo(
+    () => ({ seed, paired: globalsimPaired, layout: globalsimLayout, gate: globalsimGate, preset: globalsimFieldPreset }),
+    [seed, globalsimPaired, globalsimLayout, globalsimGate, globalsimFieldPreset],
+  );
   const globalsimFieldConfig = {
     preset: globalsimFieldPreset,
     setPreset: setGlobalsimFieldPreset,
@@ -467,12 +492,21 @@ function App() {
   >("median");
 
 
-  // Simulation results
-  const [isRunning, setIsRunning] = useState(false);
+  // Simulation results. Compare and the skill chart each keep their own
+  // running flag, so a run in one mode does not make the other claim a run.
+  const [compareRunning, setCompareRunning] = useState(false);
+  const [chartRunning, setChartRunning] = useState(false);
+  const compareAbortRef = useRef<AbortController | null>(null);
   // The Optimizer tab runs from the same RUN button: the pane hands over its
   // run/stop here and reports whether a search is going.
   const optimizerControl = useRef<OptimizerControl | null>(null);
   const [optimizerRunning, setOptimizerRunning] = useState(false);
+  // RUN turns into STOP while any run is going. From another mode it names the
+  // run it stops, since that run keeps going there.
+  const runLabel = optimizerRunning ? (mode === "optimizer" ? "STOP" : "STOP OPTIMIZER")
+    : compareRunning ? (mode === "compare" ? "STOP" : "STOP COMPARE")
+    : chartRunning ? (mode === "skill" ? "STOP" : "STOP SKILL CHART")
+    : "RUN";
   const [results, setResults] = useState<CompareResults | null>(null);
 
   // Skill chart results
@@ -591,6 +625,7 @@ function App() {
         mode: mode as "compare" | "skill" | "optimizer",
         uma1,
         uma2,
+        field: fieldSettings,
       });
     }, 500); // Debounce 500ms
     return () => {
@@ -609,6 +644,7 @@ function App() {
     mode,
     uma1,
     uma2,
+    fieldSettings,
   ]);
 
   // Save preferences immediately
@@ -678,9 +714,13 @@ function App() {
     // Otherwise, check for hash-based state
     const loadFromHash = async () => {
       if (window.location.hash) {
-        const state = await deserializeStateFromHash(
-          window.location.hash.slice(1),
-        );
+        const hash = window.location.hash.slice(1);
+        const state = await deserializeStateFromHash(hash);
+        if (!state && !hash.startsWith("~") && !canReadCompressedLinks()) {
+          setGlobalsimError(
+            "This browser cannot open this share link: it needs iOS Safari 16.4, Firefox 113 or Chrome 80 or newer. The default race is loaded instead.",
+          );
+        }
         if (state) {
           setCourseId(state.courseId);
           setGround(state.ground);
@@ -690,6 +730,15 @@ function App() {
           setSamples(state.samples);
           setUma1(state.uma1);
           setUma2(state.uma2);
+          // Newer links also carry the mode and the race settings, so the
+          // receiver runs the same races. Older links keep the local values.
+          if (state.mode) setMode(state.mode);
+          const f = state.field ?? {};
+          if (f.seed !== undefined) setSeed(f.seed);
+          if (f.paired !== undefined) setGlobalsimPaired(f.paired);
+          if (f.layout) setGlobalsimLayout(f.layout);
+          if (f.gate !== undefined) setGlobalsimGate(f.gate);
+          if (f.preset && f.preset in mobPresets) setGlobalsimFieldPreset(f.preset);
           // Restore hint levels (older links omit this → empty map = all zero).
           setSkillHints(
             state.skillHints
@@ -754,9 +803,39 @@ function App() {
   }, []);
 
   const handleResetAll = useCallback(() => {
+    // Both builds and their skill lists go, and the autosave keeps the reset,
+    // so this asks first.
+    if (!window.confirm("Reset both umas to the default build? Unsaved builds are lost.")) return;
     setUma1(defaultUmaState);
     setUma2(defaultUmaState);
   }, []);
+
+  // Copy Link, from the header menu and the phone settings sheet. A short
+  // notice says it worked. When the clipboard refuses, the link is shown so
+  // it can be copied by hand.
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const shareNoticeTimer = useRef<number | null>(null);
+  const handleCopyLink = useCallback(async () => {
+    track("copy-link");
+    const { copied, url } = await copyShareableUrl({
+      courseId,
+      ground,
+      weather,
+      season,
+      time,
+      samples,
+      uma1,
+      uma2,
+      // Only persist non-zero hint levels to keep the link compact.
+      skillHints: Object.fromEntries([...skillHints].filter(([, v]) => v > 0)),
+      mode,
+      field: fieldSettings,
+    });
+    if (!copied && url) window.prompt("Copy this link:", url);
+    if (shareNoticeTimer.current !== null) window.clearTimeout(shareNoticeTimer.current);
+    setShareNotice(copied ? "Link copied" : url ? null : "Could not make a link");
+    shareNoticeTimer.current = window.setTimeout(() => setShareNotice(null), 2500);
+  }, [courseId, ground, weather, season, time, samples, uma1, uma2, skillHints, mode, fieldSettings]);
 
   const handleSwapUmas = useCallback(() => {
     setUma1(uma2);
@@ -993,10 +1072,17 @@ function App() {
   // GlobalSim chart (Phase 5): AbortController per run — starting a new run
   // cancels the previous pool (terminate workers, drop queues, reject).
   const chartAbortRef = useRef<AbortController | null>(null);
-  const handleRunSkillChart = useCallback(() => {
+  const chartInputRef = useRef<any>(null);
+  // What the chart on screen measured. Once the build, course, conditions or
+  // field change, the table is marked stale instead of passing for current.
+  const chartSetupKey = JSON.stringify([uma1, courseId, ground, weather, season, time, globalsimFieldPreset, globalsimGate]);
+  const [chartRunKey, setChartRunKey] = useState<string | null>(null);
+  const handleRunSkillChart = useCallback((runSeed: number) => {
     chartAbortRef.current?.abort();
     chartAbortRef.current = null;
-    setIsRunning(true);
+    chartInputRef.current = null;
+    setChartRunKey(chartSetupKey);
+    setChartRunning(true);
     track("skill-chart-run");
     setCompletedWorkers(0);
     setSkillChartResults(new Map());
@@ -1007,7 +1093,7 @@ function App() {
     const course = courseData[courseId];
     if (!course) {
       console.error("[V2] Course not found:", courseId);
-      setIsRunning(false);
+      setChartRunning(false);
       return;
     }
 
@@ -1024,7 +1110,7 @@ function App() {
 
     if (activateableSkills.length === 0) {
       console.warn("[V2] No activateable skills found for this course");
-      setIsRunning(false);
+      setChartRunning(false);
       return;
     }
 
@@ -1072,6 +1158,23 @@ function App() {
           setSkillChartLateOut(lateOut.map((id) => ({ id, kind: "engine" as const, reason: "not in the engine skill table" })));
         }
         setSkillChartProgress({ 0: { round: 1, total: chartFastMode ? 1 : 2 } });
+        // What the per-row track view replays: the chart's own build, course,
+        // conditions, field and seed, so a row's curves match its numbers.
+        chartInputRef.current = {
+          uma: toHorseState(uma1),
+          courseId,
+          distance: course.distance,
+          ground,
+          weather,
+          season,
+          time,
+          knownSkillIds,
+          skillData: skillTable,
+          courseIds,
+          mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
+          fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
+          seedBase: runSeed,
+        };
         // Paired draws are the chart's default (chart.ts): baseline and every
         // variant share their (seed, position, skill) streams — no toggle.
         const rows = await runGlobalsimSkillChart({
@@ -1091,7 +1194,8 @@ function App() {
           courseIds,
           mobPreset: (mobPresets as any)[globalsimFieldPreset] ?? (mobPresets as any)["default"],
           fixedGate: globalsimGate === "auto" ? undefined : globalsimGate,
-          seedBase: seed || Math.floor(Math.random() * 0xFFFFFFFF),
+          // The seed shown in the box, 0 included, so a chart can be re-run.
+          seedBase: runSeed,
           // The chart ignores the Samples field, exactly like the classic
           // engine (fixed 25+175, or 50 in fast mode). Samples belongs to
           // compare; letting it inflate the chart made a full GlobalSim run
@@ -1114,14 +1218,16 @@ function App() {
         console.log("[GlobalSim] skill chart finished:", rows.length, "skills");
       })()
         .catch((e) => {
-          if ((e as any)?.name === "AbortError") return; // superseded by a new run
+          if ((e as any)?.name === "AbortError") return; // stopped, or superseded by a new run
           console.error("[GlobalSim] skill chart failed:", e);
           // Surface it: the chart pane otherwise just sits at its empty state.
           setGlobalsimError(e instanceof Error ? e.message : String(e));
         })
         .finally(() => {
-          if (chartAbortRef.current === controller) chartAbortRef.current = null;
-          setIsRunning(false);
+          // A superseded run must not clear the newer run's state.
+          if (chartAbortRef.current !== controller) return;
+          chartAbortRef.current = null;
+          setChartRunning(false);
         });
       return;
     }
@@ -1132,7 +1238,6 @@ function App() {
     season,
     time,
     uma1,
-    seed,
     chartFastMode,
     globalsimSkillIds,
     globalsimSkillTable,
@@ -1147,6 +1252,7 @@ function App() {
     skillPool,
     chartFocusOn,
     chartIncluded,
+    chartSetupKey,
   ]);
 
   // Run simulation via worker
@@ -1169,25 +1275,35 @@ function App() {
       } else optimizerControl.current?.run();
       return;
     }
-    setGlobalsimError(null); // superseded by this run
-    if (autoSeed) {
-      setSeed(Math.floor(Math.random() * 0xFFFFFFFF));
+    // The same button stops a Compare or skill chart run. Rows and races that
+    // already streamed in stay on screen.
+    if (compareRunning || chartRunning) {
+      compareAbortRef.current?.abort();
+      chartAbortRef.current?.abort();
+      return;
     }
+    setGlobalsimError(null); // superseded by this run
+    // Auto-reroll draws the new seed for this run, so the box always shows
+    // the seed the results on screen came from.
+    const runSeed = autoSeed ? Math.floor(Math.random() * 0xFFFFFFFF) : seed;
+    if (autoSeed) setSeed(runSeed);
     if (mode === "compare") {
-      setIsRunning(true);
+      setCompareRunning(true);
       track("compare-run");
       setResults(null);
 
       const course = courseData[courseId];
       if (!course) {
         console.error("[V2] Course not found:", courseId);
-        setIsRunning(false);
+        setCompareRunning(false);
         return;
       }
 
       // GlobalSim compare: BOTH sides of the compare run through the wasm
       // worker pool (9-runner mob field, paired by seed).
       {
+        const controller = new AbortController();
+        compareAbortRef.current = controller;
         (async () => {
           // The skill table is mandatory in GlobalSim mode (same reason as
           // the chart path): a missing table means no unknown-skill check and
@@ -1239,8 +1355,9 @@ function App() {
             fieldLayout: globalsimLayout,
             // Off = retail (official parity); on = paired draws (lower noise).
             paired: globalsimPaired,
-            seedBase: seed,
+            seedBase: runSeed,
             sampleCount: samples,
+            signal: controller.signal,
             threads: serverAwareThreadCount(globalsimThreads, simServerOnline),
             workerFactory: globalsimWorkerFactory,
             cpuFactory: globalsimWorkerFactory,
@@ -1252,20 +1369,26 @@ function App() {
           console.log("[GlobalSim] compare finished:", res.globalsim);
         })()
           .catch((e) => {
+            if ((e as any)?.name === "AbortError") return; // stopped: keep what streamed in
             console.error("[GlobalSim] compare failed:", e);
             // Surface it: the results pane otherwise just sits at its empty state.
             setGlobalsimError(e instanceof Error ? e.message : String(e));
           })
-          .finally(() => setIsRunning(false));
+          .finally(() => {
+            if (compareAbortRef.current === controller) compareAbortRef.current = null;
+            setCompareRunning(false);
+          });
         return;
       }
     } else if (mode === "skill") {
       // Skill chart mode
-      handleRunSkillChart();
+      handleRunSkillChart(runSeed);
     }
   }, [
     mode,
     optimizerRunning,
+    compareRunning,
+    chartRunning,
     courseId,
     samples,
     ground,
@@ -1304,6 +1427,45 @@ function App() {
         return results.runData.medianrun;
     }
   }, [results, displayRun]);
+
+  // The chart measures margins only, so a row has no race traces of its own.
+  // Selecting a row races the base build against the build with that skill
+  // (the chart's swap) on the chart's first seeds, and the row keeps the
+  // traces for the track view and its min/max/mean/median picker.
+  useEffect(() => {
+    if (mode !== "skill" || chartRunning || !selectedSkillForChart) return;
+    const inp = chartInputRef.current;
+    const row = skillChartResults.get(selectedSkillForChart);
+    if (!inp || !row || row.runData) return;
+    const skillId = selectedSkillForChart;
+    const controller = new AbortController();
+    runGlobalsimCompare({
+      ...inp,
+      uma1: inp.uma,
+      uma2: withSkillSwappedIn(inp.uma, skillId),
+      grade: Grade.G1,
+      paired: true, // the chart's own draws
+      sampleCount: SKILL_TRACK_SAMPLES,
+      threads: serverAwareThreadCount(globalsimThreads, simServerOnline),
+      workerFactory: globalsimWorkerFactory,
+      cpuFactory: globalsimWorkerFactory,
+      gpuFactory: globalsimGpuFactory,
+      signal: controller.signal,
+    })
+      .then((res) => {
+        setSkillChartResults((prev) => {
+          const r = prev.get(skillId);
+          if (!r) return prev;
+          const next = new Map(prev);
+          next.set(skillId, { ...r, runData: res.runData });
+          return next;
+        });
+      })
+      .catch((e) => {
+        if ((e as any)?.name !== "AbortError") console.warn("[GlobalSim] skill track view failed:", e);
+      });
+    return () => controller.abort();
+  }, [mode, chartRunning, selectedSkillForChart, skillChartResults, globalsimThreads, simServerOnline, globalsimWorkerFactory]);
 
   // Skill chart snapshot - selected skill's run data for visualization
   const skillChartSnapshot = useMemo(() => {
@@ -1394,6 +1556,7 @@ function App() {
           return {
             umaIndex,
             text: stateName,
+            title: POS_KEEP_TITLES[stateName] ?? stateName,
             color: posKeepColors[umaIndex],
             start: ar[0],
             end: ar[1],
@@ -1417,6 +1580,7 @@ function App() {
         competeFightData.push({
           umaIndex,
           text: "Duel",
+          title: "Dueling (compete fight)",
           color: posKeepColors[umaIndex],
           start: cf[0],
           end: cf[1],
@@ -1439,6 +1603,7 @@ function App() {
         leadCompetitionData.push({
           umaIndex,
           text: "SS",
+          title: "Spot Struggle (lead competition)",
           color: posKeepColors[umaIndex],
           start: lc[0],
           end: lc[1],
@@ -1455,6 +1620,7 @@ function App() {
       return downhillArray.map((ar: number[]) => ({
         umaIndex,
         text: "DH",
+        title: "Downhill mode",
         color: posKeepColors[umaIndex],
         start: ar[0],
         end: ar[1],
@@ -1712,13 +1878,12 @@ function App() {
                   className="v2-run-btn"
                   icon={<Play size={14} />}
                   onClick={handleRunSimulation}
-                  disabled={isRunning}
                 >
-                  {isRunning ? "Running..." : optimizerRunning ? (mode === "optimizer" ? "STOP" : "STOP OPTIMIZER") : "RUN"}
+                  {runLabel}
                 </Button>
                 <Dropdown
                   trigger={
-                    <Button variant="secondary" className="v2-settings-btn">
+                    <Button variant="secondary" className="v2-settings-btn" ariaLabel="Settings">
                       <Settings size={16} />
                     </Button>
                   }
@@ -1822,23 +1987,7 @@ function App() {
                       id: "copy-link",
                       label: "Copy Link",
                       icon: <Link size={16} />,
-                      onClick: () => {
-                        track("copy-link");
-                        copyShareableUrl({
-                          courseId,
-                          ground,
-                          weather,
-                          season,
-                          time,
-                          samples,
-                          uma1,
-                          uma2,
-                          // Only persist non-zero hint levels to keep the link compact.
-                          skillHints: Object.fromEntries(
-                            [...skillHints].filter(([, v]) => v > 0),
-                          ),
-                        });
-                      },
+                      onClick: () => void handleCopyLink(),
                     },
                   ]}
                 />
@@ -1858,6 +2007,7 @@ function App() {
                     setAutoSeed={setAutoSeed}
                     hideNotInGame={hideNotInGame}
                     setHideNotInGame={setHideNotInGame}
+                    samplesIgnored={mode === "skill"}
                   />
                 </div>
                 <button
@@ -1985,6 +2135,9 @@ function App() {
                     the compare/chart results pane would otherwise just sit at
                     its empty state with the error in the console only.
                     Dismissible; cleared by the next run or an engine switch. */}
+                {shareNotice && (
+                  <div class="v2-share-notice" role="status">{shareNotice}</div>
+                )}
                 {globalsimError && (
                   <div
                     class="v2-globalsim-fail v2-globalsim-error"
@@ -2085,7 +2238,7 @@ function App() {
                         )}
                       </div>
                       {/* Progress indicator */}
-                      {isRunning &&
+                      {chartRunning &&
                         Object.keys(skillChartProgress).length > 0 && (
                           <div class="v2-skill-chart-progress">
                             {Object.entries(skillChartProgress).map(
@@ -2112,7 +2265,7 @@ function App() {
                       }
                       focusOn={chartFocusOn}
                       onFocusChange={setChartFocusOn}
-                      disabled={isRunning}
+                      disabled={chartRunning}
                       note="Changes apply on the next run."
                     />
 
@@ -2151,7 +2304,7 @@ function App() {
                         hidePurple={hidePurple}
                         hideNotInGame={hideNotInGame}
                         globalsimSkillIds={globalsimSkillIds}
-                        dirty={false}
+                        dirty={!chartRunning && chartRunKey !== null && chartRunKey !== chartSetupKey}
                         selectedSkillId={selectedSkillForChart}
                         hiddenSkills={hiddenSkills}
                         onHideSkill={(id) => setHiddenSkills(prev => {
@@ -2162,14 +2315,11 @@ function App() {
                       />
                     ) : (
                       <div class="v2-skill-chart-empty">
-                        {isRunning ? (
+                        {chartRunning ? (
                           <div>
                             <Zap size={48} />
                             <h2>Running Skill Chart...</h2>
-                            <p>
-                              Testing skills across{" "}
-                              {Object.keys(skillChartProgress).length} workers
-                            </p>
+                            <p>Testing every candidate skill against the current build. Press STOP to end it early.</p>
                           </div>
                         ) : (
                           <div>
@@ -2188,7 +2338,7 @@ function App() {
                   /* RESULTS - Compare mode */
                   <V2ResultsPane
                     results={results}
-                    isRunning={isRunning}
+                    isRunning={compareRunning}
                     courseId={courseId}
                     onRunSimulation={handleRunSimulation}
                     displayRun={displayRun}
@@ -2248,6 +2398,7 @@ function App() {
                 <div class="v2-drawer-header">
                   <h2>Configure Uma</h2>
                   <button
+                    aria-label="Close the uma drawer"
                     onClick={() => {
                       setUmaDrawerOpen(false);
                       setMobileView("track");
@@ -2399,6 +2550,7 @@ function App() {
               <div class="v2-drawer-header">
                 <h2>Race Summary</h2>
                 <button
+                  aria-label="Close the race summary"
                   onClick={() => {
                     setSummaryDrawerOpen(false);
                     setMobileView("track");
@@ -2471,6 +2623,14 @@ function App() {
                 </a>
                 .
               </p>
+              <p>
+                Skill data from&nbsp;
+                <a href="https://gametora.com/umamusume" target="_blank" rel="noopener">
+                  GameTora
+                </a>
+                . Uma Musume: Pretty Derby and its game art are &copy; Cygames, Inc.
+                This site is a fan project, not affiliated with Cygames.
+              </p>
               <div class="v2-footer-links">
                 <a
                   href="https://github.com/John-UNOwen/Yet-Another-Umalator-Fork"
@@ -2488,13 +2648,24 @@ function App() {
                   Feedback
                 </a>
                 &nbsp;|&nbsp;
+                {/* The build the site ships: this fork's paired-draws branch of
+                    the engine, which is based on daftuyda's upstream. */}
                 <a
-                  href="https://github.com/daftuyda/GlobalSim"
+                  href="https://github.com/John-UNOwen/GlobalSim/tree/paired-draws"
                   target="_blank"
                   rel="noopener"
                 >
                   GlobalSim engine
                 </a>
+                &nbsp;(
+                <a
+                  href="https://github.com/daftuyda/GlobalSim"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  upstream
+                </a>
+                )
               </div>
               </details>
             </footer>
@@ -2591,8 +2762,7 @@ function App() {
               activeView={mobileView}
               onViewChange={handleMobileViewChange}
               onRun={handleRunSimulation}
-              isRunning={isRunning}
-              runLabel={optimizerRunning ? (mode === "optimizer" ? "STOP" : "STOP OPTIMIZER") : undefined}
+              runLabel={runLabel}
               hasResults={!!results}
             />
 
@@ -2696,6 +2866,7 @@ function App() {
                         setAutoSeed={setAutoSeed}
                         hideNotInGame={hideNotInGame}
                         setHideNotInGame={setHideNotInGame}
+                        samplesIgnored={mode === "skill"}
                         globalsimUncoveredCount={globalsimUncoveredCount}
                         threads={globalsimThreads}
                         setThreads={setGlobalsimThreads}
@@ -2738,6 +2909,17 @@ function App() {
                           ))}
                         </div>
                       </div>
+                    </div>
+                    <div class="v2-mobile-settings-section">
+                      <h4>Share</h4>
+                      <Button
+                        variant="secondary"
+                        className="v2-mobile-settings-btn"
+                        onClick={() => void handleCopyLink()}
+                        icon={<Link size={14} />}
+                      >
+                        Copy Link
+                      </Button>
                     </div>
                     {FEEDBACK_ENABLED && (
                       <div class="v2-mobile-settings-section">

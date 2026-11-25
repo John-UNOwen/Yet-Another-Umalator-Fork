@@ -563,11 +563,13 @@ async function runSingleScenario(
 		let n = nMin;
 		// §K time left: the races this stage still has to run. Growth past the
 		// current seed count only happens on a tie, so it is not counted ahead,
-		// and a stopped or over-time run skips the worth races.
+		// a stopped run skips the worth races, and an over-time run races only the
+		// worth of the build it recommends.
 		const reportRows = Math.min(pool.length, cfg.shortlistSize ?? pool.length);
 		let worthLeft = (): number => reportRows * skillsGuess * contribSeeds;
+		let worthOfBest = (): number => skillsGuess * contribSeeds;
 		verifyRacesLeft = () => pool.reduce((a, b) => a + Math.max(0, n - filled(ev, NS_VERIFY, si, b)), 0)
-			+ (ctrl.stopped() || overTime() ? 0 : worthLeft());
+			+ (ctrl.stopped() ? 0 : overTime() ? worthOfBest() : worthLeft());
 		for (;;) {
 			emit('verify', `verifying ${n}/${nCap} seeds`);
 			const positions = Array.from({ length: n }, (_, i) => i);
@@ -633,7 +635,9 @@ async function runSingleScenario(
 		// drops already, but a long run evicts them from the cache and a
 		// runner-up may never have been a climb end. Any drop with fewer shared
 		// seeds than the setting is raced here, so every skill has a number. A
-		// stopped run skips the extra races and reports what the cache holds.
+		// stopped run skips the extra races and reports what the cache holds. Past
+		// the time budget only the recommended build is topped up: it is the table
+		// the pane opens on, and a long climb evicts most of its drops.
 		const worthRows = rows.filter(r => r.build.selection.length > 0);
 		const sharedSeeds = (r: ScoredBuild, id: string): number =>
 			ev.paired(NS_SEARCH, si, r.build, refOf(r.build.selection.filter((x) => x !== id)), searchPick)?.n ?? 0;
@@ -642,13 +646,15 @@ async function runSingleScenario(
 		const needs = worthRows.map(r => r.build.selection.reduce((a, id) => a + Math.max(0, contribSeeds - sharedSeeds(r, id)), 0));
 		let worthAt = 0;
 		worthLeft = () => needs.slice(worthAt).reduce((a, b) => a + b, 0);
+		const bestAt = worthRows.indexOf(best);
+		worthOfBest = () => (bestAt >= worthAt ? needs[bestAt] : 0);
 		for (let i = 0; i < worthRows.length; i++) {
 			const r = worthRows[i];
 			worthAt = i;
 			const dropOf = (id: string) => refOf(r.build.selection.filter((x) => x !== id));
-			// Past the time budget the worth step reports what the cache holds,
-			// like a stopped run: most drops were raced by the climb already.
-			if (!ctrl.stopped() && !overTime()) {
+			// Past the time budget the runners-up report what the cache holds,
+			// like a stopped run: most of their drops were raced by the climb.
+			if (!ctrl.stopped() && (r === best || !overTime())) {
 				const thin = r.build.selection.filter((id) => sharedSeeds(r, id) < contribSeeds);
 				if (thin.length) {
 					emit('verify', `measuring skill worth · build ${i + 1} of ${worthRows.length}`);

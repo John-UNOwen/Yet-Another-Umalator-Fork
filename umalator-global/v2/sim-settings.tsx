@@ -27,6 +27,8 @@ interface SimCommonProps {
 	setSeed: (v: number) => void;
 	autoSeed: boolean;
 	setAutoSeed: (v: boolean) => void;
+	/** Set in Skill mode: the chart races a fixed seed count, so Samples has no effect there. */
+	samplesIgnored?: boolean;
 	hideNotInGame: boolean;
 	setHideNotInGame: (v: boolean) => void;
 }
@@ -69,14 +71,17 @@ export function SimCommonControls({
 	setAutoSeed,
 	hideNotInGame,
 	setHideNotInGame,
+	samplesIgnored = false,
 }: SimCommonProps) {
+	// An empty or half-typed box keeps the last value instead of jumping to a
+	// default: clearing Samples used to load 500, and clearing Seed loaded 0.
 	const handleSamplesChange = (e: Event) => {
-		const val = parseInt((e.target as HTMLInputElement).value) || 500;
-		setSamples(Math.max(1, Math.min(10000, val)));
+		const val = parseInt((e.target as HTMLInputElement).value);
+		if (Number.isFinite(val)) setSamples(Math.max(1, Math.min(10000, val)));
 	};
 	const handleSeedChange = (e: Event) => {
-		const val = parseInt((e.target as HTMLInputElement).value) || 0;
-		setSeed(val);
+		const val = parseInt((e.target as HTMLInputElement).value);
+		if (Number.isFinite(val)) setSeed(Math.max(0, Math.min(0xFFFFFFFF, val)));
 	};
 	const randomizeSeed = () => {
 		setSeed(Math.floor(Math.random() * 0xFFFFFFFF));
@@ -91,6 +96,8 @@ export function SimCommonControls({
 					class="v2-sim-input"
 					value={samples}
 					onInput={handleSamplesChange}
+					disabled={samplesIgnored}
+					title={samplesIgnored ? 'The skill chart races a fixed 200 seeds per skill (50 in Fast mode), so Samples applies to Compare only.' : undefined}
 					min={1}
 					max={10000}
 				/>
@@ -108,6 +115,7 @@ export function SimCommonControls({
 						<button
 							type="button"
 							class="v2-sim-seed-btn"
+							aria-label="Randomize seed"
 							onClick={randomizeSeed}
 						>
 							<Shuffle size={14} />
@@ -117,6 +125,8 @@ export function SimCommonControls({
 						<button
 							type="button"
 							class={`v2-sim-seed-btn ${autoSeed ? 'active' : ''}`}
+							aria-label="Auto-reroll seed on every run"
+							aria-pressed={autoSeed}
 							onClick={() => setAutoSeed(!autoSeed)}
 						>
 							<Dices size={14} />

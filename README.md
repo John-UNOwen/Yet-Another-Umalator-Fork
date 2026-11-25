@@ -64,6 +64,9 @@ npm run test:globalsim            # adapter goldens, byte-identical request buil
 npm run test:globalsim-metrics    # margin math, tail grid, aggregates, CI
 npm run test:globalsim-pool       # worker pool scheduling, crash and abort policy
 npm run test:globalsim-mobs       # field construction, seed-derived gates
+npm run test:globalsim-compact    # wasm compact telemetry vs the JS extraction path
+npm run test:globalsim-spurt      # the full-spurt judge
+npm run test:globalsim-simserver  # local sim server: token gate, HTTP parity, child crash
 npm run test:globalsim-skills     # skill table coverage against the native engine
 npm run test:globalsim-skilldata  # per-worker table injection, engine fallback guard
 npm run test:globalsim-compare    # end-to-end compare through the real wasm
@@ -71,21 +74,23 @@ npm run test:globalsim-h2h        # both umas plus 7 mobs, mirrored gate pairs
 npm run test:globalsim-chart      # end-to-end chart through the real wasm
 npm run globalsim:coverage        # skill coverage gate over the engine skill table
 npm run typecheck:roster          # scoped tsc over umalator-global/v2/roster/
+npm run test:optimizer            # search space, knapsack costs, cache, evaluator, surrogate, book, bandit, oracle and realistic suites
+npm run test:career-import        # career import reader (Hachimi dump, umadump snapshot)
+npm run test:skill-hints          # hint discounts and skill cost walks
+npm run test:skill-drift          # the drift checker's own tests
+npm run test:skill-data-fields    # skill_data.json field shape
+npm run test:mechanics            # mechanics-explorer formulas
+npm run test:base-path            # asset prefix resolution
+npm run test:ocr                  # screenshot reader
 node globalsim-wasm/test/phase0.mjs --seeds 25   # wasm vs native byte parity
 ```
 
 These are local-only:
 
 ```bash
-npm run test:globalsim-compact    # wasm compact telemetry vs the JS extraction path
-npm run test:globalsim-simserver  # local sim server: token gate, HTTP parity, child crash
 npm run test:globalsim-backend-gpu # gpu session parity + CPU rerun (skips when no gated GPU)
-npm run test:optimizer            # search space, knapsack costs, cache, evaluator, surrogate, book, bandit, oracle and realistic suites
 npm run test:optimizer:slow       # exhaustive search cross-check, several minutes
-npm run test:career-import        # career import reader (Hachimi dump, umadump snapshot)
 npm run test:roster               # roster decoder and storage
-npm run test:mechanics            # mechanics-explorer formulas
-npm run test:skill-drift          # the drift checker's own tests
 npm run check:skill-drift         # compare skill_data.json against docs/master.mdb
 ```
 

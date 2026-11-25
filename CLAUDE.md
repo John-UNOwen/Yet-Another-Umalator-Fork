@@ -200,7 +200,8 @@ simulation.
 - Mobile-first responsive design
 - Modal dialogs, feedback drawer, mobile navigation
 - Built with esbuild (`build.mjs`). The deployed bundle comes from the Vite `dist/` build
-- Served at the site root (the old `/umalator-global/v2/` path 301s there)
+- Served at the site root. Pages has no redirects, so the old `/umalator-global/v2/` path hits
+  `v2/public/404.html`, which sends the visitor to the root of the site's first path segment
 
 Everything else is shared as before:
 - Data files (skill_data.json, course_data.json)
@@ -817,8 +818,9 @@ The old v1 scheme (hand-edited `?v=YYYYMMDD[x]` version queries on `bundle.js`,
 - `CC_BASE_PATH=/${{ github.event.repository.name }}` sets the asset prefix from the repo name,
   so a rename or a root-domain deploy needs no code change (`CC_BASE_PATH=''` = site root).
 - Cloudflare-only features build inert: `OCR_PROXY_URL` and `TURNSTILE_SITEKEY` are unset.
-- No Pages env vars are configured. `VITE_DISCORD_WEBHOOK` stays empty, so the feedback drawer
-  is hidden.
+- The build reads one repository variable, `GOATCOUNTER_CODE` (`vars.GOATCOUNTER_CODE`), which
+  turns on the page-view counter (`v2/analytics.ts`, gc.zgo.at). `VITE_DISCORD_WEBHOOK` stays
+  empty, so the feedback drawer is hidden.
 
 `ci.yml` runs on push and pull request: the engine's own `cargo test`, the wasm-vs-native byte
 parity check, the GlobalSim suites (compact-record parity and the full-spurt judge included),

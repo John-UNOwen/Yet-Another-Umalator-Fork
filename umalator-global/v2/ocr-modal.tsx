@@ -32,6 +32,18 @@ import notInGame from '../not-in-game.json';
 import { validateAndParseUmaJson } from './storage';
 import type { UmaState } from './uma-panel';
 
+// The on-device reader needs OffscreenCanvas in its worker and WebAssembly
+// SIMD (the only onnxruntime build it ships). iOS Safari below 16.4 has
+// neither, so the modal says so before it downloads anything.
+const WASM_SIMD_PROBE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);
+function ocrUnsupportedReason(): string | null {
+	const simd = typeof WebAssembly !== 'undefined' && (() => { try { return WebAssembly.validate(WASM_SIMD_PROBE); } catch { return false; } })();
+	if (typeof OffscreenCanvas === 'undefined' || !simd) {
+		return 'This browser cannot run the screenshot reader. It needs iOS Safari 16.4, Chrome 91 or Firefox 105 or newer. You can still enter the build by hand.';
+	}
+	return null;
+}
+
 interface OCRModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -113,21 +125,33 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 	// modal opens or closes, and when it unmounts.
 	const shotsRef = useRef<Shot[]>([]);
 	shotsRef.current = shots;
-	useEffect(() => () => { for (const s of shotsRef.current) URL.revokeObjectURL(s.url); }, []);
+	// Closing the modal or unmounting it ends the reader: its worker holds the two ONNX
+	// sessions and the onnxruntime heap, and a scan still running would otherwise land in the
+	// closed modal. The models stay in Cache Storage, so the next open only reloads them.
+	const stopReader = useCallback(() => {
+		workerRef.current?.terminate();
+		workerRef.current = null;
+		for (const held of waitingRef.current.values()) held.reject(new Error('closed'));
+		waitingRef.current.clear();
+	}, []);
+	useEffect(() => () => {
+		for (const s of shotsRef.current) URL.revokeObjectURL(s.url);
+		stopReader();
+	}, [stopReader]);
 
 	useEffect(() => {
 		setShots((held) => {
 			for (const s of held) URL.revokeObjectURL(s.url);
 			return held.length ? [] : held;
 		});
-		if (!isOpen) return;
+		if (!isOpen) { stopReader(); return; }
 		setResults([]);
 		setPhase('pick');
 		setProgress(null);
 		setDownloadBytes(null);
 		setError(null);
 		setEdits(EMPTY_EDITS);
-	}, [isOpen]);
+	}, [isOpen, stopReader]);
 
 	const merged = useMemo(() => mergeReads(results.map((r) => r.read)), [results]);
 	const missing = useMemo(() => gaps(merged), [merged]);
@@ -185,6 +209,11 @@ export function OCRModal({ isOpen, onClose, onConfirm }: OCRModalProps) {
 	}, [worker]);
 
 	const start = useCallback(async (list: readonly Shot[]) => {
+		const unsupported = ocrUnsupportedReason();
+		if (unsupported) {
+			setError(unsupported);
+			return;
+		}
 		setError(null);
 		setPhase('work');
 		setProgress({ stage: 'check', done: 0, total: 0 });

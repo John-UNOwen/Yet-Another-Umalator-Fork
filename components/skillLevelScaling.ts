@@ -12,6 +12,10 @@ const _levelCoefs: Record<number, number[]> = {
 	5:  [1.0, 1.01, 1.02, 1.03, 1.04, 1.05, 1.06, 1.07, 1.08, 1.10],
 	27: [1.0, 1.01, 1.04, 1.07, 1.10, 1.13, 1.16, 1.19, 1.22, 1.25],
 	31: [1.0, 1.02, 1.04, 1.06, 1.08, 1.10, 1.125, 1.15, 1.175, 1.20],
+	// The client's skill_level_value gives these flat ability types 1.0 at every
+	// level, so a unique of them (110071 564 Escapades) does not grow with level.
+	36: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+	37: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
 };
 const _defaultCoefs = [1.0, 1.02, 1.04, 1.06, 1.08, 1.10, 1.12, 1.14, 1.16, 1.18];
 

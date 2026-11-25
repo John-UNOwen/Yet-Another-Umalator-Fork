@@ -20,6 +20,8 @@ interface ButtonProps {
 	icon?: ComponentChildren;  // Lucide icon or other component
 	iconPosition?: 'left' | 'right';
 	title?: string;
+	/** The accessible name, for a button that shows only an icon. */
+	ariaLabel?: string;
 }
 
 export function Button({
@@ -32,7 +34,8 @@ export function Button({
 	className = '',
 	icon,
 	iconPosition = 'left',
-	title
+	title,
+	ariaLabel
 }: ButtonProps) {
 	return (
 		<button
@@ -41,6 +44,7 @@ export function Button({
 			onClick={onClick}
 			disabled={disabled}
 			title={title}
+			aria-label={ariaLabel}
 		>
 			{icon && iconPosition === 'left' && icon}
 			{children}
