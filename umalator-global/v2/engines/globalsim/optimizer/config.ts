@@ -52,6 +52,10 @@ export interface EffortConfig {
 	batchCap: number;
 	/** Stage E surrogate on/off (plan: off for Quick). */
 	surrogate: boolean;
+	/** Run the first two restarts on different pools at the same time (§G1).
+	 *  Only time-bounded runs use it: a race budget needs sequential restarts to
+	 *  stay deterministic. */
+	concurrentRestarts?: boolean;
 	/** Wall-clock guidance in ms (Infinity for untilStopped). The pipeline
 	 *  prefers finishing a stage over hard-cancelling mid-comparison. */
 	timeBudgetMs: number;

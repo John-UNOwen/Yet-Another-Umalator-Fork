@@ -18,6 +18,8 @@ import { Wand2 } from 'lucide-react';
 import { buildSpace, BuildSpace, activationCountSkill, simIdentity } from './engines/globalsim/optimizer/space';
 import { BuildRefLite, createEvaluator, Evaluator } from './engines/globalsim/optimizer/evaluator';
 import { createController, runOptimizer, SearchController } from './engines/globalsim/optimizer/search';
+import { NS_SEARCH } from './engines/globalsim/optimizer/cache';
+import { plannedBranchThreads } from './engines/globalsim/lanePlan';
 import { bookCount, bookKey, clearBook, saveBook, selectStarts } from './engines/globalsim/optimizer/book';
 import {
 	applyTuning, CUSTOM_STARTS_MAX, DEFAULT_CUSTOM, effortConfig, KICK_GROW_AFTER, KICKS_PER_VISIT, MAX_SP_BUDGET,
@@ -56,6 +58,9 @@ export interface OptimizerPaneProps {
 	/** The extra gpu lane's factory, passed only when the server reports a
 	 *  usable GPU. Absent keeps the optimizer's pool all-CPU. */
 	gpuFactory?: WorkerFactory;
+	/** The device branch factory (app-v2 globalsimGpuFactory). When present the
+	 *  second restart runs on the device pool beside the CPU lanes. */
+	gpuBranchFactory?: WorkerFactory;
 	/** CPU-lane factory for the gpu lane's fallback reruns (app-v2 passes the
 	 *  same worker factory). */
 	cpuFactory?: WorkerFactory;
@@ -698,14 +703,25 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			};
 			// One scenario: the race the user set up.
 			const scenarios: ScenarioSpec[] = [{ id: 'main', label: 'Current setup', conds, mobPreset }];
+			const branchCores = Math.max(1, Math.floor((typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 8));
 			ev = createEvaluator({
 				workerFactory, cpuFactory: props.cpuFactory, gpuFactory: props.gpuFactory,
+				// The branch pool owns the device when it exists, so the foreground
+				// pool keeps two threads free for the branch and its host.
+				...(props.gpuBranchFactory
+					? { gpuBranchFactory: props.gpuBranchFactory, gpuBranchThreads: 1, threads: plannedBranchThreads(branchCores, branchCores) }
+					: {}),
 				space, baseHorse, scenarios, baseSeed: seedUse, skillData,
 				// Every optimizer race runs paired: the search is a chain of paired
 				// comparisons, and paired draws cut σΔ(ℓ) about 10×.
 				paired: true,
 			});
 			evRef.current = ev;
+			// Open the branch session now. Its engine start takes about half a minute,
+			// which the screening stages can cover instead of the climb.
+			if (props.gpuBranchFactory) {
+				void ev.ensureBackground?.([{ ns: NS_SEARCH, scenarioIdx: 0, build: { id: simIdentity(space, []), selection: [] }, positions: [0] }]).catch(() => { /* the run stays on the CPU lanes */ });
+			}
 
 			// Opening book: seed the search from prior strong builds for this race
 			// (re-filtered to today's roster).
@@ -726,7 +742,12 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 				{
 					space, scenarioIdx: 0, objective, aggregation: 'mean',
 					bookStarts, current,
-					effort: applyTuning(effortConfig(preset, { starts: customStarts, minutes: customMinutes }), tuningNow()),
+					effort: {
+						...applyTuning(effortConfig(preset, { starts: customStarts, minutes: customMinutes }), tuningNow()),
+						// With a device branch the restarts pair up; the search itself
+						// keeps the old schedule when there is no time budget.
+						...(props.gpuBranchFactory ? { concurrentRestarts: true } : {}),
+					},
 					wideSearch, wideSearchSeed: seedUse,
 				},
 				ctrl,

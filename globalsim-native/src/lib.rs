@@ -187,6 +187,33 @@ pub fn gpu_set_local_work_size(size: u32) -> Result<()> {
     .map_err(Error::from_reason)
 }
 
+/// The device's double-precision cost, from the same fma microkernels the dev
+/// bench uses: four chains of 4,096 fma per work item, one warmup plus five
+/// timed launches. A high f64/f32 ratio predicts a slow lane for this kernel.
+#[cfg(feature = "gpu")]
+#[napi(js_name = "gpuF64Ratio")]
+pub fn gpu_f64_ratio() -> Result<String> {
+    const COUNT: usize = 4096;
+    const ITERATIONS: i32 = 4096;
+    const REPEATS: usize = 5;
+    let spike = globalsim_gpu::gpu::Spike::open().map_err(Error::from_reason)?;
+    let f64_ms = spike.fma_probe(true, COUNT, ITERATIONS, REPEATS).map_err(Error::from_reason)?;
+    let f32_ms = spike.fma_probe(false, COUNT, ITERATIONS, REPEATS).map_err(Error::from_reason)?;
+    let gflops = |ms: f64| 2.0 * 4.0 * ITERATIONS as f64 * COUNT as f64 / (ms / 1000.0) / 1e9;
+    serde_json::to_string(&serde_json::json!({
+        "f32Ms": f32_ms,
+        "f64Ms": f64_ms,
+        "ratio": f64_ms / f32_ms,
+        "f32GfPerSec": gflops(f32_ms),
+        "f64GfPerSec": gflops(f64_ms),
+        "workItems": COUNT,
+        "iterations": ITERATIONS,
+        "chains": 4,
+        "repeats": REPEATS,
+    }))
+    .map_err(|e| Error::from_reason(e.to_string()))
+}
+
 /// Install the session skill table (step 5): requests that omit `skillData`
 /// answer from it, so the table crosses the wire and parses once per session
 /// instead of once per request text.
@@ -365,10 +392,12 @@ const PROBE_GEOMETRY: &str = include_str!("../../vendor/GlobalSim/data/course_ge
 
 #[cfg(feature = "gpu")]
 const PROBE_SEED: i32 = 20261115;
+// Widths from the lane's real chunks: a lane sizes its first chunk at about
+// 1,000 to 2,000 races, and a slope fitted at 64/512 overstated the marginal cost.
 #[cfg(feature = "gpu")]
-const PROBE_SMALL: usize = 64;
+const PROBE_SMALL: usize = 1000;
 #[cfg(feature = "gpu")]
-const PROBE_LARGE: usize = 512;
+const PROBE_LARGE: usize = 2000;
 
 /// The server's startup check: the gated device, a guard race against the CPU
 /// engine, and the device's measured launch floor and slope.

@@ -207,6 +207,9 @@ test('ensureBackground runs a second batch on its own pool', async t => {
 	t.ok(evb.slots(NS_SEARCH, 0, add1.id).every(s => s != null && s !== 'err'), 'background build filled');
 	t.ok(fgWorkers >= 1, 'the foreground pool opened');
 	t.ok(bgWorkers >= 1, 'the branch pool opened on its own factory');
+	t.equal(evb.racesRun(), 2 * SEEDS, 'both batches counted in the total');
+	t.equal(evb.racesRun('foreground'), SEEDS, 'the foreground counter counts only its batch');
+	t.equal(evb.racesRun('background'), SEEDS, 'the background counter counts only its batch');
 	evb.dispose();
 	t.end();
 });
@@ -532,5 +535,52 @@ test('a seed that keeps failing becomes err after the attempt cap', async t => {
 	const r4 = await evF.ensure(req);
 	t.equal(r4.jobErrors.length, 0, 'err seeds are never re-requested');
 	evF.dispose();
+	t.end();
+});
+// ── device-lane foreground shape ────────────────────────────────────────────
+
+/** Worker factory that records the run messages each worker receives. */
+function recordingFactory(): { factory: WorkerFactory; runs: any[] } {
+	const runs: any[] = [];
+	const f: WorkerFactory = () => {
+		const w = factory();
+		const post = w.postMessage.bind(w);
+		w.postMessage = (m: any) => { if (m && m.type === 'run') runs.push(m); return post(m); };
+		return w;
+	};
+	return { factory: f, runs };
+}
+
+test('foreground jobs split per gate when the pool has a device lane', async t => {
+	// The device lane has no gated compact entry, so a gated chunk sent there
+	// answers per-seed errors. With a lane the evaluator must build per-gate
+	// requests, and their records must match the gated batch exactly.
+	const openConds: any = { ...conds };
+	delete openConds.fixedGate;
+	const openScenarios: ScenarioSpec[] = [{ id: '0', label: 'test', conds: openConds, mobPreset }];
+	const mk = (extra: any, rec: { factory: WorkerFactory; runs: any[] }) => createEvaluator({
+		workerFactory: rec.factory, threads: 2, space, baseHorse: horse, scenarios: openScenarios,
+		baseSeed: BASE_SEED, skillData: mergedTable, ...extra,
+	});
+	const gatedRec = recordingFactory();
+	const evG = mk({}, gatedRec);
+	const req = [{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }];
+	const g1 = await evG.ensure(req);
+	t.deepEqual(g1.jobErrors, [], 'gated batch ran');
+	t.ok(gatedRec.runs.length >= 1, 'the gated batch sent run messages');
+	t.ok(gatedRec.runs.every(r => Array.isArray(r.gates)), 'without a lane the batch is gated');
+	t.ok(gatedRec.runs.every(r => r.gates.length === r.seeds.length), 'every seed carries its gate');
+
+	const splitRec = recordingFactory();
+	const evS = mk({ gpuFactory: factory }, splitRec);
+	const g2 = await evS.ensure(req);
+	t.deepEqual(g2.jobErrors, [], 'split batch ran');
+	t.ok(splitRec.runs.length > 1, 'with a lane the batch splits into per-gate runs');
+	t.ok(splitRec.runs.every(r => !r.gates), 'no gated chunk is built for the lane path');
+	const splitSeeds = splitRec.runs.reduce((n, r) => n + r.seeds.length, 0);
+	t.equal(splitSeeds, positions.length, 'every seed still runs once');
+	t.deepEqual(evS.slots(NS_SEARCH, 0, base.id), evG.slots(NS_SEARCH, 0, base.id), 'records match the gated batch');
+	evG.dispose();
+	evS.dispose();
 	t.end();
 });

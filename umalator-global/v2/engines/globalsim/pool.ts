@@ -181,6 +181,8 @@ export interface WorkerLike {
 	ready?: Promise<void>;
 }
 export type WorkerFactory = () => WorkerLike;
+/** A gpu lane's factory, optionally able to open its session before a chunk is due. */
+export type GpuWorkerFactory = WorkerFactory & { prewarm?: () => void };
 
 export interface PoolJob {
 	id: string;
@@ -272,8 +274,10 @@ export interface PoolOptions {
 	 * stays the cpu lanes' source, and the pool creates the gpu slot only once
 	 * the batch can pay for a launch, so a run that stays all-CPU never boots
 	 * the session. Omit it to let any `factory` worker report the gpu backend.
+	 * A factory may carry `prewarm`, which the pool calls on the first batch
+	 * big enough to pay: the session open then overlaps that batch's drain.
 	 */
-	gpuFactory?: WorkerFactory;
+	gpuFactory?: GpuWorkerFactory;
 	/**
 	 * When a gpu lane may start. 'auto' (default) and 'eager' share one gate:
 	 * the lane opens once the measured CPU projection can cover its session
@@ -310,9 +314,55 @@ export function setGpuCostModel(model: { floor: number; slope: number; openMs?: 
 }
 
 /** Test seam: clear the process-wide gpu model (tests script their own). */
+/** Seeds per bucket for the per-width minimum fit: widths in one bucket share a launch
+ *  shape, and the bucket's fastest sample is the least contended one. */
+const GPU_FIT_BUCKET = 64;
+/** One update may move the floor and slope by at most this factor: a
+ *  single fast or slow launch must not resize every later chunk. */
+const GPU_FIT_MAX_MOVE = 1.3;
+
+/** Fit cost = floor + slope × seeds over the per-width minimum times. A
+ *  launch under a busy host can take twice as long as an idle one, so the
+ *  minima are the least contended estimate of the true cost. Ordinary least
+ *  squares over every sample follows whichever lane contended worst. */
+function fitGpuMinima(samples: ReadonlyArray<{ seeds: number; ms: number }>, prev?: { floor: number; slope: number } | null): { floor: number; slope: number } | null {
+	const buckets = new Map<number, { seeds: number; ms: number }>();
+	for (const s of samples) {
+		if (!(s.ms > 0) || !(s.seeds > 0)) continue;
+		const key = Math.floor(s.seeds / GPU_FIT_BUCKET);
+		const held = buckets.get(key);
+		if (!held || s.ms < held.ms) buckets.set(key, s);
+	}
+	const mins = [...buckets.values()];
+	if (mins.length < 2) return null;
+	let sx = 0, sy = 0, sxx = 0, sxy = 0;
+	for (const s of mins) { sx += s.seeds; sy += s.ms; sxx += s.seeds * s.seeds; sxy += s.seeds * s.ms; }
+	const den = mins.length * sxx - sx * sx;
+	if (!(den > 0)) return null;
+	const slope = (mins.length * sxy - sx * sy) / den;
+	const floor = (sy - slope * sx) / mins.length;
+	return clampGpuFit({ floor, slope }, prev);
+}
+
+/** Keep a fit in the plausible band, and keep one update from jumping: the
+ *  model only sizes launches, so a wild sample must not resize them all. */
+function clampGpuFit(fit: { floor: number; slope: number }, prev?: { floor: number; slope: number } | null): { floor: number; slope: number } {
+	let floor = Math.max(50, Math.min(10_000, fit.floor));
+	let slope = Math.max(0.1, Math.min(30, fit.slope));
+	if (prev) {
+		floor = Math.max(prev.floor / GPU_FIT_MAX_MOVE, Math.min(prev.floor * GPU_FIT_MAX_MOVE, floor));
+		slope = Math.max(prev.slope / GPU_FIT_MAX_MOVE, Math.min(prev.slope * GPU_FIT_MAX_MOVE, slope));
+	}
+	return { floor, slope };
+}
+
 export function __testResetGpuFit(): void { sharedGpuFit = null; sharedGpuOpenMs = null; }
 /** Test seam: script the process-wide warm gpu fit. */
 export function __testSetGpuFit(fit: { floor: number; slope: number } | null): void { setGpuCostModel(fit); }
+/** Test seam: the per-width minimum fit, clamped as the pool clamps it. */
+export function __testFitGpuMinima(samples: ReadonlyArray<{ seeds: number; ms: number }>, prev?: { floor: number; slope: number } | null): { floor: number; slope: number } | null {
+	return fitGpuMinima(samples, prev);
+}
 /** Test seam: read the process-wide warm gpu fit. */
 export function __testGetGpuFit(): { floor: number; slope: number } | null { return sharedGpuFit; }
 
@@ -327,11 +377,12 @@ export const DEFAULT_GPU_BATCH_SEEDS = 2048;
 /**
  * Adaptive sizing: the launch wall a gpu lane's chunk is sized for (ms).
  * The measured app compare field costs about 1.8 s of fixed pass plus
- * 1.3 ms per race, so 3,000 ms is about 900 races. A higher target amortizes
- * the pass better. Lower cuts the mixed pool's straggler tail: the batch
- * cannot finish before this lane's last launch does.
+ * 1.3 ms per race, so 4,500 ms is about 2,000 races on that field. A higher
+ * target amortizes the pass better and lets a big batch hide a wider launch.
+ * Lower cuts the mixed pool's straggler tail: the batch cannot finish before
+ * this lane's last launch does. The CPU drain still caps the chunk.
  */
-export const DEFAULT_GPU_LAUNCH_TARGET_MS = 3000;
+export const DEFAULT_GPU_LAUNCH_TARGET_MS = 4500;
 /** Cost priors for a gpu lane with no measured warm chunk yet, ms. A session's
  *  first launch pays the engine load, the OpenCL program build and one skill
  *  table parse per packed request (the engine repeats that parse today, about
@@ -353,9 +404,15 @@ export const GPU_LANE_PAY_MS =
  *  chunk. Measured startup is about 2 s, so a shorter projection would make the
  *  first launch the straggler. */
 export const GPU_PROBE_GUARD_MS = 6000;
+/** Smallest queued batch whose drain pays to open the lane's session early: the
+ *  open then runs beside that batch instead of ahead of it. */
+export const GPU_PREWARM_MIN_SEEDS = 1000;
 /** A gpu lane sizes its chunk to finish inside this fraction of the CPU lanes'
  *  projected drain, so the device pass never outlives the cpu pool. */
 export const GPU_DRAIN_SLACK = 0.85;
+/** The per-width minimum fit tracks a launch within 15 percent on the career
+ *  field, so the chunks are sized straight against the drain with no margin. */
+export const GPU_SIZING_SAFETY = 1.0;
 
 /** A fitted gpu lane whose chunk rate is below this fraction of the best
  *  non-gpu lane is left idle: at that rate it delays the CPU lanes instead of
@@ -442,9 +499,15 @@ class JobQueue {
 	private front: QEntry[] = [];
 	private n = 0;
 	private seedsN = 0;
+	private laneN = 0;
+	private laneSeedN = 0;
 	get length(): number { return this.n; }
 	/** Seeds still queued (the gpu probe projection reads this). */
 	get seedCount(): number { return this.seedsN; }
+	/** Queued jobs a gpu lane can run: the device lane has no gated entry, so a
+	 *  job whose seeds name their own gate stays on the CPU lanes. */
+	get laneCount(): number { return this.laneN; }
+	get laneSeedCount(): number { return this.laneSeedN; }
 	push(q: Queued): void {
 		const e: QEntry = { q, taken: false };
 		this.all.push(e);
@@ -453,37 +516,49 @@ class JobQueue {
 		l.items.push(e);
 		this.n++;
 		this.seedsN += q.job.seeds.length;
+		if (!q.job.gates) { this.laneN++; this.laneSeedN += q.job.seeds.length; }
 	}
 	/** A requeued chunk goes ahead of everything (exactly one requeue, §4.1). */
 	unshift(q: Queued): void {
 		this.front.unshift({ q, taken: false });
 		this.n++;
 		this.seedsN += q.job.seeds.length;
+		if (!q.job.gates) { this.laneN++; this.laneSeedN += q.job.seeds.length; }
 	}
 	private take(e: QEntry): Queued {
 		e.taken = true;
 		this.seedsN -= e.q.job.seeds.length;
+		if (!e.q.job.gates) { this.laneN--; this.laneSeedN -= e.q.job.seeds.length; }
 		// Drained: drop the lazily-cleared arrays so finished jobs (and the
 		// requests they reference) do not live on for the rest of the run.
 		if (--this.n === 0) this.clear();
 		return e.q;
 	}
 	/** First queued job for the first key in `held` (MRU order) that has one,
-	 *  else the queue head; undefined when empty. */
-	takeFor(held: readonly string[]): Queued | undefined {
+	 *  else the queue head; undefined when empty. `pred` keeps a slot from
+	 *  taking a job it cannot run (a gpu lane skips gated jobs). */
+	takeFor(held: readonly string[], pred?: (q: Queued) => boolean): Queued | undefined {
 		if (this.n === 0) return undefined;
+		const ok = pred ?? (() => true);
 		for (const key of held) {
-			const fi = this.front.findIndex(e => e.q.job.setupKey === key);
+			const fi = this.front.findIndex(e => e.q.job.setupKey === key && ok(e.q));
 			if (fi >= 0) return this.take(this.front.splice(fi, 1)[0]);
 			const l = this.byKey.get(key);
 			if (!l) continue;
 			while (l.head < l.items.length && l.items[l.head].taken) l.head++;
-			if (l.head < l.items.length) return this.take(l.items[l.head++]);
+			for (let i = l.head; i < l.items.length; i++) {
+				const e = l.items[i];
+				if (!e.taken && ok(e.q)) return this.take(e);
+			}
 			this.byKey.delete(key);
 		}
-		if (this.front.length) return this.take(this.front.shift()!);
+		const fi = this.front.findIndex(e => ok(e.q));
+		if (fi >= 0) return this.take(this.front.splice(fi, 1)[0]);
 		while (this.head < this.all.length && this.all[this.head].taken) this.head++;
-		if (this.head < this.all.length) return this.take(this.all[this.head++]);
+		for (let i = this.head; i < this.all.length; i++) {
+			const e = this.all[i];
+			if (!e.taken && ok(e.q)) return this.take(e);
+		}
 		return undefined;
 	}
 	/** First queued job for `key` satisfying pred (front first, then the key's
@@ -516,7 +591,7 @@ class JobQueue {
 		return undefined;
 	}
 	clear(): void {
-		this.all = []; this.head = 0; this.byKey.clear(); this.front = []; this.n = 0; this.seedsN = 0;
+		this.all = []; this.head = 0; this.byKey.clear(); this.front = []; this.n = 0; this.seedsN = 0; this.laneN = 0; this.laneSeedN = 0;
 	}
 }
 
@@ -564,6 +639,8 @@ interface Slot {
 	 *  reply has to be split back to the parts positionally, not by seed. */
 	multiRun: boolean;
 	expecting: 'prepared' | 'chunk' | null;
+	/** Projected launch time of the run in flight (the chunk log's check). */
+	expectMs: number | null;
 }
 
 // ── shared worker budget ──────────────────────────────────────────────────────
@@ -679,6 +756,10 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	const gpuLaunchTargetMs = Math.max(500, opts.gpuLaunchTargetMs ?? DEFAULT_GPU_LAUNCH_TARGET_MS);
 	const gpuExtraLane = opts.gpuExtraLane !== false;
 	const gpuFactory = opts.gpuFactory;
+	const gpuPrewarm = typeof gpuFactory?.prewarm === 'function' ? gpuFactory.prewarm : null;
+	/** Set once the pool asked the factory to open its session: from then on the
+	 *  open overlaps the batch, so the gate must not charge it as serial cost. */
+	let gpuPrewarmStarted = false;
 	const gpuLaneMode = opts.gpuLane ?? 'auto';
 	const gpuHostReserve = Math.max(0, Math.floor(opts.gpuHostReserve ?? 1));
 	/** SimWorker mirrors the sim-server backend onto the worker. */
@@ -709,26 +790,6 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	 *  chunk is always the cheapest per seed (the device pass dominates). */
 	const homogeneousGpu = (): boolean => slots.length > 0 && slots.every(isGpuLane);
 
-	/** Fit cost = floor + slope × seeds over a gpu lane's measured chunks.
-	 *  Null until two chunks exist. Ordinary least squares: two chunks define
-	 *  the model, later chunks average the engine's integer launch-slice steps.
-	 *  Clamped non-negative, a noisy fit must never ask for a negative pass. */
-	function fitGpuCost(samples: ReadonlyArray<{ seeds: number; ms: number }>): { floor: number; slope: number } | null {
-		const n = samples.length;
-		if (n < 2) return null;
-		let sx = 0, sy = 0, sxx = 0, sxy = 0;
-		for (const s of samples) {
-			sx += s.seeds;
-			sy += s.ms;
-			sxx += s.seeds * s.seeds;
-			sxy += s.seeds * s.ms;
-		}
-		const den = n * sxx - sx * sx;
-		if (!(den > 0)) return null;
-		const slope = (n * sxy - sx * sy) / den;
-		const floor = (sy - slope * sx) / n;
-		return { floor: Math.max(0, floor), slope: Math.max(0, slope) };
-	}
 
 	/** The lane's warm cost model: its own two-plus measured warm chunks, else
 	 *  the model another pool in this process already fitted. A session's first
@@ -739,12 +800,27 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		return slot.openPaid ? slot.costSamples : slot.costSamples.slice(1);
 	}
 	function gpuFitOf(slot: Slot): { floor: number; slope: number } | null {
-		return fitGpuCost(warmSamples(slot)) ?? sharedGpuFit;
+		return fitGpuMinima(warmSamples(slot)) ?? sharedGpuFit;
 	}
 	/** What a lane with no measured launch still pays before its first chunk:
 	 *  the measured session open when one exists, else the conservative prior. */
 	function coldOpenMs(): number {
 		return sharedGpuOpenMs ?? GPU_STARTUP_PRIOR_MS;
+	}
+
+	/** Seeds in the run about to go out: the merged parts when a chunk was
+	 *  gathered, else the single job's. */
+	function runSeeds(slot: Slot): number {
+		const parts = slot.parts ?? (slot.inflight ? [slot.inflight] : []);
+		return parts.reduce((n, p) => n + p.job.seeds.length, 0);
+	}
+
+	/** What the published model says this launch costs, for the chunk log's
+	 *  projected against measured check. Null while no model exists. */
+	function projectedRunMs(slot: Slot, seeds: number): number | null {
+		const fit = gpuFitOf(slot);
+		if (!fit || !(seeds > 0)) return null;
+		return fit.floor + fit.slope * seeds;
 	}
 
 	/** Seeds whose launch is projected to take `budgetMs`: the fitted model when
@@ -757,7 +833,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 			if (!(fit.slope > 0) || budgetMs <= fit.floor) return 0;
 			return Math.max(MIN_CHUNK_SEEDS, Math.min(gpuBatchSeeds, Math.round((budgetMs - fit.floor) / fit.slope)));
 		}
-		const cold = slot.costSamples.length === 0 && !slot.openPaid ? coldOpenMs() : 0;
+		const cold = gpuPrewarmStarted ? 0 : slot.costSamples.length === 0 && !slot.openPaid ? coldOpenMs() : 0;
 		const room = budgetMs - cold - GPU_FLOOR_PRIOR_MS;
 		if (room < MIN_CHUNK_SEEDS * GPU_SLOPE_PRIOR_MS_PER_RACE) return 0;
 		return Math.max(MIN_CHUNK_SEEDS, Math.min(gpuBatchSeeds, Math.round(room / GPU_SLOPE_PRIOR_MS_PER_RACE)));
@@ -769,19 +845,25 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	function gpuTakeWidth(slot: Slot): number {
 		const drain = projectedCpuMs();
 		if (!(drain > 0)) return 0;
+		// The launch target caps the chunk, the drain can tighten it, and the
+		// fitted model gets a safety margin because a launch that overruns its
+		// drain makes the batch wait for it.
+		const room = Math.min(gpuLaunchTargetMs, drain * GPU_DRAIN_SLACK) / GPU_SIZING_SAFETY;
 		if (!gpuFitOf(slot)) {
 			// No model yet: the priors already carry the startup prior.
-			return gpuWidthFor(slot, Math.min(gpuLaunchTargetMs + coldOpenMs(), drain * GPU_DRAIN_SLACK));
+			const open = gpuPrewarmStarted ? 0 : coldOpenMs();
+			return gpuWidthFor(slot, Math.min(gpuLaunchTargetMs + open, drain * GPU_DRAIN_SLACK) / GPU_SIZING_SAFETY);
 		}
-		return gpuWidthFor(slot, Math.min(gpuLaunchTargetMs, drain * GPU_DRAIN_SLACK));
+		return gpuWidthFor(slot, room);
 	}
 
 	/** Fixed cost a batch's projected drain must cover before the lane opens:
 	 *  the session open minus a warm handover, one host pass and the smallest
-	 *  useful chunk. The startup probe's model replaces the old priors. */
+	 *  useful chunk. The startup probe's model replaces the old priors. A
+	 *  prewarmed lane's open runs beside the drain, so it is not charged. */
 	function lanePayMs(): number {
 		const fit = sharedGpuFit;
-		const open = coldOpenMs();
+		const open = gpuPrewarmStarted ? 0 : coldOpenMs();
 		const floor = fit ? fit.floor : GPU_FLOOR_PRIOR_MS;
 		const slope = fit ? fit.slope : GPU_SLOPE_PRIOR_MS_PER_RACE;
 		return open + floor + MIN_CHUNK_SEEDS * slope;
@@ -922,7 +1004,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	}
 
 	function makeSlot(): Slot {
-		const slot: Slot = { gen: 0, worker: null, ready: false, held: [], rate: 0, costSamples: [], openPaid: false, multi: false, inflight: null, parts: null, multiRun: false, expecting: null };
+		const slot: Slot = { gen: 0, worker: null, ready: false, held: [], rate: 0, costSamples: [], openPaid: false, multi: false, inflight: null, parts: null, multiRun: false, expecting: null, expectMs: null };
 		attachWorker(slot);
 		slots.push(slot);
 		return slot;
@@ -937,7 +1019,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		budgetRaiseCapacity(threads + 1);
 		if (!budgetReserve(reclaimIdleSlot, false)) { gpuSlotStarted = false; return; }
 		held++;
-		const slot: Slot = { gen: 0, worker: null, ready: false, held: [], rate: 0, costSamples: [], openPaid: false, multi: false, inflight: null, parts: null, multiRun: false, expecting: null, gpuLane: true };
+		const slot: Slot = { gen: 0, worker: null, ready: false, held: [], rate: 0, costSamples: [], openPaid: false, multi: false, inflight: null, parts: null, multiRun: false, expecting: null, expectMs: null, gpuLane: true };
 		attachWorker(slot, gpuFactory);
 		// The factory is named for the gpu backend, so the chunk can be posted
 		// before the session opens: the worker queues it and flushes on open.
@@ -957,6 +1039,15 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		if (gpuFactory == null || gpuLaneMode === 'off' || gpuSlotStarted) return;
 		if (!adaptiveSizing) { startGpuSlot(); return; }
 		if (!(nonGpuRateSum() > 0)) return;   // no measured CPU rate yet: hold
+		// The device lane has no gated entry, so a batch of only gated work must not
+		// open the session: those jobs stay on the CPU lanes.
+		if (queue.laneCount === 0) return;
+		// A batch this big pays the open anyway, so start the session now and let
+		// the open run beside the drain instead of before it.
+		if (gpuPrewarm && !gpuPrewarmStarted && queue.laneSeedCount >= GPU_PREWARM_MIN_SEEDS) {
+			gpuPrewarmStarted = true;
+			try { gpuPrewarm(); } catch { gpuPrewarmStarted = false; }
+		}
 		const drain = projectedCpuMs();
 		if (!(drain * GPU_DRAIN_SLACK > lanePayMs())) return;
 		startGpuSlot();
@@ -1082,10 +1173,11 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	 *  (one run message can always name one setupKey), then, when the worker
 	 *  reports the group lane, compatible jobs of any other setup key. */
 	function gatherParts(slot: Slot, head: Queued, parts: Queued[], target: number): void {
+		const laneOnly = (q: Queued): boolean => !isGpuLane(slot) || !q.job.gates;
 		let seeds = parts.reduce((n, part) => n + part.job.seeds.length, 0);
 		while (seeds < target) {
 			const more = queue.takeMatching(head.job.setupKey, q =>
-				q.job.mode === head.job.mode && q.job.trackSkillId === head.job.trackSkillId);
+				laneOnly(q) && q.job.mode === head.job.mode && q.job.trackSkillId === head.job.trackSkillId);
 			if (!more) break;
 			parts.push(more);
 			seeds += more.job.seeds.length;
@@ -1094,7 +1186,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 		const lane = laneClassOf(head.job);
 		if (!lane) return;
 		while (seeds < target) {
-			const more = queue.takeMatchingAny(q => compatibleWith(lane, q.job));
+			const more = queue.takeMatchingAny(q => laneOnly(q) && compatibleWith(lane, q.job));
 			if (!more) break;
 			parts.push(more);
 			seeds += more.job.seeds.length;
@@ -1280,6 +1372,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				}
 				widenParts(slot);
 				slot.expecting = 'chunk';
+				slot.expectMs = projectedRunMs(slot, runSeeds(slot));
 				slot.worker!.postMessage(runMsg(slot));
 				// A pipelined worker can take its next job now, behind this run.
 				dispatch();
@@ -1355,6 +1448,14 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 						// is the worker's run loop, which spans the whole multi call.
 						if (isGpuLane(slot)) {
 							slot.costSamples.push({ seeds: records, ms: data.runMs });
+							// One line per device chunk: the widths and times a run paid for.
+							if (process.env.GSIM_GPU_CHUNK_LOG) {
+								const fit = sharedGpuFit;
+								const model = fit ? `${Math.round(fit.floor)} ms + ${fit.slope.toFixed(2)} ms per race` : 'no fit yet';
+								const proj = slot.expectMs;
+								const errPct = proj && proj > 0 ? Math.round(100 * (data.runMs - proj) / proj) : null;
+								console.log(`[globalsim-pool] gpu chunk ${records} seeds in ${Math.round(data.runMs)} ms, next ${chunkSeeds(slot)} seeds, model ${model}${errPct != null ? `, projected ${Math.round(proj!)} ms, error ${errPct}%` : ''}`);
+							}
 							// A cold lane's first chunk also pays the session open: back
 							// it out of the model so the next cold lane sizes for it.
 							if (slot.costSamples.length === 1 && !slot.openPaid) {
@@ -1369,8 +1470,20 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 							// Publish only a single-lane warm model: several gpu sessions
 							// on one device contend, so neither sizes another pool's lane.
 							const samples = warmSamples(slot);
-							const warm = samples.length > 1 ? fitGpuCost(samples) : null;
+							const warm = fitGpuMinima(samples, sharedGpuFit);
 							if (warm && slots.filter(isGpuLane).length <= 1) sharedGpuFit = warm;
+							else if (sharedGpuFit && samples.length > 0 && slots.filter(isGpuLane).length <= 1) {
+								// One width cannot fit a line, but it still shows the
+								// floor the startup probe paid: a chunk under a busy
+								// host costs more than the idle probe said, so lift
+								// the floor to the least contended sample.
+								let best = samples[0];
+								for (const s of samples) if (s.ms < best.ms) best = s;
+								const implied = best.ms - sharedGpuFit.slope * best.seeds;
+								if (implied > sharedGpuFit.floor) {
+									sharedGpuFit = clampGpuFit({ floor: implied, slope: sharedGpuFit.slope }, sharedGpuFit);
+								}
+							}
 						}
 						reserveGpuHostCores();
 					}
@@ -1424,6 +1537,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 	 *  shrink within the same pass. */
 	function dispatch(): void {
 		if (!running || disposed || aborted) return;
+		const laneJob = (q: Queued): boolean => !q.job.gates;
 		// The lane decides on the measured CPU rate, so give it the first look:
 		// when it opens it owns a slot budget the cpu growth must respect.
 		maybeStartGpuLane();
@@ -1451,7 +1565,9 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				// preparation it cannot use. With the caller's setupKey grouping
 				// this keeps each gate block on a worker that already holds it.
 				// No affinity match: keep queue order (jobs are grouped by setupKey upstream).
-				const next = queue.takeFor(slot.held)!;
+				const next = isGpuLane(slot) ? queue.takeFor(slot.held, laneJob) : queue.takeFor(slot.held);
+				// A lane with no work it can run (only gated jobs left) stays idle.
+				if (!next) continue;
 				slot.inflight = next;
 				slot.parts = batchParts(slot, next);
 				const warmHead = slot.held.includes(next.job.setupKey);
@@ -1461,6 +1577,7 @@ export function createGlobalsimPool(opts: PoolOptions): GlobalsimPool {
 				const coldCombined = !warmHead && slot.pipelined && !(slot.parts && slot.parts.length > 1);
 				if (warmHead) {
 					slot.expecting = 'chunk';
+					slot.expectMs = projectedRunMs(slot, runSeeds(slot));
 					slot.worker!.postMessage(runMsg(slot));
 				} else if (coldCombined) {
 					// Pipelined cold job: one message prepares and runs, one reply.

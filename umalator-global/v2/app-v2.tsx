@@ -2355,6 +2355,7 @@ function App() {
                   <OptimizerPane
                     workerFactory={globalsimWorkerFactory}
                     cpuFactory={globalsimWorkerFactory}
+                    gpuBranchFactory={globalsimGpuFactory}
                     uma={uma1}
                     candidates={skillPool.kept}
                     excluded={skillPool.out}

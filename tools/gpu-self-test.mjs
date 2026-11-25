@@ -306,6 +306,25 @@ function localWorkSizeSection(addon) {
   addon.gpuSetLocalWorkSize(0);
 }
 
+// The kernel is double precision, so a device with slow f64 answers slowly. The
+// ratio is the one number a support report needs from the fp microkernels.
+function f64RatioSection(addon) {
+  const entry = { available: false, error: null };
+  try {
+    if (typeof addon.gpuF64Ratio !== 'function') throw new Error('the addon has no gpuF64Ratio; rebuild it with the gpu feature');
+    const t = Date.now();
+    Object.assign(entry, JSON.parse(addon.gpuF64Ratio()));
+    entry.available = true;
+    entry.ms = Date.now() - t;
+  } catch (e) {
+    entry.error = String(e && e.message || e);
+  }
+  note(entry.available
+    ? `f64 ratio ${Number(entry.ratio).toFixed(1)}x slower than f32 (${Number(entry.f64GfPerSec).toFixed(1)} against ${Number(entry.f32GfPerSec).toFixed(1)} GF/s)`
+    : `f64 ratio unavailable: ${entry.error}`);
+  return entry;
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 let addon;
@@ -331,7 +350,7 @@ try {
   } else {
     note('device refused the lane; parity and tuning sections skipped');
   }
-  report.f64Ratio = { available: false, reason: 'run the gpu bench bin (cargo run --release --features gpu --bin bench) for the f64:f32 ratio' };
+  report.f64Ratio = f64RatioSection(addon);
   const parityOk = report.parity.length === 0 || report.parity.every((e) => e.identical && e.fallbacks === 0);
   const tdrOk = !report.tdr || report.tdr.ok === true;
   const deviceOk = report.device && report.device.ok === true;

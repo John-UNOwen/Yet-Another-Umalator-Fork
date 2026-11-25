@@ -68,6 +68,12 @@ export interface EvaluatorOptions {
 	gpuBranchFactory?: WorkerFactory;
 	/** Workers in the background gpu pool (default 1: one device pass). */
 	gpuBranchThreads?: number;
+	/**
+	 * Foreground jobs as per-gate requests instead of one gated batch. The
+	 * device lane has no gated entry, so it can only take the split form.
+	 * Defaults to true exactly when the foreground pool has a lane.
+	 */
+	gateSplit?: boolean;
 	threads?: number;
 	space: BuildSpace;
 	baseHorse: HorseState;
@@ -116,8 +122,9 @@ export interface SearchEvaluator {
 	ensureBackground?(reqs: EnsureReq[]): Promise<{ jobErrors: Array<{ jobId: string; error: string }> }>;
 	/** Cached seed slots for a build/scenario ([] when unknown). */
 	slots(ns: string, scenarioIdx: number, identity: string): SeedSlot[];
-	/** Races dispatched so far (progress). */
-	racesRun(): number;
+	/** Races dispatched so far (progress). `route` narrows it to one pool, so
+	 *  a concurrent restart's race budget counts only its own work. */
+	racesRun(route?: 'foreground' | 'background'): number;
 	stats(ns: string, scenarioIdx: number, build: BuildRefLite): BuildStats | null;
 	paired(ns: string, scenarioIdx: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null): PairedDiff | null;
 	/** Objective value + CI of one build (§6.1; meanPlacing sign-flipped;
@@ -268,6 +275,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	// two modes never share a key. Seed LISTS are mode-independent (pure seed
 	// arithmetic), so only cache keys carry the mode.
 	const paired = o.paired !== false;
+	const gateSplit = o.gateSplit ?? (o.gpuFactory != null && o.gpuBranchFactory == null);
 	const cns = (ns: string): string => nsWithMode(ns, paired);
 	// "Must include" locks (space.ts): implicit in every identity, never in a
 	// selection — the horse must carry them regardless of what is searched.
@@ -278,6 +286,8 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	let pool: GlobalsimPool | null = null;
 	let branchPool: GlobalsimPool | null = null;
 	let races = 0;
+	let racesFg = 0;
+	let racesBg = 0;
 	// Job-level failures (worker crash, dead handle, failed prepare/geometry
 	// fetch, lost preparation) are not proven deterministic, so a failed
 	// seed stays a hole and is retried by later ensure() passes; only after
@@ -440,7 +450,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 			// A foreground batch prepares one gate-0 field per build and runs
 			// every seed at its own gate. The background branch stays gate-split,
 			// since the device lane merges request texts rather than seed gates.
-			const built = buildGlobalsimChartJobs({ ...o.scenarios[req.scenarioIdx].conds, paired, gateBatch: route === 'foreground' }, variantKey, horse, seeds);
+			const built = buildGlobalsimChartJobs({ ...o.scenarios[req.scenarioIdx].conds, paired, gateBatch: route === 'foreground' && !gateSplit }, variantKey, horse, seeds);
 			if (built.errors.length) throw new Error(`optimizer job build failed: ${built.errors.join('; ')}`);
 			for (const job of built.jobs) {
 				jobs.push(job);
@@ -464,7 +474,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 				if (pos === undefined) continue;
 				const wasMissing = entry.values[pos] === null;
 				const v = seedValueOf(rec, distance);
-				if (wasMissing) races++;
+				if (wasMissing) { races++; if (route === 'background') racesBg++; else racesFg++; }
 				cache.set(cns(req.ns), sid(req.scenarioIdx), req.build.id, pos, v);
 				// §E: fold the seed's per-skill activation counts once, on
 				// first fill of the slot, never on a re-delivered chunk and
@@ -543,7 +553,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 			return cache.activationOf(cns(ns), sid(si), identity);
 		},
 		pinBuilds(ns, si, identities) { setPins(ns, si, identities); },
-		racesRun() { return races; },
+		racesRun(route) { return route === 'foreground' ? racesFg : route === 'background' ? racesBg : races; },
 		cacheStats: () => cache.stats(),
 		jobErrorLog: () => [...errorLog].map(([error, count]) => ({ error, count })),
 		poolTiming: () => pool?.timing() ?? { prepares: 0, prepareMs: 0, chunks: 0, runMs: 0, records: 0 },

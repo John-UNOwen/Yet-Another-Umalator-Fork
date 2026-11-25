@@ -4,7 +4,7 @@
  */
 
 import test from 'tape';
-import { lanePlanOf, lastJobLine, plannedNativeThreads } from './lanePlan';
+import { lanePlanOf, lastJobLine, plannedBranchThreads, plannedNativeThreads } from './lanePlan';
 
 test('lane plan: a ready device names itself and its measured cost', t => {
 	const plan = lanePlanOf({
@@ -51,6 +51,19 @@ test('lane plan: a server without a gpu field reports no lane', t => {
 	const plan = lanePlanOf({ gpu: null, threads: 4 });
 	t.equal(plan.state, 'off');
 	t.ok(plan.detail.includes('4'), 'the thread count is still reported');
+	t.end();
+});
+
+test('branch plan: two threads stay free for the device restart', t => {
+	t.equal(plannedBranchThreads(20, 20), 17, 'the top of the budget keeps two threads for the branch');
+	t.equal(plannedBranchThreads(12, 20), 10, 'a smaller request still reserves two');
+	t.equal(plannedBranchThreads(3, 20), 1, 'never below one thread');
+	t.equal(plannedBranchThreads(20, 4), 1, 'a small machine keeps one thread');
+	const plan = lanePlanOf({
+		gpu: { ok: true, device: 'Intel(R) Arc(TM) B580 Graphics', floorMs: 625, slopeMsPerRace: 2.96, parityOk: true },
+		threads: 6, cores: 20,
+	});
+	t.ok(plan.detail.includes('An Optimizer run also runs one restart on the device branch'), 'the line mentions the branch restart');
 	t.end();
 });
 

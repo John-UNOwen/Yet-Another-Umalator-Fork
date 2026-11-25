@@ -839,6 +839,7 @@ async function runSingleScenario(
 	const searchEnd = t0 + cfg.timeBudgetMs;
 	const restartsEnd = finalPolish ? t0 + cfg.timeBudgetMs * (1 - CLIMB_POLISH_SHARE) : searchEnd;
 	let polishIdx = -1; // the final polish's slot in startBuilds, once queued
+	let pendingBranch: Promise<void> | null = null; // §G1: the branch restart still running
 	/** The restart end with the best mean search value on its seeds. */
 	const bestEnd = (): BuildRefLite | undefined => {
 		let best: BuildRefLite | undefined, bestV = -Infinity;
@@ -855,20 +856,11 @@ async function runSingleScenario(
 	};
 	const tagOf = (s: number): string => s === polishIdx ? 'final polish'
 		: `restart ${s + 1}/${polishIdx >= 0 ? polishIdx : startBuilds.length}${passOf[s] ? ` (pass ${passOf[s] + 1})` : ''}`;
-	for (let s = 0; s < startBuilds.length; s++) {
-		if (ctrl.stopped()) break;
-		if (Date.now() - t0 > cfg.timeBudgetMs) { dbg('time budget hit at restart', s); break; }
-		const isPolish = s === polishIdx;
-		restartAt = Date.now(); // §K time left
-		// A budget for each restart (race climb): the time left, shared by the
-		// restarts still to run, so the first climb cannot spend the whole run.
-		// Whatever a restart leaves unused carries over to the next one.
-		restartDeadline = !(race && Number.isFinite(cfg.timeBudgetMs)) ? Infinity
-			: isPolish ? searchEnd
-				: restartAt + Math.max(0, restartsEnd - restartAt) / Math.max(1, startBuilds.length - s);
-		// Stage D gets the first CLIMB_STAGE_D_SHARE of that slice, so the
-		// climb always gets the rest (Infinity off the race climb's time limit).
-		const dDeadline = Number.isFinite(restartDeadline) ? restartAt + CLIMB_STAGE_D_SHARE * (restartDeadline - restartAt) : Infinity;
+	/** One restart's whole search: Stage D, the climb, the ILS and its end. The
+	 *  clock and the route view belong to this restart, so two restarts can run on
+	 *  different pools at the same time without sharing a budget. */
+	const runRestart = async (s: number, sev: SearchEvaluator, clock: { at: number; deadline: number }, isPolish: boolean): Promise<void> => {
+		const dDeadline = Number.isFinite(clock.deadline) ? clock.at + CLIMB_STAGE_D_SHARE * (clock.deadline - clock.at) : Infinity;
 		let X = startBuilds[s];
 		const value = new Map<string, number>();   // in-context option values (ℓ deltas)
 		const valueN = new Map<string, number>();  // …and the seed count each was measured at
@@ -1038,7 +1030,7 @@ async function runSingleScenario(
 			// below still runs on measured values plus the model's in-context
 			// values (§I.5).
 			dbg('D s', s, 'it', it, 'X', X.id || '(base)', 'cands', cands.length);
-			const bres = await banditVsIncumbent(ev, {
+			const bres = await banditVsIncumbent(sev, {
 				ns: NS_SEARCH, scenarioIdx: si, incumbent: X,
 				candidates: cands.sort((a, b) => (a.id < b.id ? -1 : 1)), pick: searchPick, cfg,
 				prior: diffPrior(surrogate, X), // the raw fit, not the r2-gated one (see diffPrior)
@@ -1083,14 +1075,14 @@ async function runSingleScenario(
 			// Standard δ_min of 0.03 L, so a dead candidate usually takes one
 			// more rung before the zone drops it.
 			let d: PairedDiff | null = null;
-			let held = Math.min(cfg.batchCap, Math.max(150, filled(ev, NS_SEARCH, si, X)));
+			let held = Math.min(cfg.batchCap, Math.max(150, filled(sev, NS_SEARCH, si, X)));
 			for (;;) {
 				const pos = Array.from({ length: held }, (_, i) => i);
-				await ev.ensure([
+				await sev.ensure([
 					{ ns: NS_SEARCH, scenarioIdx: si, build: X, positions: pos },
 					{ ns: NS_SEARCH, scenarioIdx: si, build: Y, positions: pos },
 				]);
-				d = ev.paired(NS_SEARCH, si, Y, X, searchPick);
+				d = sev.paired(NS_SEARCH, si, Y, X, searchPick);
 				if (!d || held >= cfg.batchCap || ctrl.stopped()) break;
 				if (seqLo(d) > 0 || seqHi(d) < 0) break; // significant either way, §8D (sequential bound)
 				if (d.ci95[1] < cfg.deltaMinL) break; // Y cannot show an improvement worth having
@@ -1101,7 +1093,7 @@ async function runSingleScenario(
 			// §E never-add: a build whose own telemetry already shows one of
 			// its skills recorded zero is not adopted, significant or not (a
 			// dead skill only ever "wins" on noise).
-			if (d && seqLo(d) > 0 && !deadSkills(ev, si, Y).length) {
+			if (d && seqLo(d) > 0 && !deadSkills(sev, si, Y).length) {
 				X = Y;
 				assertFeasible(space, X.selection); // §3.B.1: an over-budget build can never be X
 				traceAdopt(X, 'resolve');
@@ -1114,7 +1106,7 @@ async function runSingleScenario(
 				// candidates are measured for their knapsack numbers, never
 				// adopted (they walked X out of budget and lost the restart).
 				const sure = outcomes.filter(out => out.survived && out.diff.n >= 2 && out.diff.ci95[0] > 0
-					&& affordable(space, out.build.selection) && !deadSkills(ev, si, out.build).length)
+					&& affordable(space, out.build.selection) && !deadSkills(sev, si, out.build).length)
 					.sort((a, b) => b.diff.mean - a.diff.mean);
 				if (sure.length) {
 					X = sure[0].build;
@@ -1167,7 +1159,7 @@ async function runSingleScenario(
 		// peak is finally screened against N2 (2-for-2 swaps among the 8
 		// lowest-value owned × the 8 best free options, §C's final-
 		// recommendation check) before Stage G.
-		const climbRaces0 = ev.racesRun();
+		const climbRaces0 = sev.racesRun();
 		// The preset climbRaces, raised per climb so it buys at least TWO full
 		// first-rung screens of the N1 the climb starts from (one adopting
 		// round + one certifying round). At Standard, 80k races is only ~1,600
@@ -1175,15 +1167,20 @@ async function runSingleScenario(
 		// every round was cut mid-screen and the peak could never certify. The
 		// preset time budget still bounds the run.
 		let climbBudget = cfg.climbRaces;
-		const climbOut = (): boolean => ctrl.stopped() || overTime() || Date.now() > restartDeadline
-			|| ev.racesRun() - climbRaces0 >= climbBudget;
+		const restartRaces0 = sev.racesRun();
+		const climbOut = (): boolean => ctrl.stopped() || overTime() || Date.now() > clock.deadline
+			|| sev.racesRun() - climbRaces0 >= climbBudget;
+
 		/** Races this restart's climb may still run: its race budget, and the
-		 *  time left in its slice at the run's race rate so far. */
+		 *  time left in its slice at this restart's own rate. A fresh restart has
+		 *  no rate yet, so the race budget alone decides until one is measured. */
 		const climbRoom = (): number => {
-			const byRaces = climbBudget - (ev.racesRun() - climbRaces0);
-			if (!Number.isFinite(restartDeadline)) return byRaces;
-			const rate = ev.racesRun() / Math.max(1, Date.now() - t0);
-			return Math.min(byRaces, Math.max(0, restartDeadline - Date.now()) * rate);
+			const byRaces = climbBudget - (sev.racesRun() - climbRaces0);
+			if (!Number.isFinite(clock.deadline)) return byRaces;
+			const measured = sev.racesRun() - restartRaces0;
+			if (measured <= 0) return byRaces;
+			const rate = measured / Math.max(1, Date.now() - clock.at);
+			return Math.min(byRaces, Math.max(0, clock.deadline - Date.now()) * rate);
 		};
 		// Ladder ceiling (§D.4 sizing): past ~4× the measured-σΔ δ-resolve
 		// count ((2·1.96·σΔ/δ_min)²) growth cannot flip a δ-zone verdict, so a
@@ -1205,14 +1202,14 @@ async function runSingleScenario(
 			// held common prefix until the paired CI excludes 0 either way, the
 			// gain falls under δ_min, or the batch cap holds.
 			let d: PairedDiff | null = null;
-			let held = Math.min(cfg.batchCap, Math.max(150, filled(ev, NS_SEARCH, si, better), filled(ev, NS_SEARCH, si, against)));
+			let held = Math.min(cfg.batchCap, Math.max(150, filled(sev, NS_SEARCH, si, better), filled(sev, NS_SEARCH, si, against)));
 			for (;;) {
 				const pos = Array.from({ length: held }, (_, i) => i);
-				await ev.ensure([
+				await sev.ensure([
 					{ ns: NS_SEARCH, scenarioIdx: si, build: better, positions: pos },
 					{ ns: NS_SEARCH, scenarioIdx: si, build: against, positions: pos },
 				]);
-				d = ev.paired(NS_SEARCH, si, better, against, searchPick);
+				d = sev.paired(NS_SEARCH, si, better, against, searchPick);
 				if (!d || held >= cfg.batchCap || ctrl.stopped()) break;
 				if (seqLo(d) > 0 || seqHi(d) < 0) break; // significant either way, §8D (sequential bound)
 				if (d.ci95[1] < cfg.deltaMinL) break; // cannot show an improvement worth having
@@ -1279,14 +1276,14 @@ async function runSingleScenario(
 				// Per-wave rung ceiling: the ladder may never outgrow the restart's
 				// remaining climb budget — the bandit cannot check races mid-ladder,
 				// so the budget is converted into a per-candidate seed cap here.
-				const remain = climbBudget - (ev.racesRun() - climbRaces0);
+				const remain = climbBudget - (sev.racesRun() - climbRaces0);
 				const rungCeil = Number.isFinite(remain)
 					? Math.min(climbRungCeil, Math.max(BANDIT_CHUNK_SIZE * 5, Math.floor(remain / (wave.length + 1))))
 					: climbRungCeil;
 				const { dropOf, addedOf } = moveMaps(wave);
 				climbStats.waves++;
 				emit('local', `${tag} · ${Math.min(w0 + CLIMB_WAVE, moves.length)}/${moves.length} moves screened`, provisional(inc));
-				const bres = await banditVsIncumbent(ev, {
+				const bres = await banditVsIncumbent(sev, {
 					ns: NS_SEARCH, scenarioIdx: si, incumbent: inc,
 					candidates: wave.map(m => m.b), pick: searchPick, cfg,
 					rungMin: BANDIT_CHUNK_SIZE, rungCeil,
@@ -1360,7 +1357,7 @@ async function runSingleScenario(
 			let moves = movesIn;
 			if (level > 0) {
 				const keyOf = (m: FMove): number => {
-					const d = ev.paired(NS_SEARCH, si, m.b, inc, searchPick);
+					const d = sev.paired(NS_SEARCH, si, m.b, inc, searchPick);
 					return d && d.n >= 2 && Number.isFinite(d.sem) ? d.mean + SEQ_ADOPT_Z * d.sem : -Infinity;
 				};
 				const keyed = movesIn.map((m, i) => ({ m, i, k: keyOf(m) }));
@@ -1373,7 +1370,7 @@ async function runSingleScenario(
 				const wave = moves.slice(w0, w0 + waveLen);
 				const { dropOf, addedOf } = moveMaps(wave);
 				emit('local', `${tag} · ${Math.min(w0 + waveLen, moves.length)}/${moves.length} moves screened`, provisional(inc));
-				const r = await raceWave(ev, {
+				const r = await raceWave(sev, {
 					ns: NS_SEARCH, scenarioIdx: si, incumbent: inc,
 					candidates: wave.map(m => m.b), pick: searchPick, cfg,
 					targetOf: targetOf(wave.length, level),
@@ -1428,7 +1425,7 @@ async function runSingleScenario(
 				Xc = sellDead(Xc);
 				const t = tele(Xc);
 				if (t && t.seeds < DEAD_SKILL_MIN_SEEDS && Xc.selection.some(id => !t.counts[id]) && !climbOut()) {
-					await ev.ensure([{ ns: NS_SEARCH, scenarioIdx: si, build: Xc, positions: Array.from({ length: DEAD_SKILL_MIN_SEEDS }, (_, i) => i) }]);
+					await sev.ensure([{ ns: NS_SEARCH, scenarioIdx: si, build: Xc, positions: Array.from({ length: DEAD_SKILL_MIN_SEEDS }, (_, i) => i) }]);
 					Xc = sellDead(Xc);
 				}
 				pinSearch(Xc); // §K: the climb's incumbent is pinned for this round's ladders
@@ -1437,7 +1434,7 @@ async function runSingleScenario(
 				if (!moves.length) return { X: Xc, p1: true, p2: true }; // degenerate space: X is the only build
 				if (firstRound && Number.isFinite(climbBudget)) {
 					const screen = (moves.length + 1) * BANDIT_CHUNK_SIZE * 5; // bandit start rung, every candidate + X
-					climbBudget = Math.max(climbBudget, ev.racesRun() - climbRaces0 + 2 * screen);
+					climbBudget = Math.max(climbBudget, sev.racesRun() - climbRaces0 + 2 * screen);
 				}
 				firstRound = false;
 				const r: { best: BanditOutcome | null; unresolved: number; cut?: boolean; g?: number } = race
@@ -1522,9 +1519,45 @@ async function runSingleScenario(
 		traceRestartEnd(X);
 		peakCerts.set(X.id, { p1: peak.p1, p2: peak.p2 });
 		pinSearch(X); // §K: the end just reached is pinned from here on
-		restartRaceMarks.push(ev.racesRun()); // §K plan: this restart's measured cost is now the estimate for the rest
-		restartMs.push(Date.now() - (restartAt ?? Date.now())); // §K time left: and its duration
-		restartAt = null;
+		restartRaceMarks.push(sev.racesRun()); // §K plan: this restart's measured cost is now the estimate for the rest
+	};
+	for (let s = 0; s < startBuilds.length; s++) {
+		if (ctrl.stopped()) break;
+		if (Date.now() - t0 > cfg.timeBudgetMs) { dbg('time budget hit at restart', s); break; }
+		const isPolish = s === polishIdx;
+		// A budget for each restart (race climb): the time left, shared by the
+		// restarts still to run, so the first climb cannot spend the whole run.
+		// Whatever a restart leaves unused carries over to the next one.
+		const at = Date.now();
+		const deadline = !(race && Number.isFinite(cfg.timeBudgetMs)) ? Infinity
+			: isPolish ? searchEnd
+				: at + Math.max(0, restartsEnd - at) / Math.max(1, startBuilds.length - s);
+		restartAt = at; // §K time left: the start in progress
+		// G1: the next restart runs on the branch pool while the foreground
+		// carries the restarts after it. The device works for the whole window
+		// instead of one slice, since a device race is slower than a CPU race.
+		// Off for a race budget: concurrent cache sharing would change which
+		// races each restart is charged for and break fixed-budget determinism.
+		const pair = !!cfg.concurrentRestarts && !isPolish && Number.isFinite(cfg.timeBudgetMs)
+			&& s + 1 < startBuilds.length && s + 1 !== polishIdx && typeof ev.ensureBackground === 'function';
+		if (pair) {
+			const branch: SearchEvaluator = {
+				...ev,
+				ensure: ev.ensureBackground!.bind(ev),
+				racesRun: () => ev.racesRun('background'),
+			};
+			const at2 = Date.now();
+			pendingBranch = runRestart(s + 1, branch, { at: at2, deadline: restartsEnd }, false);
+			await runRestart(s, ev, { at, deadline }, false);
+			restartMs.push(Date.now() - at);
+			restartMs.push(Date.now() - at2);
+			restartAt = null;
+			s++;
+		} else {
+			await runRestart(s, ev, { at, deadline }, isPolish);
+			restartMs.push(Date.now() - at); // §K time left: and its duration
+			restartAt = null;
+		}
 		// Until stopped: the pass is over, so queue its peaks for another pass.
 		// A pass that ran no new races found nothing left to try (every move is
 		// cached), so the search ends there and Stage G takes over.
@@ -1551,6 +1584,7 @@ async function runSingleScenario(
 			}
 		}
 	}
+	if (pendingBranch) await pendingBranch; // the branch restart's end must be in restartEnds before Stage G
 	if (ctrl.stopped()) return verify(await shortlistBy(ev, si, evaluated, restartEnds, objective, vs, stopK, space, fillSkip, cfg.shortlistSize != null), Math.min(1000, cfg.gSeedsCap), Math.min(1000, cfg.gSeedsCap), true);
 
 	// ── Stage G: verification on fresh seeds (the only numbers reported) ──────

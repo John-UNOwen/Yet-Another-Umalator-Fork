@@ -22,7 +22,7 @@ gpu = ["dep:globalsim-gpu"]
 # node.lib import library is needed at link time.
 napi = "3"
 napi-derive = "3"
-globalsim-wasm = { path = "../globalsim-wasm" }
+globalsim-wasm = { path = "../globalsim-wasm", features = ["fast-alloc"] }
 # The gpu fallback record is built with the same JSON writer compact_record uses.
 serde_json = "1"
 # The multi-request lane parses its group payload straight into structs.

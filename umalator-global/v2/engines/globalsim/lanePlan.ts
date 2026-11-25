@@ -21,13 +21,30 @@ export interface LanePlan {
 }
 
 /** Native threads with the lane on: it shares the cores - 1 budget, so past
- *  that one native thread makes room for it. Mirrors pool.ts slotCap. */
+ *  that one native thread makes room for it. Mirrors pool.ts slotCap.
+ *
+ *  Career bench with the lane, 60 s, 3 runs per point, on the 8P+4E 20-thread
+ *  test CPU (races/s): 8 threads 1,054, 10 threads 1,162, 12 threads 1,202,
+ *  14 threads 1,196, 16 threads 1,205, 19 threads 1,228. The optimum is the top
+ *  of the budget, and 12 through 19 sit within 2 percent of each other, so the
+ *  rule below keeps every thread the user asked for and gives the lane one at
+ *  the top of the budget. */
 export function plannedNativeThreads(threads: number, cores: number, gpuOn: boolean): number {
 	if (!gpuOn) return Math.max(1, threads);
 	const budget = Math.max(1, Math.floor(cores) - 1);
 	const native = Math.min(threads, budget);
 	return native < budget ? native : Math.max(1, native - 1);
 }
+
+/** Native threads with the Optimizer's device branch on. The branch restart
+ *  and its session host run beside the CPU lanes, so two threads stay free.
+ *  P5 step 1 measured the combined rate at 17 foreground threads on the
+ *  20-thread test CPU: 1,541 races/s against 1,067 at 19 threads alone. */
+export function plannedBranchThreads(threads: number, cores: number): number {
+	const budget = Math.max(1, Math.floor(cores) - 1);
+	return Math.max(1, Math.min(threads, budget) - 2);
+}
+
 
 export function lanePlanOf(o: { gpu?: GpuVerdict | null; threads: number; cores?: number }): LanePlan {	const { gpu, threads } = o;
 	const cores = o.cores && o.cores > 0 ? Math.floor(o.cores) : undefined;
@@ -62,7 +79,7 @@ export function lanePlanOf(o: { gpu?: GpuVerdict | null; threads: number; cores?
 	return {
 		state: 'on',
 		headline: `GPU lane: on (${gpu.device ?? 'exact device'})`,
-		detail: `Native threads: ${native}${coreText}, plus the GPU lane when a job covers its launch floor.${cost}${parity}`,
+		detail: `Native threads: ${native}${coreText}, plus the GPU lane when a job covers its launch floor. An Optimizer run also runs one restart on the device branch, which reserves two native threads.${cost}${parity}`,
 	};
 }
 

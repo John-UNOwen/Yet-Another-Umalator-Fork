@@ -25,7 +25,7 @@ import {
 	createGlobalsimPool, PoolJob, WorkerLike, setGpuCostModel,
 	autoThreadCount, resolveThreadCount, serverAwareThreadCount, loadThreadsOption, saveThreadsOption,
 	THREADS_STORAGE_KEY, MAX_THREADS, AUTO_THREADS_MAX,
-	__testResetWorkerBudget, __testWorkerBudgetLive, __testResetGpuFit, __testSetGpuFit, __testGetGpuFit,
+	__testResetWorkerBudget, __testWorkerBudgetLive, __testResetGpuFit, __testSetGpuFit, __testGetGpuFit, __testFitGpuMinima,
 } from './pool';
 import { pickRotationBackend } from './sim-server';
 import type { Backend } from './sim-server';
@@ -559,8 +559,9 @@ test('adaptive sizing: a cold gpu lane sizes its first chunk from the priors, no
 });
 
 test('adaptive sizing: a fitted model sizes chunks to the launch target', async t => {
-	// The compare field fits about 1,800 ms of fixed pass plus 1.3 ms per race,
-	// so the 3,000 ms launch target asks for (3000 - 1800) / 1.3 ≈ 923 seeds.
+	// The compare field fits about 1,800 ms of fixed pass plus 1.3 ms per race.
+	// A 4,500 ms target asks for (4500 - 1800) / 1.3 ≈ 2,077 seeds, which
+	// the 2,048 cap takes, and one gathered job may overshoot it.
 	__testSetGpuFit({ floor: 1800, slope: 1.3 });
 	const gpuRuns: number[][] = [];
 	let instance = 0;
@@ -583,7 +584,7 @@ test('adaptive sizing: a fitted model sizes chunks to the launch target', async 
 	const res = await pool.runJobs(jobs);
 	t.deepEqual(res.errors, [], 'no errors');
 	t.ok(gpuRuns.length >= 2, 'the fitted lane keeps taking work');
-	t.ok(gpuRuns[0].length >= 800 && gpuRuns[0].length <= 1024, `the first chunk aims at the 3,000 ms target: got ${gpuRuns[0].length} seeds`);
+	t.ok(gpuRuns[0].length >= 1900 && gpuRuns[0].length <= 2100, `the first chunk aims at the 4,500 ms target: got ${gpuRuns[0].length} seeds`);
 	t.equal(delivered, 160, 'every job still delivers its own chunk');
 	pool.dispose();
 	__testResetGpuFit();
@@ -650,9 +651,38 @@ test('startup prior: without a startup model the same batch holds the lane back'
 	t.end();
 });
 
+test('cost fit: per-width minima ignore a contended sample', t => {
+	// True cost 500 ms + 2 ms per race. The third sample was contended (the
+	// host was busy) so ordinary least squares would lift the slope; the
+	// per-width minimum keeps the least contended time of each width.
+	const fit = __testFitGpuMinima([
+		{ seeds: 600, ms: 1700 },
+		{ seeds: 1200, ms: 2900 },
+		{ seeds: 1200, ms: 5000 },
+	]);
+	t.ok(fit, 'two widths define a model');
+	t.ok(Math.abs(fit!.floor - 500) < 1, `the floor stays at the idle cost: got ${fit!.floor}`);
+	t.ok(Math.abs(fit!.slope - 2) < 0.05, `the slope stays at the idle cost: got ${fit!.slope}`);
+	t.equal(__testFitGpuMinima([{ seeds: 600, ms: 1700 }, { seeds: 610, ms: 1900 }]), null, 'one width cannot fit a line');
+	t.end();
+});
+
+test('cost fit: one update cannot move the fit by more than 30 percent', t => {
+	const prev = { floor: 1000, slope: 3 };
+	const wild = __testFitGpuMinima([
+		{ seeds: 400, ms: 4000 },
+		{ seeds: 1200, ms: 10000 },
+	], prev);
+	t.ok(wild, 'a fit exists');
+	t.ok(wild!.floor <= prev.floor * 1.3 + 1e-9, `the floor moves at most 30 percent: got ${wild!.floor}`);
+	t.ok(wild!.slope <= prev.slope * 1.3 + 1e-9, `the slope moves at most 30 percent: got ${wild!.slope}`);
+	t.end();
+});
+
 test('adaptive sizing: gpuLaunchTargetMs moves the chunk width', async t => {
 	// A lighter field (500 ms floor, 2 ms per race) so the launch target decides
-	// the width: 2,000 ms gives (2000 - 500) / 2 = 750 seeds.
+	// the width: 2,000 ms over the 1.1 safety margin gives
+	// (2000 - 500) / 2 = 750 seeds.
 	__testSetGpuFit({ floor: 500, slope: 2 });
 	const gpuRuns: number[][] = [];
 	let instance = 0;
@@ -675,7 +705,7 @@ test('adaptive sizing: gpuLaunchTargetMs moves the chunk width', async t => {
 	const res = await pool.runJobs(jobs);
 	t.deepEqual(res.errors, [], 'no errors');
 	t.ok(gpuRuns.length >= 2, 'the fitted lane keeps taking work');
-	t.ok(gpuRuns[0].length >= 700 && gpuRuns[0].length <= 800, `the smaller target sizes a smaller chunk: got ${gpuRuns[0].length} seeds`);
+	t.ok(gpuRuns[0].length >= 700 && gpuRuns[0].length <= 780, `the smaller target sizes a smaller chunk: got ${gpuRuns[0].length} seeds`);
 	t.equal(delivered, 200, 'every job delivered');
 	pool.dispose();
 	__testResetGpuFit();
@@ -752,7 +782,7 @@ test('shared fit: a pool whose device a sibling already fitted skips the cold pr
 	poolB.dispose();
 	t.deepEqual(rb.errors, [], 'pool B drained');
 	t.ok(b.length >= 1, 'pool B used its gpu lane');
-	t.ok(b[0].length > 100 && b[0].length <= 1024, `pool B's gpu lane starts fitted: first chunk ${b[0].length} seeds`);
+	t.ok(b[0].length >= 1800 && b[0].length <= 2100, `pool B's gpu lane starts fitted: first chunk ${b[0].length} seeds`);
 	__testResetGpuFit();
 	t.end();
 });
@@ -1483,7 +1513,89 @@ test('gpu group lane: a refused part flags its own seeds and the rerun lane repl
 	t.ok(warns.some(w => /job refused/.test(w)), `the rerun lane reports the refused job: ${warns.join(' | ')}`);
 	t.end();
 });
+// ── gated work stays off the device lane ─────────────────────────────────────
 
+function gatedJob(id: string, setupKey: string, seeds: number[]): PoolJob {
+	return { ...job(id, setupKey, seeds), gates: seeds.map(() => 0) };
+}
 
+test('gpu lane: a gated-only batch boots no session and the CPU lanes take it all', async t => {
+	// The device lane has no gated compact entry: a gated chunk sent there came
+	// back as per-seed errors, which the optimizer folded as 'err' slots and the
+	// search read as measured data. A batch that only carries gated work must
+	// not open the session at all.
+	__testResetGpuFit();
+	let gpuSessions = 0;
+	const gpuRuns: any[] = [];
+	let cpu = 0;
+	const cpuFactory = () => {
+		const w = new FakeWorker(++cpu);
+		w.backend = 'native';
+		w.respond = (m, ww) => {
+			if (m.type === 'prepare') ww.fire(preparedOk(m));
+			else if (m.type === 'run') ww.fire({ ...chunkOk(m), runMs: m.seeds.length / 0.15 });
+		};
+		return w;
+	};
+	const gpuFactory = () => {
+		const w = new FakeWorker(100 + ++gpuSessions);
+		w.backend = 'gpu';
+		w.respond = (m, ww) => {
+			if (m.type === 'prepare') ww.fire(preparedOk(m));
+			else if (m.type === 'run') { gpuRuns.push(m); ww.fire({ ...chunkOk(m), runMs: 1800 + 1.3 * m.seeds.length }); }
+		};
+		return w;
+	};
+	const gated = Array.from({ length: 120 }, (_, i) => gatedJob(`d${i}`, 'X', seedChunk(i * 25 + 1)));
+	let delivered = 0;
+	const pool = createGlobalsimPool({ factory: cpuFactory, gpuFactory, threads: 2, onChunk: () => { delivered++; } });
+	const res = await pool.runJobs(gated);
+	t.deepEqual(res.errors, [], 'no errors');
+	t.equal(gpuSessions, 0, 'a gated-only batch boots no gpu session');
+	t.equal(gpuRuns.length, 0, 'and the device lane takes no chunk');
+	t.equal(delivered, 120, 'every gated job still delivers');
+	pool.dispose();
+	t.end();
+});
 
-
+test('gpu lane: a mixed batch gives the lane only ungated work', async t => {
+	// The optimizer's foreground gate batch and a gate-split background chunk
+	// can share one batch. The lane may take the ungated jobs, and every gated
+	// seed must run on a CPU worker.
+	__testResetGpuFit();
+	let gpuSessions = 0;
+	const gpuRuns: any[] = [];
+	const cpuRuns: any[] = [];
+	let cpu = 0;
+	const cpuFactory = () => {
+		const w = new FakeWorker(++cpu);
+		w.backend = 'native';
+		w.respond = (m, ww) => {
+			if (m.type === 'prepare') ww.fire(preparedOk(m));
+			else if (m.type === 'run') { cpuRuns.push(m); ww.fire({ ...chunkOk(m), runMs: m.seeds.length / 0.15 }); }
+		};
+		return w;
+	};
+	const gpuFactory = () => {
+		const w = new FakeWorker(100 + ++gpuSessions);
+		w.backend = 'gpu';
+		w.respond = (m, ww) => {
+			if (m.type === 'prepare') ww.fire(preparedOk(m));
+			else if (m.type === 'run') { gpuRuns.push(m); ww.fire({ ...chunkOk(m), runMs: 1800 + 1.3 * m.seeds.length }); }
+		};
+		return w;
+	};
+	const gated = Array.from({ length: 60 }, (_, i) => gatedJob(`d${i}`, 'G', seedChunk(i * 25 + 1)));
+	const plain = Array.from({ length: 60 }, (_, i) => job(`p${i}`, 'P', seedChunk(i * 25 + 1)));
+	let delivered = 0;
+	const pool = createGlobalsimPool({ factory: cpuFactory, gpuFactory, threads: 2, onChunk: () => { delivered++; } });
+	const res = await pool.runJobs([...gated, ...plain]);
+	t.deepEqual(res.errors, [], 'no errors');
+	t.equal(delivered, 120, 'every job delivers once');
+	t.ok(gpuRuns.length > 0, 'the lane took the ungated work');
+	t.ok(gpuRuns.every(m => !m.gates), 'no gated chunk ever reaches the device lane');
+	const cpuGated = cpuRuns.filter(m => m.gates).reduce((n, m) => n + m.seeds.length, 0);
+	t.equal(cpuGated, 60 * 25, 'all gated seeds ran on CPU workers');
+	pool.dispose();
+	t.end();
+});

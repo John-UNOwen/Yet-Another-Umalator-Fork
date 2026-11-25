@@ -426,6 +426,10 @@ class WarmLane implements SimLaneWorker {
 	/** A lane a pool may take: warmed and still healthy. */
 	isUsable(): boolean { return this.warm && !this.poisoned && !this.closed; }
 
+	/** A lane whose engine is still loading. A pool may adopt it: its queued
+	 *  jobs run once the warm reply lands, so the open overlaps that batch. */
+	isOpening(): boolean { return !this.warm && !this.poisoned && !this.closed && this.prewarmCb !== null; }
+
 	/** Drop a lane whose warm-up failed, so no pool ever takes it. */
 	discard(): void { this.cancelIdleClose(); this.close(); }
 
@@ -662,7 +666,7 @@ function takeWarmLane(key: string): WarmLane | undefined {
 		const lane = free?.shift();
 		if (!lane) return undefined;
 		if (free!.length === 0) warmLanes.delete(key);
-		if (lane.isUsable()) return lane.take();
+		if (lane.isUsable() || lane.isOpening()) return lane.take();
 		lane.discard();
 	}
 }
@@ -685,11 +689,17 @@ export function prewarmGpuLane(url: string, token = '', onOpen?: (openMs: number
 	});
 }
 
+/** A factory a pool may ask to open its lane early. The session then loads while
+ *  the batch drains, so the start gate must not charge that open as a serial cost. */
+export type GpuLaneFactory = (() => SimLaneWorker) & { prewarm?: () => void };
+
 /** The extra lane's worker factory: one pinned gpu session per call, taken from
  *  the warm cache when one is idle. Build it only when /ping reports a
  *  batch-capable gpu, so a pool never opens a session the server would refuse. */
-export function simGpuFactory(url: string, token: string): () => SimLaneWorker {
+export function simGpuFactory(url: string, token: string): GpuLaneFactory {
 	const key = laneKey(url, token);
-	return () => takeWarmLane(key) ?? new WarmLane(key, new SimWorker(url, token, 'gpu')).take();
+	const factory: GpuLaneFactory = () => takeWarmLane(key) ?? new WarmLane(key, new SimWorker(url, token, 'gpu')).take();
+	factory.prewarm = () => prewarmGpuLane(url, token);
+	return factory;
 }
 
