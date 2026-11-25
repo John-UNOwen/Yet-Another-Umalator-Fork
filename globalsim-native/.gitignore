@@ -1,0 +1,3 @@
+# cargo build output and the built addon live here; regenerate with the README command.
+target/
+globalsim_native.node

@@ -53,6 +53,21 @@ export interface PairedDiff {
 
 export interface EvaluatorOptions {
 	workerFactory: WorkerFactory;
+	/** CPU-lane factory for the pool's gpu fallback reruns. Required only when workerFactory can hand out gpu workers. */
+	cpuFactory?: WorkerFactory;
+	/** The extra gpu lane's factory, passed only when the server reports a
+	 *  usable GPU. Absent keeps the evaluator's pool all-CPU. */
+	gpuFactory?: WorkerFactory;
+	/**
+	 * A factory that yields gpu sessions for the background branch's own pool.
+	 * When set, `ensureBackground` runs a whole batch from another search
+	 * branch on the device while the foreground pool keeps the CPU lanes on
+	 * the current batch, so a 2 to 5 s launch costs no barrier. The foreground
+	 * pool then takes no lane: the device belongs to the branch pool.
+	 */
+	gpuBranchFactory?: WorkerFactory;
+	/** Workers in the background gpu pool (default 1: one device pass). */
+	gpuBranchThreads?: number;
 	threads?: number;
 	space: BuildSpace;
 	baseHorse: HorseState;
@@ -91,8 +106,14 @@ export interface SearchEvaluator {
 	/** First n seeds of one namespace/scenario list (deterministic; lists are
 	 *  fixed-size per scenario, so prefixes are stable forever). */
 	seeds(ns: string, scenarioIdx: number, n: number): number[];
-	/** Run all missing slots across the requests in ONE pool batch. */
+	/** Run all missing slots across the requests in ONE pool batch. Concurrent
+	 *  calls queue in order: the pool runs one batch at a time, so a restart's
+	 *  batch never rejects another's. */
 	ensure(reqs: EnsureReq[]): Promise<{ jobErrors: Array<{ jobId: string; error: string }> }>;
+	/** `ensure` on the background gpu pool, concurrent with a foreground batch.
+	 *  A slot's value is a pure function of build and seed position, so where it
+	 *  was measured never changes the result. */
+	ensureBackground?(reqs: EnsureReq[]): Promise<{ jobErrors: Array<{ jobId: string; error: string }> }>;
 	/** Cached seed slots for a build/scenario ([] when unknown). */
 	slots(ns: string, scenarioIdx: number, identity: string): SeedSlot[];
 	/** Races dispatched so far (progress). */
@@ -255,6 +276,7 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	const lists = new Map<string, number[]>();       // `${ns}|${si}` → seed list
 	const indexes = new Map<string, Map<number, number>>();
 	let pool: GlobalsimPool | null = null;
+	let branchPool: GlobalsimPool | null = null;
 	let races = 0;
 	// Job-level failures (worker crash, dead handle, failed prepare/geometry
 	// fetch, lost preparation) are not proven deterministic, so a failed
@@ -263,8 +285,13 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	const failCount = new Map<string, number>(); // `${cacheKey}#${pos}` → failed jobs
 	const errorLog = new Map<string, number>();   // message → occurrences
 	// The pool takes onChunk at CREATION; each ensure() swaps in its mapping
-	// through this hop (one batch runs at a time — runJobs enforces it).
+	// through this hop (one batch runs at a time per pool). The background
+	// branch has its own hop and pool, so it never waits on the CPU batch.
 	let currentChunk: ((job: PoolJob, records: unknown[]) => void) | null = null;
+	let currentBranchChunk: ((job: PoolJob, records: unknown[]) => void) | null = null;
+	// Concurrent ensure() calls queue per pool instead of rejecting.
+	let fgChain: Promise<unknown> = Promise.resolve();
+	let bgChain: Promise<unknown> = Promise.resolve();
 
 	const listKey = (ns: string, si: number) => `${ns}|${si}`;
 	const sid = (si: number) => String(si);
@@ -335,13 +362,37 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 		if (!pool) {
 			pool = createGlobalsimPool({
 				factory: o.workerFactory,
+				cpuFactory: o.cpuFactory,
+				// The branch pool owns the device when one is configured: an extra
+				// lane here would compete with it for the same session.
+				gpuFactory: o.gpuBranchFactory ? undefined : o.gpuFactory,
 				threads: o.threads ?? resolveThreadCount(),
 				skillData: o.skillData,
+				// The optimizer runs an evaluation per batch, so the pool opens
+				// the extra lane on the first batch whose drain can pay for it.
+				gpuLane: 'eager',
 				onChunk: (job, records) => currentChunk?.(job, records as unknown[]),
 				onJobError: () => { /* recorded in runJobs' errors; nothing else to do */ },
 			});
 		}
 		return pool;
+	}
+
+	function ensureBranchPool(): GlobalsimPool {
+		if (!branchPool) {
+			const factory = o.gpuBranchFactory;
+			if (!factory) throw new Error('optimizer: this evaluator has no background gpu branch');
+			branchPool = createGlobalsimPool({
+				factory,
+				cpuFactory: o.cpuFactory,   // kernel refusals rerun on the CPU lanes
+				threads: o.gpuBranchThreads ?? 1,
+				skillData: o.skillData,
+				gpuLane: 'off',
+				onChunk: (job, records) => currentBranchChunk?.(job, records as unknown[]),
+				onJobError: () => { /* recorded in runJobs' errors */ },
+			});
+		}
+		return branchPool;
 	}
 
 	function statsFor(ns: string, si: number, build: BuildRefLite): BuildStats | null {
@@ -353,6 +404,118 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 	function pairedFor(ns: string, si: number, a: BuildRefLite, b: BuildRefLite, pick: (v: SeedValue) => number | null): PairedDiff | null {
 		// shared implementation (synthetic evaluators reuse pairedOf verbatim)
 		return pairedOf(cache.peek(cns(ns), sid(si), a.id)?.values ?? [], cache.peek(cns(ns), sid(si), b.id)?.values ?? [], pick);
+	}
+
+	/** Queue one batch behind the route's previous one. A failed batch keeps the
+	 *  chain alive: the next call still runs. */
+	function serialized<T>(route: 'foreground' | 'background', run: () => Promise<T>): Promise<T> {
+		const tail = route === 'background' ? bgChain : fgChain;
+		const next = tail.then(run, run);
+		const settled = next.then(() => undefined, () => undefined);
+		if (route === 'background') bgChain = settled; else fgChain = settled;
+		return next;
+	}
+
+	/** The one batch body: build the missing jobs, run them on the route's pool,
+	 *  fold records into the shared cache and retry the holes. */
+	async function runEnsure(reqs: EnsureReq[], route: 'foreground' | 'background'): Promise<{ jobErrors: Array<{ jobId: string; error: string }> }> {
+		const jobs: PoolJob[] = [];
+		const jobReq = new Map<string, { req: EnsureReq; seeds: number[] }>();
+		for (const req of reqs) {
+			const list = getList(req.ns, req.scenarioIdx);
+			let maxPos = -1;
+			for (const p of req.positions) if (p > maxPos) maxPos = p;
+			if (maxPos >= list.length) throw new Error(`optimizer: position ${maxPos} beyond ${req.ns} list`);
+			const entry = cache.ensure(cns(req.ns), sid(req.scenarioIdx), req.build.id, maxPos + 1);
+			const missing = req.positions.filter(p => entry.values[p] === null);
+			if (!missing.length) continue;
+			let horse = horses.get(req.build.id);
+			if (!horse) { horse = applySelection(req.build.selection); horses.set(req.build.id, horse); }
+			const seeds = missing.map(p => list[p]);
+			// Job ids must be unique per (ns, scenario, identity, gate, chunk):
+			// variantKey carries ns + scenario; the builder appends gate/chunk.
+			const variantKey = `${req.ns}${req.scenarioIdx}|${req.build.id}`;
+			// The evaluator's stream mode pins the request flag on every race
+			// (its setupKey also carries the mode tag, so a mode never reuses another).
+			// A foreground batch prepares one gate-0 field per build and runs
+			// every seed at its own gate. The background branch stays gate-split,
+			// since the device lane merges request texts rather than seed gates.
+			const built = buildGlobalsimChartJobs({ ...o.scenarios[req.scenarioIdx].conds, paired, gateBatch: route === 'foreground' }, variantKey, horse, seeds);
+			if (built.errors.length) throw new Error(`optimizer job build failed: ${built.errors.join('; ')}`);
+			for (const job of built.jobs) {
+				jobs.push(job);
+				jobReq.set(job.id, { req, seeds: job.seeds });
+			}
+		}
+		if (!jobs.length) return { jobErrors: [] };
+		// Feed the pool grouped by setupKey so workers reuse preparations.
+		jobs.sort((a, b) => (a.setupKey < b.setupKey ? -1 : a.setupKey > b.setupKey ? 1 : 0));
+		const p = route === 'background' ? ensureBranchPool() : ensurePool();
+		const chunk = (job: PoolJob, records: unknown[]) => {
+			const m = jobReq.get(job.id);
+			if (!m) return;
+			const { req } = m;
+			const entry = cache.ensure(cns(req.ns), sid(req.scenarioIdx), req.build.id, 0);
+			const idx = indexes.get(listKey(req.ns, req.scenarioIdx))!;
+			const distance = o.scenarios[req.scenarioIdx].conds.distance;
+			for (const raw of records) {
+				const rec = raw as SeedCompactRecord;
+				const pos = idx.get(rec.seed);
+				if (pos === undefined) continue;
+				const wasMissing = entry.values[pos] === null;
+				const v = seedValueOf(rec, distance);
+				if (wasMissing) races++;
+				cache.set(cns(req.ns), sid(req.scenarioIdx), req.build.id, pos, v);
+				// §E: fold the seed's per-skill activation counts once, on
+				// first fill of the slot, never on a re-delivered chunk and
+				// never for an errored seed.
+				if (wasMissing && v !== 'err' && rec.skillActivations) {
+					cache.foldActivations(cns(req.ns), sid(req.scenarioIdx), req.build.id, rec.skillActivations);
+				}
+			}
+		};
+		if (route === 'background') currentBranchChunk = chunk; else currentChunk = chunk;
+		let res: { errors: Array<{ jobId: string; error: string }> };
+		try {
+			res = await p.runJobs(jobs);
+		} finally {
+			if (route === 'background') currentBranchChunk = null; else currentChunk = null;
+		}
+		// A failed job's holes stay null (retried next pass) until the same
+		// seed has failed JOB_FAIL_ATTEMPTS times, only then is it 'err'
+		// (never refetched, never counted). Per-seed engine errors inside a
+		// successful chunk are already 'err' via seedValueOf.
+		for (const { jobId, error } of res.errors) {
+			errorLog.set(error, (errorLog.get(error) ?? 0) + 1);
+			const m = jobReq.get(jobId);
+			if (!m) continue;
+			const idx = indexes.get(listKey(m.req.ns, m.req.scenarioIdx))!;
+			const ck = cache.keyFor(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id);
+			for (const s of m.seeds) {
+				const pos = idx.get(s);
+				if (pos === undefined) continue;
+				if (cache.peek(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id)?.values[pos] !== null) continue;
+				const fk = `${ck}#${pos}`;
+				const n = (failCount.get(fk) ?? 0) + 1;
+				if (n >= JOB_FAIL_ATTEMPTS) {
+					failCount.delete(fk);
+					cache.set(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id, pos, 'err');
+				} else {
+					failCount.set(fk, n);
+				}
+			}
+		}
+		// Keep the table bounded; the search pins what it must not evict
+		// (incumbent, restart ends, shortlist — §K). Nor may this pass
+		// evict what this batch was asked for: its caller reads those slots
+		// next (a bandit rung pairs every candidate). An entry gone
+		// before that read looks unmeasured, so a candidate died of cache
+		// pressure and the run's answer depended on the cache cap. The cap
+		// can be passed for one batch, as pins already allow.
+		const keep = new Set(pinKeys);
+		for (const req of reqs) keep.add(cache.keyFor(cns(req.ns), sid(req.scenarioIdx), req.build.id));
+		cache.evict(keep);
+		return { jobErrors: res.errors };
 	}
 
 	return {
@@ -367,99 +530,11 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 			return idx;
 		},
 		async ensure(reqs) {
-			const jobs: PoolJob[] = [];
-			const jobReq = new Map<string, { req: EnsureReq; seeds: number[] }>();
-			for (const req of reqs) {
-				const list = getList(req.ns, req.scenarioIdx);
-				let maxPos = -1;
-				for (const p of req.positions) if (p > maxPos) maxPos = p;
-				if (maxPos >= list.length) throw new Error(`optimizer: position ${maxPos} beyond ${req.ns} list`);
-				const entry = cache.ensure(cns(req.ns), sid(req.scenarioIdx), req.build.id, maxPos + 1);
-				const missing = req.positions.filter(p => entry.values[p] === null);
-				if (!missing.length) continue;
-				let horse = horses.get(req.build.id);
-				if (!horse) { horse = applySelection(req.build.selection); horses.set(req.build.id, horse); }
-				const seeds = missing.map(p => list[p]);
-				// Job ids must be unique per (ns, scenario, identity, gate, chunk):
-				// variantKey carries ns + scenario; the builder appends gate/chunk.
-				const variantKey = `${req.ns}${req.scenarioIdx}|${req.build.id}`;
-				// The evaluator's stream mode pins the request flag on every race
-				// (its setupKey also carries the mode tag — no cross-mode reuse).
-				const built = buildGlobalsimChartJobs({ ...o.scenarios[req.scenarioIdx].conds, paired }, variantKey, horse, seeds);
-				if (built.errors.length) throw new Error(`optimizer job build failed: ${built.errors.join('; ')}`);
-				for (const job of built.jobs) {
-					jobs.push(job);
-					jobReq.set(job.id, { req, seeds: job.seeds });
-				}
-			}
-			if (!jobs.length) return { jobErrors: [] };
-			// Feed the pool grouped by setupKey so workers reuse preparations.
-			jobs.sort((a, b) => (a.setupKey < b.setupKey ? -1 : a.setupKey > b.setupKey ? 1 : 0));
-			const p = ensurePool();
-			currentChunk = (job: PoolJob, records: unknown[]) => {
-				const m = jobReq.get(job.id);
-				if (!m) return;
-				const { req } = m;
-				const entry = cache.ensure(cns(req.ns), sid(req.scenarioIdx), req.build.id, 0);
-				const idx = indexes.get(listKey(req.ns, req.scenarioIdx))!;
-				const distance = o.scenarios[req.scenarioIdx].conds.distance;
-				for (const raw of records) {
-					const rec = raw as SeedCompactRecord;
-					const pos = idx.get(rec.seed);
-					if (pos === undefined) continue;
-					const wasMissing = entry.values[pos] === null;
-					const v = seedValueOf(rec, distance);
-					if (wasMissing) races++;
-					cache.set(cns(req.ns), sid(req.scenarioIdx), req.build.id, pos, v);
-					// §E: fold the seed's per-skill activation counts once, on
-					// first fill of the slot, never on a re-delivered chunk and
-					// never for an errored seed.
-					if (wasMissing && v !== 'err' && rec.skillActivations) {
-						cache.foldActivations(cns(req.ns), sid(req.scenarioIdx), req.build.id, rec.skillActivations);
-					}
-				}
-			};
-			let res: { errors: Array<{ jobId: string; error: string }> };
-			try {
-				res = await p.runJobs(jobs);
-			} finally {
-				currentChunk = null;
-			}
-			// A failed job's holes stay null (retried next pass) until the same
-			// seed has failed JOB_FAIL_ATTEMPTS times; only then is it 'err'
-			// (never refetched, never counted). Per-seed engine errors inside a
-			// successful chunk are already 'err' via seedValueOf.
-			for (const { jobId, error } of res.errors) {
-				errorLog.set(error, (errorLog.get(error) ?? 0) + 1);
-				const m = jobReq.get(jobId);
-				if (!m) continue;
-				const idx = indexes.get(listKey(m.req.ns, m.req.scenarioIdx))!;
-				const ck = cache.keyFor(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id);
-				for (const s of m.seeds) {
-					const pos = idx.get(s);
-					if (pos === undefined) continue;
-					if (cache.peek(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id)?.values[pos] !== null) continue;
-					const fk = `${ck}#${pos}`;
-					const n = (failCount.get(fk) ?? 0) + 1;
-					if (n >= JOB_FAIL_ATTEMPTS) {
-						failCount.delete(fk);
-						cache.set(cns(m.req.ns), sid(m.req.scenarioIdx), m.req.build.id, pos, 'err');
-					} else {
-						failCount.set(fk, n);
-					}
-				}
-			}
-			// Keep the table bounded; the search pins what it must not evict
-			// (incumbent, restart ends, shortlist — §K). Nor may this pass
-			// evict what this batch was asked for: its caller reads those slots
-			// next (a bandit rung pairs every candidate), and an entry gone
-			// before that read looks unmeasured, so a candidate died of cache
-			// pressure and the run's answer depended on the cache cap. The cap
-			// can be passed for one batch, as pins already allow.
-			const keep = new Set(pinKeys);
-			for (const req of reqs) keep.add(cache.keyFor(cns(req.ns), sid(req.scenarioIdx), req.build.id));
-			cache.evict(keep);
-			return { jobErrors: res.errors };
+			return serialized('foreground', () => runEnsure(reqs, 'foreground'));
+		},
+		async ensureBackground(reqs) {
+			if (!o.gpuBranchFactory) throw new Error('optimizer: this evaluator has no background gpu branch');
+			return serialized('background', () => runEnsure(reqs, 'background'));
 		},
 		slots(ns, si, identity) {
 			return cache.peek(cns(ns), sid(si), identity)?.values ?? [];
@@ -480,8 +555,14 @@ export function createEvaluator(o: EvaluatorOptions): Evaluator {
 			const gain = obj === 'gainVsCurrent' && vs ? pairedFor(ns, si, build, vs, v => v.lead) : null;
 			return objectiveOf(st, obj, gain);
 		},
-		abort() { if (pool) { pool.abort(); pool = null; } }, // terminal for the pool; cache survives
-		dispose() { if (pool) { pool.dispose(); pool = null; } },
+		abort() {
+			if (pool) { pool.abort(); pool = null; }
+			if (branchPool) { branchPool.abort(); branchPool = null; }
+		}, // terminal for both pools, the cache survives
+		dispose() {
+			if (pool) { pool.dispose(); pool = null; }
+			if (branchPool) { branchPool.dispose(); branchPool = null; }
+		},
 	};
 }
 

@@ -9,7 +9,15 @@
  *
  *   master (this file)  plain node http server, zero deps:
  *     GET    /ping                 → {ok, cores, tokenRequired}
- *     POST   /session              → {sessionId}          (forks ONE child)
+ *     POST   /session              → {sessionId,backend}  (forks ONE child;
+ *                                    optional body {"engine":"wasm"|"native"|
+ *                                    "gpu"}; SIM_SERVER_BACKENDS=wasm,native
+ *                                    rotates the backend when the body has no
+ *                                    engine; gpu is filtered out of rotation
+ *                                    when the device or gpu-built addon is
+ *                                    missing, and a batch-capable gpu lane
+ *                                    takes one session, first, while the CPU
+ *                                    backends rotate around it)
  *     POST   /session/:id/msg      → 202                   (forward to child)
  *     GET    /multiplex?ids=a,b    → {msgs:[{s,m}]} long-poll ALL sessions on
  *                                    ONE connection (browser per-host socket
@@ -52,7 +60,7 @@ import * as http from 'http';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { fork, ChildProcess } from 'child_process';
+import { fork, ChildProcess, execFile } from 'child_process';
 import { pathToFileURL } from 'url';
 import { createGlobalsimWorkerCore } from './workerCore';
 
@@ -68,6 +76,15 @@ const HERE = __dirname;
 const REPO_ROOT = path.resolve(HERE, '..', '..', '..', '..');
 const GEOM_DIR = path.join(REPO_ROOT, 'vendor', 'GlobalSim', 'data', 'course_geometry');
 const WASM_PKG = path.join(REPO_ROOT, 'globalsim-wasm', 'pkg');
+const NATIVE_NODE = path.join(REPO_ROOT, 'globalsim-native', 'globalsim_native.node');
+/** The built web app to serve from this origin, when the launcher ships one. */
+const staticDir = process.env.SIM_SERVER_STATIC ? path.resolve(process.env.SIM_SERVER_STATIC) : null;
+const STATIC_TYPES: Record<string, string> = {
+	'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+	'.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+	'.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+	'.wasm': 'application/wasm', '.map': 'application/json', '.woff2': 'font/woff2',
+};
 
 // ── child role ───────────────────────────────────────────────────────────────
 
@@ -78,6 +95,74 @@ function childMain(): void {
 			try { process.send!({ m }); } catch { /* parent gone — exit via disconnect */ }
 		},
 		loadWasm: async () => {
+			// The napi addon exports the same {register_geometry, PreparedRace}
+			// shape as the wasm pkg, so only this loader knows about backends.
+			if (process.env.NATIVE_ENGINE === 'gpu') {
+				console.log('[sim-server] engine backend: gpu');
+				const mod = require(NATIVE_NODE);
+				if (typeof mod.gpuAvailable !== 'function' || typeof mod.gpuRunCompact !== 'function') {
+					throw new Error('gpu session needs the gpu-built addon: npm run build:globalsim-native-gpu');
+				}
+				const avail = mod.gpuAvailable();
+				if (!avail.ok) throw new Error(`gpu unavailable: ${(avail.reasons ?? []).join(', ')}`);
+				// The table the session installed once, kept for the lazy CPU
+				// handle: the gpu calls read it from the engine, full replies and
+				// out-of-range seeds need it back in the text.
+				let skillTable: unknown = null;
+				const withTable = (json: string): string => {
+					if (skillTable == null) return json;
+					const obj = JSON.parse(json);
+					if (obj && typeof obj === 'object' && (obj as any).skillData == null) (obj as any).skillData = skillTable;
+					return JSON.stringify(obj);
+				};
+				const CpuRace = mod.PreparedRace;
+				// run_compact goes to the GPU facade; full replies and out-of-i32-range
+				// seeds keep a lazy native handle (the facade answers the compact contract only).
+				const PreparedRace = class {
+					cpu: any;
+					constructor(public requestJson: string) { this.cpu = null; }
+					run(seed: number) { if (!this.cpu) this.cpu = new CpuRace(withTable(this.requestJson)); return this.cpu.run(seed); }
+					run_compact(seed: number, trackSkillId: string, secondPlayerIndex: number, distance: number) {
+						return mod.gpuRunCompact(this.requestJson, seed, trackSkillId, secondPlayerIndex, distance);
+					}
+					free() { if (this.cpu) this.cpu.free(); }
+				};
+				// Whole seed chunks go to one gpuRunCompactBatch call (the batch seam the pool
+				// drives). SIM_SERVER_GPU_BATCH=0 keeps the per-seed lane, for timing comparison.
+				if (typeof mod.gpuRunCompactBatch === 'function' && process.env.SIM_SERVER_GPU_BATCH !== '0') {
+					(PreparedRace.prototype as any).run_compact_batch = function (this: any, seeds: number[], trackSkillId: string, secondPlayerIndex: number, distance: number): string {
+						return mod.gpuRunCompactBatch(this.requestJson, seeds, trackSkillId, secondPlayerIndex, distance);
+					};
+				}
+				// Several setup keys in ONE gpuRunCompactGroups call (the pool's cross-key
+				// lane). The entry's presence is also what the worker reports as its
+				// multi-request capability, so the env switch turns the packing off too.
+				if (typeof mod.gpuRunCompactGroups === 'function' && process.env.SIM_SERVER_GPU_BATCH !== '0') {
+					(PreparedRace.prototype as any).run_compact_groups = function (this: any, payload: string): string {
+						return mod.gpuRunCompactGroups(payload);
+					};
+				}
+				return {
+					register_geometry: (id: number, t: string) => mod.register_geometry(id, t),
+					PreparedRace,
+					setSkillTable: (t: string) => {
+						skillTable = JSON.parse(t);
+						mod.gpuSetSkillTable(t);
+					},
+				};
+			}
+			if (process.env.NATIVE_ENGINE === '1') {
+				console.log('[sim-server] engine backend: native');
+				const mod = require(NATIVE_NODE);
+				return {
+					register_geometry: (id: number, t: string) => mod.register_geometry(id, t),
+					PreparedRace: mod.PreparedRace,
+					// The session table: requests that omit skillData parse the
+					// table once here instead of carrying it every prepare.
+					setSkillTable: (t: string) => mod.setSkillTable(t),
+				};
+			}
+			console.log('[sim-server] engine backend: wasm');
 			// ESM wasm-bindgen pkg under ts-node/commonjs: import via URL (same
 			// trick as the acceptance suites).
 			const dynImport = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
@@ -87,6 +172,7 @@ function childMain(): void {
 			return {
 				register_geometry: (id: number, t: string) => mod.register_geometry(id, t),
 				PreparedRace: mod.PreparedRace,
+				setSkillTable: (t: string) => mod.set_skill_table(t),
 			};
 		},
 		fetchText: (url: string) => fs.promises.readFile(path.join(GEOM_DIR, path.basename(url)), 'utf8'),
@@ -102,9 +188,11 @@ interface Waiter {
 	resolve: (msgs: any[]) => void;
 	timer: NodeJS.Timeout;
 }
+export type Backend = 'wasm' | 'native' | 'gpu';
 interface Session {
 	id: string;
 	child: ChildProcess;
+	backend: Backend;
 	// Dequeue-on-ack queue: `out` holds every message the client has not
 	// acknowledged; `sent` counts the leading ones already handed to the last
 	// long-poll response, awaiting that response's ack=1. Responses peek the
@@ -114,6 +202,107 @@ interface Session {
 	waiter: Waiter | null;
 	lastSeen: number;
 	dead: boolean;
+	/** Run messages this session has received (one facade launch per message
+	 *  on the gpu backend). Logged so a chart run's lane use is visible. */
+	gpuLaunches?: number;
+}
+
+// The gpu verdict: exactness gate, one guard race against the CPU engine, the
+// device's floor and slope, and whether the batch entry exists. One throwaway
+// child per server run, asynchronous so /ping never waits on it.
+interface GpuProbe {
+	ok: boolean;
+	batch: boolean;
+	reasons: string[];
+	device: string | null;
+	floorMs: number | null;
+	slopeMsPerRace: number | null;
+	parityOk: boolean | null;
+	/** True until the child answers. */
+	pending?: boolean;
+}
+const GPU_PROBE_PENDING: GpuProbe = {
+	ok: false, batch: false, reasons: ['gpu check still running'], device: null,
+	floorMs: null, slopeMsPerRace: null, parityOk: null, pending: true,
+};
+let gpuProbe: GpuProbe | null = null;
+let gpuProbeDone: Promise<GpuProbe> | null = null;
+
+/** One line for the log and the settings panel: the verdict and the measured cost. */
+export function gpuStatusLine(p: GpuProbe): string {
+	if (!p.ok) return `gpu: off (${p.reasons.join(', ')})`;
+	const parts = [p.device ?? 'unknown device'];
+	if (p.floorMs !== null) parts.push(`floor ${Math.round(p.floorMs)} ms`);
+	if (p.slopeMsPerRace !== null) parts.push(`${p.slopeMsPerRace.toFixed(2)} ms/race`);
+	return `gpu: on (${parts.join(', ')})`;
+}
+
+function startGpuProbe(): Promise<GpuProbe> {
+	if (gpuProbeDone) return gpuProbeDone;
+	const script = 'const m = require(' + JSON.stringify(NATIVE_NODE) + ');'
+		+ 'const done = (r) => process.stdout.write("GPU_PROBE" + JSON.stringify(r));'
+		+ 'const batch = typeof m.gpuRunCompactGroups === "function" && process.env.SIM_SERVER_GPU_BATCH !== "0";'
+		+ 'const r = typeof m.gpuProbe === "function" ? (() => { try { return m.gpuProbe(); } catch (e) { return { ok: false, reasons: [String((e && e.message) || e)] }; } })()'
+		+ ' : typeof m.gpuAvailable !== "function"'
+		+ ' ? { ok: false, reasons: ["addon lacks gpu support (build with --features gpu)"] }'
+		+ ' : (() => { try { return m.gpuAvailable(); } catch (e) { return { ok: false, reasons: [String((e && e.message) || e)] }; } })();'
+		+ 'done({ ok: r.ok === true, reasons: Array.isArray(r.reasons) ? r.reasons : [], batch,'
+		+ ' device: typeof r.device === "string" ? r.device : null,'
+		+ ' floorMs: typeof r.floorMs === "number" ? r.floorMs : null,'
+		+ ' slopeMsPerRace: typeof r.slopeMsPerRace === "number" ? r.slopeMsPerRace : null,'
+		+ ' parityOk: typeof r.parityOk === "boolean" ? r.parityOk : null });';
+	gpuProbeDone = new Promise<GpuProbe>((resolve) => {
+		const settle = (verdict: GpuProbe): void => {
+			gpuProbe = verdict;
+			console.log(`[sim-server] ${gpuStatusLine(verdict)}`);
+			if (!verdict.ok) console.warn(`[sim-server] gpu lane unavailable (${verdict.reasons.join(', ')}): CPU lanes only`);
+			resolve(verdict);
+		};
+		execFile(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 300_000, maxBuffer: 8 << 20 }, (err, stdout) => {
+			const hit = stdout ? /GPU_PROBE(\{.*\})/.exec(stdout) : null;
+			let j: any = null;
+			try { j = hit ? JSON.parse(hit[1]) : null; } catch { j = null; }
+			if (j) {
+				settle({
+					ok: j.ok === true, batch: j.batch === true,
+					reasons: Array.isArray(j.reasons) ? j.reasons : [],
+					device: typeof j.device === 'string' ? j.device : null,
+					floorMs: typeof j.floorMs === 'number' ? j.floorMs : null,
+					slopeMsPerRace: typeof j.slopeMsPerRace === 'number' ? j.slopeMsPerRace : null,
+					parityOk: typeof j.parityOk === 'boolean' ? j.parityOk : null,
+				});
+				return;
+			}
+			const stderr = (err as any)?.stderr;
+			settle({
+				ok: false, batch: false, device: null, floorMs: null, slopeMsPerRace: null, parityOk: null,
+				reasons: [String(stderr || (err as any)?.message || 'gpu probe child printed no verdict').split('\n')[0]],
+			});
+		});
+	});
+	return gpuProbeDone;
+}
+
+/** The cached verdict, or the pending marker before the child answers. */
+function probeGpu(): GpuProbe {
+	return gpuProbe ?? GPU_PROBE_PENDING;
+}
+
+/**
+ * Backend one engine-less session gets, and the rotation counter after it.
+ * Pure so the rule is testable without a server.
+ *
+ * The gpu backend never joins the rotation: it is the pool's extra lane now,
+ * opened through a pinned {"engine":"gpu"} session the pool counts on top of
+ * its CPU threads. A rotated gpu session would take a thread slot.
+ */
+export function pickRotationBackend(
+	backends: readonly Backend[],
+	turn: number,
+): { backend: Backend; turn: number } {
+	const cpus = backends.filter(b => b !== 'gpu');
+	if (cpus.length === 0) return { backend: 'wasm', turn };
+	return { backend: cpus[turn % cpus.length], turn: turn + 1 };
 }
 
 function masterMain(): void {
@@ -125,6 +314,25 @@ function masterMain(): void {
 	const host = lan ? '0.0.0.0' : '127.0.0.1';
 	const sessions = new Map<string, Session>();
 	let nextId = 1;
+	// SIM_SERVER_BACKENDS=wasm,native rotates the backend for sessions with no
+	// explicit engine. Unset keeps every child on wasm.
+	let backends: Backend[] = (process.env.SIM_SERVER_BACKENDS ?? '')
+		.split(',').map(b => b.trim()).filter((b): b is Backend => b === 'wasm' || b === 'native' || b === 'gpu');
+	let backendTurn = 0;
+	// The race program's disk cache binds source bytes, device and driver, so an
+	// image from another build is a miss and never a wrong load. It defaults under
+	// LOCALAPPDATA, overridden by GSIM_GPU_PROGRAM_CACHE.
+	if (!process.env.GSIM_GPU_PROGRAM_CACHE) {
+		const base = process.env.LOCALAPPDATA || process.env.TEMP || '.';
+		const dir = path.join(base, 'GlobalSim', 'program-cache');
+		try { fs.mkdirSync(dir, { recursive: true }); } catch { /* the engine reports its own failure */ }
+		process.env.GSIM_GPU_PROGRAM_CACHE = dir;
+	}
+	console.log(`[sim-server] program cache: ${process.env.GSIM_GPU_PROGRAM_CACHE}`);
+	if (staticDir) console.log(`[sim-server] web app: ${staticDir}`);
+	// Always check at start: the app reads the verdict from /ping to decide whether
+	// to open the extra lane, and backends without gpu can still pin one session.
+	void startGpuProbe();
 
 	function cors(res: http.ServerResponse): void {
 		res.setHeader('Access-Control-Allow-Origin', '*');
@@ -202,26 +410,39 @@ function masterMain(): void {
 		}
 	}
 
-	function createSession(): Session | null {
+	function createSession(requested?: Backend): Session | null {
 		const id = String(nextId++);
+		let backend: Backend;
+		if (requested != null) backend = requested;
+		else {
+			const picked = pickRotationBackend(backends, backendTurn);
+			backend = picked.backend;
+			backendTurn = picked.turn;
+		}
 		let child: ChildProcess;
 		try {
+			// A packaged bundle runs from server.cjs, which no loader needs, and
+			// its folder has no node_modules for ts-node to resolve from.
+			const tsLoader = __filename.endsWith('.ts')
+				? (() => { try { return require.resolve('ts-node/register/transpile-only'); } catch { return null; } })()
+				: null;
 			child = fork(__filename, ['--child'], {
 				cwd: HERE,
 				env: {
 					...process.env,
+					NATIVE_ENGINE: backend === 'native' ? '1' : backend === 'gpu' ? 'gpu' : '0',
 					TS_NODE_TRANSPILE_ONLY: '1',
 					TS_NODE_COMPILER_OPTIONS: process.env.TS_NODE_COMPILER_OPTIONS ?? JSON.stringify({ moduleResolution: 'node', module: 'commonjs' }),
 				},
 				// fork's execArgv replaces node flags entirely: just the ts loader.
-				execArgv: ['-r', require.resolve('ts-node/register/transpile-only')],
+				execArgv: tsLoader ? ['-r', tsLoader] : [],
 				stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
 			});
 		} catch (e: any) {
 			console.error('fork failed:', e?.message || e);
 			return null;
 		}
-		const s: Session = { id, child, out: [], sent: 0, waiter: null, lastSeen: Date.now(), dead: false };
+		const s: Session = { id, child, backend, out: [], sent: 0, waiter: null, lastSeen: Date.now(), dead: false };
 		child.on('message', (env: any) => { s.out.push(env && env.m ? env.m : env); flush(s); });
 		child.on('exit', () => {
 			if (!s.dead) {
@@ -254,15 +475,51 @@ function masterMain(): void {
 
 		try {
 			if (p === '/ping') {
-				json(res, 200, { ok: true, cores: os.cpus().length, tokenRequired: !!token });
+				const gpu = probeGpu();
+				json(res, 200, {
+					ok: true, cores: os.cpus().length, tokenRequired: !!token,
+					// The extra lane needs a device that is exact, passes the guard race
+					// AND answers the multi-request entry. A pending check reports ok:false.
+					gpu: {
+						ok: gpu.ok, batch: gpu.batch, reasons: gpu.reasons, device: gpu.device,
+						floorMs: gpu.floorMs, slopeMsPerRace: gpu.slopeMsPerRace, parityOk: gpu.parityOk,
+						pending: gpu.pending === true,
+					},
+				});
 				return;
+			}
+			// The packaged launcher serves the built app from this origin, so the app's
+			// default server URL already points at the API it came from.
+			if (staticDir && req.method === 'GET' && !p.startsWith('/session') && !p.startsWith('/multiplex')) {
+				const rel = p === '' ? 'index.html' : p.slice(1);
+				const file = path.resolve(staticDir, rel);
+				const inside = file === path.join(staticDir, 'index.html') || file.startsWith(staticDir + path.sep);
+				if (inside) {
+					try {
+						const body = await fs.promises.readFile(file);
+						res.writeHead(200, { 'Content-Type': STATIC_TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream' });
+						res.end(body);
+						return;
+					} catch { /* not a file: fall through to the API's 404 */ }
+				}
 			}
 			if (!authed) { json(res, 401, { error: 'token required (set it in Simulation settings)' }); return; }
 
 			if (p === '/session' && req.method === 'POST') {
-				const s = createSession();
+				// Optional body {"engine":"wasm"|"native"|"gpu"} picks the backend.
+				// An absent or unparsable body means "no explicit engine".
+				let engine: unknown;
+				try { engine = (JSON.parse((await readBody(req)) || '{}') as any).engine; } catch { /* body optional */ }
+				const requested: Backend | undefined = engine === 'native' || engine === 'wasm' || engine === 'gpu' ? engine : undefined;
+				if (requested === 'gpu') {
+					// A pinned gpu session waits for the startup check instead of racing it.
+					const gpu = gpuProbe ?? await startGpuProbe();
+					if (!gpu.ok) { json(res, 503, { error: `gpu backend unavailable: ${gpu.reasons.join(', ')}` }); return; }
+				}
+				const s = createSession(requested);
 				if (!s) { json(res, 500, { error: 'failed to spawn sim worker' }); return; }
-				json(res, 200, { sessionId: s.id });
+				json(res, 200, { sessionId: s.id, backend: s.backend });
+				console.log(`[sim-server] session ${s.id} backend ${s.backend}`);
 				return;
 			}
 			if (p === '/multiplex' && req.method === 'GET') {
@@ -299,6 +556,10 @@ function masterMain(): void {
 					const body = await readBody(req);
 					let msg: unknown;
 					try { msg = JSON.parse(body); } catch { json(res, 400, { error: 'invalid JSON' }); return; }
+					if (s.backend === 'gpu' && (msg as any)?.type === 'run') {
+						s.gpuLaunches = (s.gpuLaunches ?? 0) + 1;
+						console.log(`[sim-server] gpu launch ${s.gpuLaunches} on session ${s.id}`);
+					}
 					s.child.send({ m: msg });
 					json(res, 202, { ok: true });
 					return;
@@ -358,4 +619,7 @@ function masterMain(): void {
 }
 
 if (argv.includes('--child')) childMain();
-else masterMain();
+// require.main keeps the module importable by tests (pickRotationBackend) without
+// starting a server: imported code has no main module.
+else if (require.main === module) masterMain();
+

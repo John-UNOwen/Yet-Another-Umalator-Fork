@@ -1,13 +1,15 @@
 # globalsim-wasm
 
 Thin [wasm-bindgen](https://rustwasm.github.io/wasm-bindgen/) wrapper around the
-GlobalSim engine pinned at `vendor/GlobalSim` (branch **`paired-draws`**, commit
-`00d79fa`, based on upstream **v77** `27a4d13`). The vendored sources are built as
+GlobalSim engine pinned at `vendor/GlobalSim` (branch **`gpu-backend`**, commit
+`dcde500`, which is `paired-draws` `00d79fa` plus the GPU lane, based on upstream
+**v77** `27a4d13`). The vendored sources are built as
 they are, with `default-features = false, features = ["external-geometry"]`, so
 course geometry is registered at runtime (`register_geometry`) instead of embedded,
 the `.wasm` stays small and each worker fetches only the course it needs. The branch
 adds one request flag, `pairedRandomStreams`, and replies to unflagged requests stay
-byte-identical to `27a4d13`.
+byte-identical to `27a4d13`. The GPU code is the same tree's `gpu/` crate, which the
+native addon links with the `no-ffi-exports` feature so the C exports exist once.
 
 ## API (one instance per Web Worker)
 

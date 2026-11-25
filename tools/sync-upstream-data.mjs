@@ -128,6 +128,13 @@ const upSkills = up('skill_data.json');
 
 	const added = Object.keys(upSkills).filter(k => !(k in ours));
 	if (merge.length || added.length) {
+		// wisdomCheck is required by the engine's retail-init request parser.
+		// Upstream carries it today; a table without it must abort the run
+		// rather than silently strip a field the engine rejects a race for.
+		for (const k of [...merge, ...added]) {
+			const w = upSkills[k].wisdomCheck;
+			if (w !== 0 && w !== 1) fail(`upstream skill ${k} has no integer wisdomCheck (${JSON.stringify(w)}): refusing to drop an engine-required field`);
+		}
 		for (const k of merge) ours[k] = upSkills[k];
 		for (const k of added) ours[k] = upSkills[k];
 		if (Object.keys(ours).length < before) fail('skill_data key count shrank');

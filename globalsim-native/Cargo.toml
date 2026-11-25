@@ -1,0 +1,42 @@
+[package]
+name = "globalsim-native"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Native Node (napi-rs) addon drop-in for the globalsim-wasm engine wrapper."
+
+# Standalone crate: the empty [workspace] keeps it out of any parent workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# GPU lane (handoff step 2 slot + step 5 rerun): exports gpuAvailable and gpuRunCompact.
+# Not default: the gpu build needs OpenCL.lib on the oneAPI LIB plus a gate-passing device.
+# wasm|native builds, CI included, must build without either.
+gpu = ["dep:globalsim-gpu"]
+
+[dependencies]
+# dyn-symbols (a default feature) resolves the N-API symbols at load time, so no
+# node.lib import library is needed at link time.
+napi = "3"
+napi-derive = "3"
+globalsim-wasm = { path = "../globalsim-wasm" }
+# The gpu fallback record is built with the same JSON writer compact_record uses.
+serde_json = "1"
+# The multi-request lane parses its group payload straight into structs.
+serde = { version = "1", features = ["derive"] }
+# The GPU facade is the vendored engine tree's own gpu/ crate, so the addon
+# compiles one engine package and no sibling checkout is involved.
+globalsim-gpu = { path = "../vendor/GlobalSim/gpu", features = ["race"], optional = true }
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# Unwind, not abort: an engine panic must become a JS Error, never kill the process.
+panic = "unwind"

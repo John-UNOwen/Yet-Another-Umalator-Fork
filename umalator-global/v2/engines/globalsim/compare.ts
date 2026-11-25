@@ -157,8 +157,15 @@ export interface GlobalsimCompareInput {
 	chunkSize?: number;
 	/** Worker factory — app-v2 provides the bundler-resolved worker URL. */
 	workerFactory: WorkerFactory;
+	/** CPU-lane factory for the pool's gpu fallback reruns. */
+	cpuFactory?: WorkerFactory;
+	/** The extra gpu lane's factory, passed only when the server reports a
+	 *  usable GPU. Absent keeps the pools all-CPU. */
+	gpuFactory?: WorkerFactory;
 	/** Called with a classic-shaped partial result after every chunk. */
 	onProgress?: (partial: GlobalsimCompareResults) => void;
+	/** Completed races, wall time and threads, for the settings job line. */
+	onStats?: (stats: { races: number; ms: number; threads: number }) => void;
 }
 
 /** The `globalsim` extension block (rendered by results-pane when present). */
@@ -545,6 +552,8 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 
 	const pool = createGlobalsimPool({
 		factory: input.workerFactory,
+		cpuFactory: input.cpuFactory,
+		gpuFactory: input.gpuFactory,
 		threads,
 		skillData: input.skillData,
 		onChunk: onRecord,
@@ -574,6 +583,8 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 	if (repJobs.length) {
 		const repPool = createGlobalsimPool({
 			factory: input.workerFactory,
+			cpuFactory: input.cpuFactory,
+			gpuFactory: input.gpuFactory,
 			threads,
 			// Same table injection as the sampling pool: these requests also
 			// omit skillData (buildCompareJobs config.skillData === null), so a
@@ -605,5 +616,9 @@ export async function runGlobalsimCompare(input: GlobalsimCompareInput): Promise
 		mean: snapshotFor(reps.mean), median: snapshotFor(reps.median),
 	};
 
-	return paint(jobErrors, runData, Date.now() - startedAt);
+	const elapsed = Date.now() - startedAt;
+	// Sampling plus representative runs, the races this job actually dispatched.
+	const races = jobs.reduce((n, j) => n + j.seeds.length, 0) + repJobs.reduce((n, j) => n + j.seeds.length, 0);
+	input.onStats?.({ races, ms: elapsed, threads });
+	return paint(jobErrors, runData, elapsed);
 }

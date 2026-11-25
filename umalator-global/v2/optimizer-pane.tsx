@@ -53,6 +53,12 @@ import { track } from './analytics';
 export interface OptimizerPaneProps {
 	/** GlobalSim worker-pool factory (app-v2 globalsimWorkerFactory). */
 	workerFactory: WorkerFactory;
+	/** The extra gpu lane's factory, passed only when the server reports a
+	 *  usable GPU. Absent keeps the optimizer's pool all-CPU. */
+	gpuFactory?: WorkerFactory;
+	/** CPU-lane factory for the gpu lane's fallback reruns (app-v2 passes the
+	 *  same worker factory). */
+	cpuFactory?: WorkerFactory;
 	/** The current UmaState (uma1), converted to HorseState here like the chart run. */
 	uma: any;
 	/** Offerable skill ids, already coverage-filtered by the caller. */
@@ -690,7 +696,8 @@ export function OptimizerPane(props: OptimizerPaneProps) {
 			// One scenario: the race the user set up.
 			const scenarios: ScenarioSpec[] = [{ id: 'main', label: 'Current setup', conds, mobPreset }];
 			ev = createEvaluator({
-				workerFactory, space, baseHorse, scenarios, baseSeed: seedUse, skillData,
+				workerFactory, cpuFactory: props.cpuFactory, gpuFactory: props.gpuFactory,
+				space, baseHorse, scenarios, baseSeed: seedUse, skillData,
 				// Every optimizer race runs paired: the search is a chain of paired
 				// comparisons, and paired draws cut σΔ(ℓ) about 10×.
 				paired: true,

@@ -25,6 +25,7 @@ if not exist "node_modules\ts-node" (
         exit /b 1
     )
 )
+if /i "%~1"=="--self-test" goto self-test
 echo Starting the local sim server. Leave this window open while simulating.
 echo To stop: press Ctrl+C in this window, or just close it.
 echo.
@@ -32,3 +33,15 @@ npx ts-node --transpile-only --compiler-options "{\"moduleResolution\":\"node\",
 echo.
 echo The server has stopped.
 pause
+goto :eof
+
+:self-test
+echo Running the GPU self-test. It writes globalsim-self-test.json here.
+echo Share that file with a bug report.
+echo.
+node tools\gpu-self-test.mjs %2 %3 %4 %5
+if errorlevel 1 echo The self-test reported a problem. See globalsim-self-test.json.
+echo.
+pause
+exit /b %errorlevel%
+

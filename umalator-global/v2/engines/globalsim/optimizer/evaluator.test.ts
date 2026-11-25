@@ -54,6 +54,7 @@ async function loadPkgFresh(): Promise<WasmApi> {
 	return {
 		register_geometry: (courseId: number, jsonText: string) => mod.register_geometry(courseId, jsonText),
 		PreparedRace: mod.PreparedRace,
+		setSkillTable: (text: string) => mod.set_skill_table(text),
 	};
 }
 
@@ -166,6 +167,61 @@ test('ensure fills the cache exactly once (P7 cache reuse)', async t => {
 	t.end();
 });
 
+test('concurrent ensure() calls queue on one pool and fill both batches', async t => {
+	// Two restarts may ask the evaluator at the same time. The pool runs one
+	// batch at a time, so the second call queues behind the first instead of
+	// rejecting, and every slot of both batches lands.
+	const evq = mkEval();
+	const [ra, rb] = await Promise.all([
+		evq.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }]),
+		evq.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: add1, positions }]),
+	]);
+	t.deepEqual(ra.jobErrors, [], 'first queued batch has no job errors');
+	t.deepEqual(rb.jobErrors, [], 'second queued batch has no job errors');
+	t.ok(evq.slots(NS_SEARCH, 0, base.id).every(s => s != null && s !== 'err'), 'base filled');
+	t.ok(evq.slots(NS_SEARCH, 0, add1.id).every(s => s != null && s !== 'err'), 'add1 filled');
+	t.equal(evq.racesRun(), SEEDS * 2, 'both batches raced once');
+	evq.dispose();
+	t.end();
+});
+
+test('ensureBackground runs a second batch on its own pool', async t => {
+	// One evaluator, two pools: the foreground ensure() and the background
+	// branch's ensureBackground() overlap, and both fill the shared cache.
+	let fgWorkers = 0, bgWorkers = 0;
+	const countFactory = (which: 'fg' | 'bg'): WorkerFactory => () => {
+		if (which === 'fg') fgWorkers++; else bgWorkers++;
+		return factory();
+	};
+	const evb = createEvaluator({
+		workerFactory: countFactory('fg'), gpuBranchFactory: countFactory('bg'), gpuBranchThreads: 1,
+		threads: 1, space, baseHorse: horse, scenarios, baseSeed: BASE_SEED, skillData: mergedTable,
+	});
+	const [rf, rb] = await Promise.all([
+		evb.ensure([{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions }]),
+		evb.ensureBackground!([{ ns: NS_SEARCH, scenarioIdx: 0, build: add1, positions }]),
+	]);
+	t.deepEqual(rf.jobErrors, [], 'foreground batch clean');
+	t.deepEqual(rb.jobErrors, [], 'background batch clean');
+	t.ok(evb.slots(NS_SEARCH, 0, base.id).every(s => s != null && s !== 'err'), 'foreground build filled');
+	t.ok(evb.slots(NS_SEARCH, 0, add1.id).every(s => s != null && s !== 'err'), 'background build filled');
+	t.ok(fgWorkers >= 1, 'the foreground pool opened');
+	t.ok(bgWorkers >= 1, 'the branch pool opened on its own factory');
+	evb.dispose();
+	t.end();
+});
+
+test('ensureBackground without a branch factory throws', async t => {
+	const evn = mkEval();
+	try {
+		await evn.ensureBackground!([{ ns: NS_SEARCH, scenarioIdx: 0, build: base, positions: [0] }]);
+		t.fail('expected a rejection');
+	} catch (e: any) {
+		t.ok(/no background gpu branch/.test(String(e && e.message)), 'reports the missing branch factory');
+	}
+	evn.dispose();
+	t.end();
+});
 test('§K: pinBuilds exempts pinned entries from LRU eviction', async t => {
 	// Size the budget just under three entries (entries differ only by key
 	// length), then push the cache over cap with a third fill: the LRU victim

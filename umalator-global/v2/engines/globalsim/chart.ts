@@ -101,6 +101,12 @@ export interface ChartRaceConditions {
 	fixedGate?: number;
 	chunkSize?: number;
 	/**
+	 * One preparation per build: the gate-0 field plus a per-seed gate, so a
+	 * build's whole seed batch rides one prepared race instead of one per gate.
+	 * Ignored when fixedGate pins the field.
+	 */
+	gateBatch?: boolean;
+	/**
 	 * Paired random streams (engine pairedRandomStreams — see AdapterConfig.paired).
 	 * The chart resolves this per call: default TRUE (Skill Chart mode), and
 	 * the optimizer evaluator pins it explicitly for its own runs.
@@ -122,10 +128,17 @@ export interface GlobalsimSkillChartInput extends ChartRaceConditions {
 	fastMode?: boolean;
 	threads?: number;
 	workerFactory: WorkerFactory;
+	/** CPU-lane factory for the pool's gpu fallback reruns. Required only when workerFactory can hand out gpu workers. */
+	cpuFactory?: WorkerFactory;
+	/** The extra gpu lane's factory: one pinned gpu session, passed only when
+	 *  the server reports a usable GPU. Absent keeps the pool all-CPU. */
+	gpuFactory?: WorkerFactory;
 	/** Throttled partial rows (full current snapshot of every painted skill). */
 	onProgress?: (rows: SkillChartResult[]) => void;
 	/** Chart round changes for the existing progress plumbing ({round,total}). */
 	onRound?: (round: number, total: number) => void;
+	/** Completed races, wall time and threads, for the settings job line. */
+	onStats?: (stats: { races: number; ms: number; threads: number }) => void;
 	/** Cancellation (Stop): aborting rejects the promise; workers terminate. */
 	signal?: AbortSignal;
 }
@@ -146,6 +159,59 @@ export function withSkillSwappedIn(horse: HorseState, skill: string): HorseState
 }
 
 /**
+ * Gate-batched variant of the builder: one job per build. The request is the
+ * gate-0 field and every seed carries its own gate, so the worker prepares
+ * once and the engine reassigns the field per seed. The records are identical
+ * to the per-gate jobs (the engine's gated run is pinned to that).
+ */
+function buildGateBatchJobs(
+	conds: ChartRaceConditions,
+	config: AdapterConfig,
+	variantKey: string,
+	horse: HorseState,
+	seeds: number[],
+	options: { trackSkillId?: string; idTag?: string },
+	modeTag: string,
+): { jobs: PoolJob[]; errors: string[] } {
+	const chunkSize = conds.chunkSize ?? DEFAULT_CHUNK_SIZE;
+	const jobs: PoolJob[] = [];
+	const errors: string[] = [];
+	const { mobs, errors: mobErrors } = buildMobField(conds.mobPreset, 0, { fixedGate: 0 });
+	if (mobErrors.length) {
+		errors.push(...mobErrors.map((e: MobError) => `mob field gate 0: ${e.field} ${e.message}`));
+		return { jobs, errors };
+	}
+	const res = buildGlobalSimRequest({
+		courseId: conds.courseId,
+		groundCondition: conds.ground, weather: conds.weather, season: conds.season, time: conds.time,
+		grade: conds.grade,
+		seed: seeds[0],                 // placeholder, the gated run overrides it per seed
+		runners: [{ horse, gateIndex: 0, isPlayer: true }],
+	}, config);
+	if (res.ok !== true) {
+		errors.push(`gate batch variant ${variantKey}: ${res.errors.map(e => `${e.field}: ${e.message}`).join('; ')}`);
+		return { jobs, errors };
+	}
+	const player = (res.value as any).horses[0];
+	const merged = mergeCanonicalField(player, 0, mobs);
+	const request = { ...(res.value as any), horses: merged.horses, playerHorseIndex: merged.playerIndex };
+	const setupKey = `gs|chart|${variantKey}|c${conds.courseId}|gN|${modeTag}|${hashString64(JSON.stringify({ g: conds.ground, w: conds.weather, s: conds.season, t: conds.time, gr: conds.grade ?? null, h: request.horses }))}`;
+	const gates = seeds.map((s) => deriveGate(s));
+	for (let c = 0; c < seeds.length; c += chunkSize) {
+		jobs.push({
+			id: `${variantKey}|gN|${options.idTag ?? ''}${c}`,
+			setupKey,
+			request,
+			seeds: seeds.slice(c, c + chunkSize),
+			gates: gates.slice(c, c + chunkSize),
+			mode: 'compact',
+			trackSkillId: options.trackSkillId,
+		});
+	}
+	return { jobs, errors };
+}
+
+/**
  * Per (variant, gate) chunk jobs for a set of seeds — the same construction
  * compare.ts uses (gate groups → one preparation per gate → ≤chunkSize
  * chunks), exposed for the chart rounds and the scheduler tests.
@@ -162,6 +228,10 @@ export function buildGlobalsimChartJobs(
 	// paired: false explicitly (the optimizer evaluator pins its own mode).
 	const paired = conds.paired !== false;
 	const modeTag = streamModeTag(paired);
+	const config: AdapterConfig = { courseIds: conds.courseIds, knownSkillIds: conds.knownSkillIds, skillData: conds.skillData ? null : undefined, paired };
+	if (conds.gateBatch && conds.fixedGate === undefined) {
+		return buildGateBatchJobs(conds, config, variantKey, horse, seeds, options, modeTag);
+	}
 	const groups = new Map<number, number[]>();
 	for (const s of seeds) {
 		const g = conds.fixedGate ?? deriveGate(s);
@@ -170,7 +240,6 @@ export function buildGlobalsimChartJobs(
 	}
 	const jobs: PoolJob[] = [];
 	const errors: string[] = [];
-	const config: AdapterConfig = { courseIds: conds.courseIds, knownSkillIds: conds.knownSkillIds, skillData: conds.skillData ? null : undefined, paired };
 	for (const [gate, groupSeeds] of groups) {
 		const { mobs, errors: mobErrors } = buildMobField(conds.mobPreset, 0, { fixedGate: gate });
 		if (mobErrors.length) {
@@ -340,7 +409,9 @@ export async function runGlobalsimSkillChart(input: GlobalsimSkillChartInput): P
 		paint(false);
 	};
 
-	const pool: GlobalsimPool = createGlobalsimPool({ factory: input.workerFactory, threads, skillData: input.skillData, onChunk });
+	// A chart is one big batch (plus an optional round 2): the pool opens the
+	// extra lane on the first batch whose drain can pay for it.
+	const pool: GlobalsimPool = createGlobalsimPool({ factory: input.workerFactory, cpuFactory: input.cpuFactory, gpuFactory: input.gpuFactory, threads, skillData: input.skillData, gpuLane: 'eager', onChunk });
 	const abortHandler = () => pool.abort();
 	if (input.signal) {
 		if (input.signal.aborted) { pool.dispose(); throw abortError(); }
@@ -410,6 +481,7 @@ export async function runGlobalsimSkillChart(input: GlobalsimSkillChartInput): P
 	input.onProgress?.(rows);   // final paint (rows complete at this point)
 	const elapsed = Date.now() - startedAt;
 	console.log(`[GlobalSim] skill chart: ${rows.length} skills, ${collector.totalPairs()} paired races, ${threads} threads, ${(elapsed / 1000).toFixed(1)}s`);
+	input.onStats?.({ races: collector.totalPairs(), ms: elapsed, threads });
 	return rows;
 }
 

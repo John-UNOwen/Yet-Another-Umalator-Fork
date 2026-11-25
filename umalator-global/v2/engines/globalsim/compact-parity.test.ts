@@ -30,6 +30,7 @@ import { parseMobPresets } from './mobs';
 import { createGlobalsimWorkerCore, WasmApi } from './workerCore';
 import { SeedCompactRecord, leadMarginL } from './metrics';
 import { buildCompareJobs, GlobalsimCompareInput } from './compare';
+import { buildGlobalsimChartJobs } from './chart';
 
 const repoRoot = path.resolve(__dirname, '../../../../');
 const pkgDir = path.join(repoRoot, 'globalsim-wasm', 'pkg');
@@ -84,6 +85,26 @@ function runCore(request: any, seeds: number[], trackSkillId: string | undefined
 	});
 }
 
+/** Drive workerCore for one gated job (one gate-0 preparation, per-seed gates). */
+function runGatedCore(request: any, seeds: number[], gates: number[], trackSkillId: string | undefined): Promise<SeedCompactRecord[]> {
+	return new Promise((resolve, reject) => {
+		const core = createGlobalsimWorkerCore({
+			postMessage: (m: any) => queueMicrotask(() => {
+				if (m.type === 'prepared') {
+					if (!m.ok) reject(new Error(`prepare failed: ${m.error}`));
+					else core.onMessage({ type: 'run', jobId: 'j1', seeds, gates, mode: 'compact' });
+				} else if (m.type === 'chunk') {
+					if (m.ok) resolve(m.records);
+					else reject(new Error(`chunk failed: ${m.error}`));
+				}
+			}),
+			loadWasm: () => loadPkgFresh(false),
+			fetchText: (url) => fs.promises.readFile(path.join(geomDir, path.basename(url)), 'utf8'),
+		});
+		core.onMessage({ type: 'skillData', skillData: mergedTable });
+		core.onMessage({ type: 'prepare', id: 'p1', setupKey: 'k1', request, trackSkillId, secondPlayerIndex: -1, distance: DISTANCE });
+	});
+}
 function horseWithSkills(ids: string[]): HorseState {
 	return new HorseState({
 		speed: 1000, stamina: 1000, power: 900, guts: 800, wisdom: 900,
@@ -205,5 +226,60 @@ test('h2h layout: opp finish + both tails deepStrictEqual', async t => {
 	t.ok(viaWasm.every(r => typeof (r as any).opp?.finishTimeRaw === 'number'), 'opp finish metadata present');
 	t.ok(viaWasm.every(r => Array.isArray(r.opp?.tail) ? r.opp!.tail.length === 41 : r.opp?.tail === null), 'opp tail grid 41 samples or null in both');
 	t.ok(viaWasm.every(r => typeof r.spurtPlanPos === 'number' && r.opp?.spurtPlanPos === undefined), 'spurt plan point on the player only');
+	t.end();
+});
+
+// ── C2: one gate-0 preparation records the same as the per-gate jobs ────────
+
+test('gate batch: one preparation deepStrictEquals the per-gate jobs', async t => {
+	const horse = horseWithSkills(['100011', '100031', '200011']);
+	const conds: any = {
+		courseId: COURSE, distance: DISTANCE,
+		ground: GroundCondition.Good, weather: Weather.Sunny, season: Season.Spring, time: Time.Midday,
+		knownSkillIds, skillData: mergedTable, courseIds, mobPreset, paired: true,
+	};
+	const seeds = Array.from({ length: N }, (_, i) => BASE_SEED + i);
+	const split = buildGlobalsimChartJobs(conds, 'base', horse, seeds);
+	t.equal(split.errors.length, 0, `split build clean: ${split.errors.join(' | ')}`);
+	const batch = buildGlobalsimChartJobs({ ...conds, gateBatch: true }, 'base', horse, seeds);
+	t.equal(batch.errors.length, 0, `gate batch build clean: ${batch.errors.join(' | ')}`);
+	t.ok(split.jobs.length > 1, `seeds span ${split.jobs.length} gates`);
+	t.equal(batch.jobs.length, 1, 'the gate batch is one job');
+	const bySeed = new Map<number, SeedCompactRecord>();
+	for (const job of split.jobs) {
+		for (const rec of await runCore(job.request, job.seeds, undefined, undefined, false)) bySeed.set(rec.seed, rec);
+	}
+	const gatedJob = batch.jobs[0];
+	const gated = await runGatedCore(gatedJob.request, gatedJob.seeds, gatedJob.gates!, undefined);
+	t.equal(gated.length, bySeed.size, 'every seed answered once');
+	let same = 0;
+	for (const rec of gated) {
+		const splitRec = bySeed.get(rec.seed);
+		if (splitRec && JSON.stringify(splitRec) === JSON.stringify(rec)) same++;
+	}
+	t.equal(same, gated.length, 'every record is byte-identical to its per-gate job record');
+	t.end();
+});
+
+test('gate batch: tracked skill activations match the per-gate jobs', async t => {
+	const horse = horseWithSkills(['100011', '100031', '200011']);
+	const conds: any = {
+		courseId: COURSE, distance: DISTANCE,
+		ground: GroundCondition.Good, weather: Weather.Sunny, season: Season.Spring, time: Time.Midday,
+		knownSkillIds, skillData: mergedTable, courseIds, mobPreset, paired: true,
+	};
+	const seeds = Array.from({ length: N }, (_, i) => BASE_SEED + i);
+	const split = buildGlobalsimChartJobs({ ...conds }, 'k200011', horse, seeds, { trackSkillId: '200011' });
+	const batch = buildGlobalsimChartJobs({ ...conds, gateBatch: true }, 'k200011', horse, seeds, { trackSkillId: '200011' });
+	const splitCount = new Map<number, number>();
+	for (const job of split.jobs) {
+		for (const rec of await runCore(job.request, job.seeds, '200011', undefined, false)) splitCount.set(rec.seed, (rec as any).activations ?? 0);
+	}
+	const gatedJob = batch.jobs[0];
+	const gated = await runGatedCore(gatedJob.request, gatedJob.seeds, gatedJob.gates!, '200011');
+	let matched = 0;
+	for (const rec of gated) if (splitCount.get(rec.seed) === ((rec as any).activations ?? 0)) matched++;
+	t.equal(matched, gated.length, 'activations identical per seed');
+	t.ok([...splitCount.values()].some(n => n > 0), 'the tracked skill did activate in the sample');
 	t.end();
 });

@@ -84,6 +84,7 @@ import {
   serverAwareThreadCount,
   loadThreadsOption,
   saveThreadsOption,
+  setGpuCostModel,
   type ThreadsOption,
   type WorkerFactory,
 } from "./engines/globalsim/pool";
@@ -93,7 +94,10 @@ import {
   loadSimServerUrl,
   loadSimServerToken,
   saveSimServerSettings,
+  simGpuFactory,
+  simSessionFactory,
 } from "./engines/globalsim/simLink";
+import type { GpuVerdict, LastJob } from "./engines/globalsim/lanePlan";
 import { HorseState } from "../../components/HorseDefTypes";
 import { fromJS, Map as ImmMap } from "immutable";
 import mobPresets from "./engines/globalsim/mob-presets.json";
@@ -324,14 +328,42 @@ function App() {
   const [simServerOnline, setSimServerOnline] = useState(false);
   const [simServerCores, setSimServerCores] = useState<number | undefined>(undefined);
   const [simServerTokenNeeded, setSimServerTokenNeeded] = useState(false);
+  // The server's gpu verdict: the extra lane opens only when /ping reports a
+  // usable (exact and batch-capable) device.
+  const [simServerGpu, setSimServerGpu] = useState(false);
+  const [simServerGpuPlan, setSimServerGpuPlan] = useState<GpuVerdict | null>(null);
+  // The last finished GlobalSim run, shown under the lane plan in settings.
+  const [lastSimJob, setLastSimJob] = useState<LastJob | null>(null);
+  const gpuProbeRetryRef = useRef<number | null>(null);
   const checkSimServer = useCallback(async () => {
     const r = await pingSimServer(simServerUrl, simServerToken);
     setSimServerOnline(r.ok);
     setSimServerCores(r.cores);
+    setSimServerGpu(!!(r.gpu?.ok && r.gpu.batch));
+    setSimServerGpuPlan(r.gpu ?? null);
     setSimServerTokenNeeded(!r.ok && !!r.tokenRequired);
     saveSimServerSettings(simServerUrl, simServerToken);
+    // The startup check measured this device's launch floor and slope, so the
+    // pool sizes its lane on those. No eager session: an open device costs the
+    // CPU pool a measured 27% of its throughput.
+    const floor = typeof r.gpu?.floorMs === "number" ? r.gpu.floorMs : null;
+    const slope = typeof r.gpu?.slopeMsPerRace === "number" ? r.gpu.slopeMsPerRace : null;
+    if (r.gpu?.ok && r.gpu.batch && floor !== null && slope !== null) {
+      setGpuCostModel({ floor, slope });
+    } else {
+      setGpuCostModel(null);
+    }
+    // The startup check runs off the server's request path, so ask again while it
+    // is pending or the lane would stay closed for the whole session.
+    if (gpuProbeRetryRef.current !== null) { window.clearTimeout(gpuProbeRetryRef.current); gpuProbeRetryRef.current = null; }
+    if (r.ok && r.gpu?.pending) {
+      gpuProbeRetryRef.current = window.setTimeout(() => { gpuProbeRetryRef.current = null; void checkSimServer(); }, 3000);
+    }
   }, [simServerUrl, simServerToken]);
-  useEffect(() => { void checkSimServer(); }, []);
+  useEffect(() => {
+    void checkSimServer();
+    return () => { if (gpuProbeRetryRef.current !== null) window.clearTimeout(gpuProbeRetryRef.current); };
+  }, []);
   // GlobalSim field selection (integration plan Phase 3): mob preset + gate mode.
   // The same seed and preset give the same field; "Auto" draws the tested uma's
   // gate per seed, identically for both races of a compare pair.
@@ -888,18 +920,28 @@ function App() {
     }
   }, []);
 
-  // GlobalSim worker-pool entry (Phase 4) — same bundler URL pattern as the
-  // classic simWorker above, so esbuild (build.mjs) and Vite both emit it.
-  // Declared before handleRunSkillChart (Phase 5) because both it and
-  // handleRunSimulation depend on it.
-  const globalsimWorkerFactory: WorkerFactory = useCallback(
+  // GlobalSim worker-pool entry (Phase 4): the same bundler URL pattern as the
+  // classic simWorker, and idle sessions come back from the warm cache.
+  // Declared before handleRunSkillChart and handleRunSimulation, which use it.
+  const globalsimWorkerFactory: WorkerFactory = useMemo(
     () =>
       simServerOnline
-        ? new SimWorker(simServerUrl, simServerToken)
-        : new Worker(new URL("./engines/globalsim/globalsim.worker.ts", import.meta.url), {
-            type: "module",
-          }),
+        ? simSessionFactory(simServerUrl, simServerToken)
+        : () =>
+            new Worker(new URL("./engines/globalsim/globalsim.worker.ts", import.meta.url), {
+              type: "module",
+            }),
     [simServerOnline, simServerUrl, simServerToken],
+  );
+
+  // The extra gpu lane's factory: one pinned gpu session, offered only when the
+  // server reported a usable GPU. Without it the pools stay all-CPU.
+  const globalsimGpuFactory: WorkerFactory | undefined = useMemo(
+    () =>
+      simServerOnline && simServerGpu
+        ? simGpuFactory(simServerUrl, simServerToken)
+        : undefined,
+    [simServerOnline, simServerGpu, simServerUrl, simServerToken],
   );
 
   // Candidate skills for the Skill tab and the Skill Optimizer: one split for
@@ -1037,12 +1079,15 @@ function App() {
           fastMode: chartFastMode,
           threads: serverAwareThreadCount(globalsimThreads, simServerOnline),
           workerFactory: globalsimWorkerFactory,
+          cpuFactory: globalsimWorkerFactory,
+          gpuFactory: globalsimGpuFactory,
           // Streaming rows → the existing chart table (fills progressively).
           onProgress: (rows) =>
             setSkillChartResults(new Map(rows.map((r) => [r.id, r]))),
           // Reuses the classic per-worker round progress display (id 0).
           onRound: (round, total) =>
             setSkillChartProgress({ 0: { round, total } }),
+          onStats: (s) => setLastSimJob({ label: "Skill chart", ...s }),
           signal: controller.signal,
         });
         console.log("[GlobalSim] skill chart finished:", rows.length, "skills");
@@ -1177,8 +1222,11 @@ function App() {
             sampleCount: samples,
             threads: serverAwareThreadCount(globalsimThreads, simServerOnline),
             workerFactory: globalsimWorkerFactory,
+            cpuFactory: globalsimWorkerFactory,
+            gpuFactory: globalsimGpuFactory,
             // Classic-shaped partial results — the existing pane paints them.
             onProgress: (partial) => setResults(partial as any),
+            onStats: (s) => setLastSimJob({ label: "Compare", ...s }),
           });
           console.log("[GlobalSim] compare finished:", res.globalsim);
         })()
@@ -1814,7 +1862,9 @@ function App() {
                     token: simServerToken, setToken: setSimServerToken,
                     online: simServerOnline, cores: simServerCores, tokenNeeded: simServerTokenNeeded,
                     check: () => { void checkSimServer(); },
+                    gpu: simServerGpuPlan,
                   }}
+                  lastJob={lastSimJob}
                 />
               </div>
             )}
@@ -2132,6 +2182,7 @@ function App() {
                   <div style={{ display: mode === "optimizer" ? "contents" : "none" }}>
                   <OptimizerPane
                     workerFactory={globalsimWorkerFactory}
+                    cpuFactory={globalsimWorkerFactory}
                     uma={uma1}
                     candidates={skillPool.kept}
                     excluded={skillPool.out}
@@ -2691,3 +2742,4 @@ function App() {
 
 render(<App />, document.getElementById("app")!);
 initAnalytics();
+

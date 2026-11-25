@@ -14,7 +14,9 @@
 import { h } from 'preact';
 import { Shuffle, Dices } from 'lucide-react';
 import { Tooltip } from './components';
-import { MAX_THREADS } from './engines/globalsim/pool';
+import { MAX_THREADS, serverAwareThreadCount } from './engines/globalsim/pool';
+import { lanePlanOf, lastJobLine } from './engines/globalsim/lanePlan';
+import type { GpuVerdict, LastJob } from './engines/globalsim/lanePlan';
 
 interface SimCommonProps {
 	samples: number;
@@ -43,7 +45,11 @@ interface SimAdvancedProps {
 		cores?: number;
 		tokenNeeded: boolean;
 		check: () => void;
+		/** The server's gpu lane verdict (device, cost, or the refusal). */
+		gpu?: GpuVerdict | null;
 	};
+	/** The last finished sim run, for the measured speed line. */
+	lastJob?: LastJob | null;
 }
 
 type SimSettingsProps = SimCommonProps & SimAdvancedProps;
@@ -134,7 +140,18 @@ export function SimAdvancedControls({
 	threads,
 	setThreads,
 	simServer,
+	lastJob,
 }: SimAdvancedProps) {
+	// The lane plan follows the server's own verdict: native threads, device,
+	// measured launch cost, or the refusal that keeps it closed.
+	const lanePlan = simServer
+		? lanePlanOf({
+			gpu: simServer.gpu ?? null,
+			threads: serverAwareThreadCount(threads ?? 'auto', simServer.online),
+			cores: simServer.cores,
+		})
+		: null;
+	const jobLine = lastJobLine(lastJob);
 	return (
 		<div class="v2-sim-advanced">
 			{setThreads && (
@@ -189,6 +206,16 @@ export function SimAdvancedControls({
 							? 'Sim server needs its token — enter it above and press Check.'
 							: 'Sim server not running. Double-click sim-server.bat to run the sim in its own process — outside the browser tab, with no per-tab memory ceiling (restart it, then Check or reload).'}
 				</span>
+			)}
+
+			{simServer && simServer.online && lanePlan && (
+				<span class={`v2-globalsim-notice v2-sim-server-lane v2-sim-lane-${lanePlan.state}`}>
+					<strong>{lanePlan.headline}.</strong> {lanePlan.detail}
+				</span>
+			)}
+
+			{jobLine && (
+				<span class="v2-globalsim-notice v2-sim-last-job">{jobLine}</span>
 			)}
 
 			<span class="v2-globalsim-notice">

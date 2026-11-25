@@ -70,6 +70,7 @@ async function loadPkgFresh(): Promise<WasmApi> {
 	return {
 		register_geometry: (courseId: number, jsonText: string) => mod.register_geometry(courseId, jsonText),
 		PreparedRace: mod.PreparedRace,
+		setSkillTable: (text: string) => mod.set_skill_table(text),
 	};
 }
 

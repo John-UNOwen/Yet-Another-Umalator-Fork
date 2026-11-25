@@ -262,6 +262,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # skill-data fields compares against vendor/GlobalSim data
 
       - uses: actions/setup-node@v4
         with:
@@ -280,6 +282,11 @@ jobs:
       # Global-live skill definitions against the committed docs/master.mdb.
       - name: skill drift
         run: npm run test:skill-drift
+
+      # Engine-required skill fields (wisdomCheck included), compared against the
+      # vendored engine table so a sync that drops one fails here, not at prepare.
+      - name: skill data fields
+        run: npm run test:skill-data-fields
 
       - name: mechanics explorer
         run: npm run test:mechanics

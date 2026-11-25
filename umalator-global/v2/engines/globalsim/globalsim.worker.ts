@@ -34,6 +34,7 @@ async function loadWasmFromDeploy(): Promise<WasmApi> {
 	await (mod.default || mod.init)(bytes);
 	return {
 		register_geometry: (id: number, text: string) => mod.register_geometry(id, text),
+		setSkillTable: (text: string) => mod.set_skill_table(text),
 		PreparedRace: mod.PreparedRace,
 	};
 }

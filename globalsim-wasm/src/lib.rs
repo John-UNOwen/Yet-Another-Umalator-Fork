@@ -23,6 +23,14 @@ pub fn register_geometry(course_id: i32, json: &str) {
     globalsim::register_course_geometry(course_id, json.to_string());
 }
 
+/// Register the skill table this worker session shares. A request that omits
+/// `skillData` then prepares from it, so the 357 KB table crosses the wire and
+/// parses once per session instead of once per preparation.
+#[wasm_bindgen]
+pub fn set_skill_table(json: &str) -> Result<(), String> {
+    globalsim::register_skill_table(json)
+}
+
 fn panic_text(payload: &dyn Any) -> String {
     if let Some(text) = payload.downcast_ref::<String>() {
         format!("engine panic: {text}")
@@ -103,6 +111,34 @@ impl PreparedRace {
             packet.clear();
             let simulation = race.run(i64_seed)?;
             simulation.into_binary(meta, packet); // metadata = reply WITHOUT frames
+            compact_record(meta, packet, seed as f64, track_skill_id, second_player_index, distance)
+        }));
+        match result {
+            Ok(Ok(text)) => Ok(text),
+            Ok(Err(error)) => Err(error),
+            Err(payload) => {
+                drop(self.race.take());
+                self.reply.clear();
+                meta.clear();
+                packet.clear();
+                Err(panic_text(payload.as_ref()))
+            }
+        }
+    }
+
+    /// Compact record for one seed at any gate, from a gate-0 preparation.
+    /// Byte-identical to `run_compact` from a preparation built for that gate.
+    /// Panic semantics match `run_compact`.
+    pub fn run_compact_gated(&mut self, seed: i32, gate: i32, track_skill_id: &str, second_player_index: i32, distance: f64) -> Result<String, String> {
+        let i64_seed = i64::from(seed);
+        let race = self.race.as_mut().ok_or_else(|| "handle is dead; create a new one".to_string())?;
+        let meta = &mut self.meta;
+        let packet = &mut self.packet;
+        let result = catch_unwind(AssertUnwindSafe(|| -> Result<String, String> {
+            meta.clear();
+            packet.clear();
+            let simulation = race.run_gated(i64_seed, gate)?;
+            simulation.into_binary(meta, packet);
             compact_record(meta, packet, seed as f64, track_skill_id, second_player_index, distance)
         }));
         match result {
@@ -272,7 +308,11 @@ fn record_error(seed: f64, second: bool) -> String {
     format!(r#"{{"seed":{},"error":"{}"}}"#, seed, msg)
 }
 
-fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, second_player_index: i32, distance: f64) -> Result<String, String> {
+/// The per-seed compact record built from a frameless metadata reply plus the
+/// GSIMRP01 frame packet. `run_compact` feeds it `into_binary`'s pair. The
+/// globalsim-native gpu lane feeds it the GPU facade's meta+packet. Public so
+/// one implementation produces every compact record (gpu/wasm byte parity).
+pub fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, second_player_index: i32, distance: f64) -> Result<String, String> {
     if packet.get(..8).map_or(true, |m| m != PACKET_MAGIC) {
         return Ok(format!(r#"{{"seed":{},"error":"compact: unexpected packet magic"}}"#, seed));
     }
@@ -381,3 +421,4 @@ fn compact_record(meta: &str, packet: &[u8], seed: f64, track_skill_id: &str, se
 
     Ok(serde_json::to_string(&serde_json::Value::Object(out)).unwrap_or_else(|_| format!(r#"{{"seed":{},"error":"compact: serialize failed"}}"#, seed)))
 }
+

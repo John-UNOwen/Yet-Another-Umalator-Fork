@@ -79,6 +79,7 @@ These are local-only:
 ```bash
 npm run test:globalsim-compact    # wasm compact telemetry vs the JS extraction path
 npm run test:globalsim-simserver  # local sim server: token gate, HTTP parity, child crash
+npm run test:globalsim-backend-gpu # gpu session parity + CPU rerun (skips when no gated GPU)
 npm run test:optimizer            # search space, knapsack costs, cache, evaluator, surrogate, book, bandit, oracle and realistic suites
 npm run test:optimizer:slow       # exhaustive search cross-check, several minutes
 npm run test:career-import        # career import reader (Hachimi dump, umadump snapshot)
@@ -90,10 +91,45 @@ npm run check:skill-drift         # compare skill_data.json against docs/master.
 
 CI also runs the engine's own `cargo test --release` and both app builds.
 
+### Enable the GPU lane
+
+Optional and off by default: the sim server can run compact seed chunks on an OpenCL GPU through the engine fork's `gpu` crate, alongside the CPU lanes. The app only touches the lane when `SIM_SERVER_BACKENDS` names `gpu` or a session asks for `engine:"gpu"`.
+
+Prerequisites:
+
+- Windows with Node 20+, the MSVC toolchain and Rust 1.100+ (`%USERPROFILE%\.cargo\bin` on PATH), plus Intel oneAPI: its `lib` dir supplies `OpenCL.lib` at link time.
+- A GPU that passes the kernel's exactness gate. Verified on Intel Arc B580. The gate refuses other devices and names the reason.
+
+The engine and its GPU crate ship in the same vendored tree (`vendor/GlobalSim`, pinned to the merged engine commit), so there is no second checkout to manage.
+
+One script does the setup, no prompts and no arguments:
+
+```powershell
+node tools/setup-gpu-lane.mjs
+```
+
+It checks the toolchain, builds the addon with `--features gpu`, runs the device gate, and prints the three commands that turn the lane on.
+
+What stays safe on a fresh clone with nothing set:
+
+- `globalsim_native.node` is gitignored, and the sim server with `NATIVE_ENGINE` unset loads only the wasm pkg. It never needs the addon to exist.
+- The cargo `gpu` feature stays off by default, so CI never links OpenCL. The gpu path dep points inside the vendored engine tree, so a cargo command inside `globalsim-native/` needs nothing outside the repo.
+- A session with no explicit engine gets wasm. `gpu` enters rotation only when `SIM_SERVER_BACKENDS` names it, and an unavailable gpu (missing addon or gate refusal) is filtered out at startup with the log line `[sim-server] gpu backend unavailable (...) — rotating CPU backends only`.
+- `POST /session` with `{"engine":"gpu"}` answers 503 with the probe's reason while the gate refuses.
+
+A compact seed chunk goes to one `gpuRunCompactBatch` facade call. Each launch pays about 430 ms of race-kernel device time for the v77 1461-tick field, so bigger same-setup chunks amortize that floor (measured 10.8 ms/seed at 96-seed chunks). `SIM_SERVER_GPU_BATCH=0` opts back to one call per seed.
+
+Seeds the kernel gate refuses answer `{"seed":…,"gpuFallback":"<reason>"}`. The pool re-runs those seeds on one dedicated CPU worker. Callers that hand out gpu workers pass a `cpuFactory` for it (the chart and the optimizer evaluator accept one). A pool without it turns refusals into seed-error slots. The pool reports per-job `gpuFallbacks` tallies and logs `[globalsim-pool] job <id>: gpu races N, fallbacks {reason: n}, rerun failures N`.
+
+`npm run test:globalsim-backend-gpu` proves the lane end to end and skips with a printed reason when the device gate refuses. Current kernel and skill coverage lives in `vendor/GlobalSim/gpu/SKILLS_DESIGN.md`.
+
 ### Layout
 
 ```
 globalsim-wasm/                    wasm-bindgen wrapper around the engine
+globalsim-native/                  napi addon: the sim server's native engine backend,
+                                   and the gpu lane behind --features gpu
+                                   (see its README for the sibling-checkout and LIB needs)
 vendor/GlobalSim/                  the engine submodule (fork branch paired-draws
                                    on upstream v77)
 umalator-global/v2/                the simulator app

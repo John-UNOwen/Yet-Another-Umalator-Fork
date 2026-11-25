@@ -54,6 +54,9 @@ interface FastForwardConfig {
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const JP_DATA_DIR = path.join(PROJECT_ROOT, 'uma-skill-tools', 'data');
 const DEFAULT_OUTPUT_DIR = path.join(PROJECT_ROOT, 'umalator-global');
+// wisdomCheck source: the JP table has never carried the field, the engine's
+// request parser requires an integer for every carried skill.
+const ENGINE_SKILL_DATA = path.join(PROJECT_ROOT, 'vendor', 'GlobalSim', 'data', 'skill_data.json');
 
 const DATA_FILES = {
 	skillData: 'skill_data.json',
@@ -527,6 +530,22 @@ async function restoreBackup(outputDir: string): Promise<void> {
 // Data Processing Functions
 // ============================================================================
 
+/**
+ * wisdomCheck per skill id from the vendored GlobalSim table, or null when the
+ * submodule is not checked out. The JP source table has no such field and the
+ * engine rejects a carried skill without it at prepare, so fast-forwarded
+ * entries take the value from the engine's own table.
+ */
+function loadEngineWisdomChecks(): Map<string, number> | null {
+	if (!fs.existsSync(ENGINE_SKILL_DATA)) return null;
+	const table: Record<string, { wisdomCheck?: unknown }> = JSON.parse(fs.readFileSync(ENGINE_SKILL_DATA, 'utf-8'));
+	const out = new Map<string, number>();
+	for (const [id, entry] of Object.entries(table)) {
+		if (entry.wisdomCheck === 0 || entry.wisdomCheck === 1) out.set(id, entry.wisdomCheck);
+	}
+	return out;
+}
+
 function processSkillData(maxSkillId: number, outputDir: string, newUmaIds: number[], cutoffDate: string | null, strictSkillDates: boolean): { data: Record<string, any>; added: number[]; gatedByDate: number } {
 	const jpSkillDataPath = path.join(JP_DATA_DIR, DATA_FILES.skillData);
 	const jpData = JSON.parse(fs.readFileSync(jpSkillDataPath, 'utf-8'));
@@ -583,6 +602,25 @@ function processSkillData(maxSkillId: number, outputDir: string, newUmaIds: numb
 	console.log(`  Added ${addedCount} new skills from JP data` + (gatedByDate ? ` (${gatedByDate} gated by cutoff date)` : ''));
 	if (addedUmaSkillCount > 0) {
 		console.log(`  Added ${addedUmaSkillCount} character-specific skills for new umas`);
+	}
+
+	// The JP source has no wisdomCheck, so a regeneration must fill it from the
+	// engine table or the app ships a table the engine refuses at prepare.
+	const engineWisdom = loadEngineWisdomChecks();
+	if (!engineWisdom) {
+		console.warn(`  [warn] ${ENGINE_SKILL_DATA} missing: wisdomCheck left unset (init the vendor/GlobalSim submodule)`);
+	} else {
+		let filled = 0;
+		const unknown: string[] = [];
+		for (const [id, entry] of Object.entries(merged)) {
+			if (entry.wisdomCheck === 0 || entry.wisdomCheck === 1) continue;
+			const wisdomCheck = engineWisdom.get(id);
+			if (wisdomCheck === undefined) { unknown.push(id); continue; }
+			entry.wisdomCheck = wisdomCheck;
+			filled++;
+		}
+		console.log(`  Filled wisdomCheck from vendor/GlobalSim for ${filled} entries`);
+		if (unknown.length) console.log(`  [warn] no engine-table wisdomCheck for ${unknown.length} id(s), left unset: ${unknown.slice(0, 10).join(', ')}${unknown.length > 10 ? ',…' : ''}`);
 	}
 
 	return { data: merged, added, gatedByDate };

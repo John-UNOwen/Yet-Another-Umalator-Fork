@@ -50,7 +50,7 @@ async function loadPkgFresh(): Promise<WasmApi> {
 	const mod = await dynImport(pathToFileURL(path.join(pkgDir, 'globalsim_wasm.js')).href + `?w=${instances++}`);
 	const init = mod.default ?? mod.init;
 	await init(fs.readFileSync(path.join(pkgDir, 'globalsim_wasm_bg.wasm')));
-	return { register_geometry: (id: number, t: string) => mod.register_geometry(id, t), PreparedRace: mod.PreparedRace };
+	return { register_geometry: (id: number, t: string) => mod.register_geometry(id, t), PreparedRace: mod.PreparedRace, setSkillTable: (text: string) => mod.set_skill_table(text) };
 }
 function bridgeFactory(): WorkerFactory {
 	return (): any => {
