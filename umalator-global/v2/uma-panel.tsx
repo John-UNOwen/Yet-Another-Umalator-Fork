@@ -10,7 +10,7 @@ import { h, Fragment } from 'preact';
 import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 
-import { CustomSelect, IconSelect, Dropdown, Tooltip, Modal, Button } from './components';
+import { CustomSelect, IconSelect, Dropdown, Tooltip, Modal, Button, useBackdropClose } from './components';
 import { SkillsSection } from './skills';
 import {
 	getSavedSlotNames,
@@ -170,6 +170,8 @@ function searchNames(query: string): string[] {
 
 export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterRating, globalsimSkillIds }: UmaPortraitProps) {
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
+	const closeSearch = useCallback(() => setIsSearchOpen(false), []);
+	const backdrop = useBackdropClose(closeSearch);
 	const [searchQuery, setSearchQuery] = useState('');
 	const [activeIdx, setActiveIdx] = useState(-1);
 	const [showUnreleased, setShowUnreleased] = useState(false);
@@ -280,7 +282,7 @@ export function UmaPortrait({ outfitId, onSelect, hideNotInGame = false, rosterR
 			{/* A body child, like the skill picker: inside the drawer (z-index 100)
 			    its own z-index could not lift it above the sticky header. */}
 			{isSearchOpen && createPortal(
-				<div class="v2-uma-search-overlay" onClick={() => setIsSearchOpen(false)}>
+				<div class="v2-uma-search-overlay" {...backdrop}>
 					<div class="v2-uma-search-modal" onClick={e => e.stopPropagation()}>
 						<input
 							ref={inputRef}

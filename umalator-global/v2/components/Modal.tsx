@@ -10,6 +10,7 @@ import { h } from 'preact';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import { X } from 'lucide-react';
+import { useBackdropClose } from './backdrop';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 let modalSeq = 0;
@@ -38,6 +39,7 @@ export function Modal({
 	className = ''
 }: ModalProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
+	const backdrop = useBackdropClose(closeOnBackdrop ? onClose : undefined);
 	const titleId = useRef(`v2-modal-title-${++modalSeq}`).current;
 
 	// A dialog takes focus when it opens, keeps Tab inside it, and gives focus
@@ -84,7 +86,7 @@ export function Modal({
 	if (!isOpen) return null;
 
 	return (
-		<div class="v2-modal-overlay" onClick={closeOnBackdrop ? onClose : undefined}>
+		<div class="v2-modal-overlay" {...backdrop}>
 			<div
 				ref={panelRef}
 				class={`v2-modal v2-modal-${size} ${className}`}

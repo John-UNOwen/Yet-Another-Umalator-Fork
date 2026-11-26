@@ -10,7 +10,7 @@ import { h, Fragment } from 'preact';
 import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { X, Search, Plus, ArrowUpDown, ChevronDown, GitCompare } from 'lucide-react';
-import { Dropdown, SegmentedControl } from './components';
+import { Dropdown, SegmentedControl, useBackdropClose } from './components';
 
 // Import condition matching
 import { getParser } from '../../uma-skill-tools/ConditionParser';
@@ -698,6 +698,7 @@ export function SkillPickerModal({ isOpen, onClose, onSelect, selectedSkills, hi
 	const [searchQuery, setSearchQuery] = useState('');
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [showUnreleased, setShowUnreleased] = useState(false);
+	const backdrop = useBackdropClose(onClose);
 	const listRef = useRef<HTMLDivElement>(null);
 	const [activeIdx, setActiveIdx] = useState(-1);
 
@@ -843,7 +844,7 @@ export function SkillPickerModal({ isOpen, onClose, onSelect, selectedSkills, hi
 	if (!isOpen) return null;
 
 	const modal = (
-		<div class="v2-skill-picker-overlay" onClick={onClose}>
+		<div class="v2-skill-picker-overlay" {...backdrop}>
 			<div class="v2-skill-picker-modal" onClick={e => e.stopPropagation()}>
 				{/* Search header */}
 				<div class="v2-skill-picker-header">

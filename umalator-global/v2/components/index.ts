@@ -15,6 +15,8 @@ export type { DropdownItem } from './Dropdown';
 
 export { Modal } from './Modal';
 
+export { useBackdropClose } from './backdrop';
+
 export { Button } from './Button';
 
 export { Tooltip } from './Tooltip';
