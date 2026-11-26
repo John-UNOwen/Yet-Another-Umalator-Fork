@@ -8905,3 +8905,76 @@ tr:hover .v2-skill-hide-btn {
   font-size: var(--font-sm);
   color: var(--color-text-muted);
 }
+
+/* "A new version is available" (update-check.tsx). A snackbar: it does not
+   block the page or take focus, and sits above the phone nav bar. */
+.v2-update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text);
+  animation: v2-update-banner-in 0.2s ease-out;
+}
+
+.v2-update-banner-icon {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+.v2-update-banner-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: var(--font-base);
+  line-height: 1.35;
+}
+
+.v2-update-banner-text span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-sm);
+}
+
+.v2-update-banner-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+@keyframes v2-update-banner-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-update-banner { animation: none; }
+}
+
+@media (max-width: 768px) {
+  .v2-update-banner {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 32px);
+    flex-wrap: wrap;
+  }
+
+  .v2-update-banner-text {
+    flex: 1 1 0;
+  }
+
+  .v2-update-banner-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

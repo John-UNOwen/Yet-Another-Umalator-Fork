@@ -8,6 +8,7 @@
 declare const CC_DEV: boolean;
 
 import { h, render, Fragment } from "preact";
+import { createPortal } from "preact/compat";
 import {
   useState,
   useCallback,
@@ -79,6 +80,7 @@ import { loadGlobalsimSkillTable } from "./engines/globalsim/skills";
 import { loadGlobalsimCourseIds } from "./engines/globalsim/courses";
 import { runGlobalsimCompare } from "./engines/globalsim/compare";
 import { runGlobalsimSkillChart, withSkillSwappedIn } from "./engines/globalsim/chart";
+import { useUpdateCheck, UpdateBanner } from "./update-check";
 
 // Races behind one skill row's track view: enough for stable min/max/median
 // traces, few enough that a row click answers in about a second.
@@ -813,6 +815,8 @@ function App() {
   // Copy Link, from the header menu and the phone settings sheet. A short
   // notice says it worked. When the clipboard refuses, the link is shown so
   // it can be copied by hand.
+  // A newer deploy than this page: offered as a reload (update-check.tsx).
+  const update = useUpdateCheck();
   const [shareNotice, setShareNotice] = useState<string | null>(null);
   const shareNoticeTimer = useRef<number | null>(null);
   const handleCopyLink = useCallback(async () => {
@@ -1265,6 +1269,8 @@ function App() {
       optimizerControl.current?.stop();
       return;
     }
+    // A run is when an old page meets a newer engine, so look for a deploy now.
+    update.check();
     if (mode === "optimizer") {
       // Auto-reroll covers optimizer runs like every other run. The new seed
       // goes to the run directly, since the state update lands after it starts.
@@ -1399,6 +1405,7 @@ function App() {
     uma2,
     seed,
     autoSeed,
+    update.check,
     handleRunSkillChart,
     // GlobalSim compare path
     globalsimSkillIds,
@@ -2135,8 +2142,14 @@ function App() {
                     the compare/chart results pane would otherwise just sit at
                     its empty state with the error in the console only.
                     Dismissible; cleared by the next run or an engine switch. */}
-                {shareNotice && (
-                  <div class="v2-share-notice" role="status">{shareNotice}</div>
+                <UpdateBanner
+                  visible={update.visible}
+                  busy={compareRunning || chartRunning || optimizerRunning}
+                  onDismiss={update.dismiss}
+                />
+                {shareNotice && createPortal(
+                  <div class="v2-share-notice" role="status">{shareNotice}</div>,
+                  document.body,
                 )}
                 {globalsimError && (
                   <div

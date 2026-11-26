@@ -2,6 +2,7 @@ import { defineConfig, loadEnv, Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import path from 'path';
 import fs from 'fs';
+import { execSync } from 'child_process';
 
 const rootDir = path.resolve(__dirname, '..');
 const projectRoot = path.resolve(__dirname, '../..');
@@ -108,12 +109,35 @@ function serveUmaToolsAssets(): Plugin {
   };
 }
 
+// The id of this build: the commit Actions builds (GITHUB_SHA), else the local
+// checkout's HEAD. The app carries it as CC_BUILD_ID, and the build writes it to
+// version.json, which an open tab re-reads to notice a newer deploy.
+function buildId(): string {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA.slice(0, 12);
+  try {
+    return execSync('git -c safe.directory=* rev-parse --short=12 HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return 'local-' + Date.now();
+  }
+}
+
+function emitVersionFile(id: string): Plugin {
+  return {
+    name: 'emit-version-file',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ build: id }) });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   // Load .env.local vars so OCR_PROXY_URL is available in process.env
   const env = loadEnv(mode, __dirname, '');
+  const BUILD_ID = buildId();
 
   return {
-  plugins: [redirectDataFiles(), preact(), serveUmaToolsAssets()],
+  plugins: [redirectDataFiles(), preact(), serveUmaToolsAssets(), emitVersionFile(BUILD_ID)],
 
   // Use relative paths — v2 is served at root (/) in production
   // Can be overridden via VITE_BASE env var if needed
@@ -166,6 +190,8 @@ export default defineConfig(({ mode }) => {
     // GoatCounter site code; empty (local, forks) means no analytics. See analytics.ts.
     CC_GOATCOUNTER: JSON.stringify(env.GOATCOUNTER_CODE || ''),
     'globalThis.CC_BASE_PATH': JSON.stringify(process.env.CC_BASE_PATH ?? '/uma-tools'),
+    // This build's id, compared with the deployed version.json (update-check.ts).
+    CC_BUILD_ID: JSON.stringify(BUILD_ID),
   },
 
   // Optimize dependencies
